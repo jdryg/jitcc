@@ -577,7 +577,10 @@
     <None Include="README.md" />
   </ItemGroup>
   <ItemGroup>
-    <NASM Include="3rdparty\jlib\src\asm\memset_win64.asm" />
+    <NASM Include="3rdparty\jlib\src\asm\memset_win64.asm">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </NASM>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -6,8 +6,10 @@ static void _jmem_move(void* __restrict dst, const void* __restrict src, size_t 
 static void _jmem_set_ref(void* dst, uint8_t ch, size_t n);
 static int32_t _jmem_cmp(const void* __restrict lhs, const void* __restrict rhs, size_t n);
 
+#if 0
 extern void _jmem_set_asm_win64_ermsb(void* dst, uint8_t ch, size_t n);
 extern void _jmem_set_asm_win64(void* dst, uint8_t ch, size_t n);
+#endif
 
 jx_mem_api* mem_api = &(jx_mem_api) {
 	.copy = _jmem_copy,
@@ -18,6 +20,7 @@ jx_mem_api* mem_api = &(jx_mem_api) {
 
 bool jx_mem_initAPI(void)
 {
+#if 0
 	const uint64_t cpuFeatures = cpu_api->getFeatures();
 	if ((cpuFeatures & JX_CPU_FEATURE_SSE2) != 0) {
 		if ((cpuFeatures & JX_CPU_FEATURE_ERMSB) != 0) {
@@ -26,6 +29,7 @@ bool jx_mem_initAPI(void)
 			mem_api->set = _jmem_set_asm_win64;
 		}
 	}
+#endif
 
 	return true;
 }
