@@ -727,7 +727,7 @@ int main(int argc, char** argv)
 	const char* sourceFile = "test/pointer_arithmetic.c";
 
 	printf("%s\n", sourceFile);
-	jx_cc_translation_unit_t* tu = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_ABSOLUTE_PATH, sourceFile);
+	jx_cc_translation_unit_t* tu = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_INSTALL, sourceFile);
 	const uint32_t numErrors = (uint32_t)jx_array_sizeu(tu->m_ErrorsArr);
 	for (uint32_t iErr = 0; iErr < numErrors; ++iErr) {
 		printf("%s\n", tu->m_ErrorsArr[iErr]);
