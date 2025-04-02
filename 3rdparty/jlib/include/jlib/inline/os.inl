@@ -143,6 +143,11 @@ static inline void jx_os_consoleClose(bool waitForUserInput)
 	os_api->consoleClose(waitForUserInput);
 }
 
+static int32_t jx_os_consolePuts(const char* str, uint32_t len)
+{
+	return os_api->consolePuts(str, len);
+}
+
 static inline jx_os_mutex_t* jx_os_mutexCreate(void)
 {
 	return os_api->mutexCreate();
@@ -286,6 +291,11 @@ static inline void jx_os_fileSeek(jx_os_file_t* f, int64_t offset, jx_file_seek_
 static inline uint64_t jx_os_fileTell(jx_os_file_t* f)
 {
 	return os_api->fileTell(f);
+}
+
+static inline void jx_os_fileFlush(jx_os_file_t* f)
+{
+	os_api->fileFlush(f);
 }
 
 static int32_t jx_os_fileGetTime(jx_os_file_t* f, jx_file_time_type type, jx_os_file_time_t* time)

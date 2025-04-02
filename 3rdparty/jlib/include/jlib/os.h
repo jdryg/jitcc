@@ -339,6 +339,7 @@ typedef struct jx_os_api
 
 	int32_t         (*consoleOpen)(void);
 	void            (*consoleClose)(bool waitForUserInput);
+	int32_t         (*consolePuts)(const char* str, uint32_t len);
 
 	jx_os_mutex_t*  (*mutexCreate)(void);
 	void            (*mutexDestroy)(jx_os_mutex_t* mutex);
@@ -421,6 +422,7 @@ static uint32_t jx_os_timestampToString(uint64_t ts, char* buffer, uint32_t max)
 
 static int32_t jx_os_consoleOpen(void);
 static void jx_os_consoleClose(bool waitForUserInput);
+static int32_t jx_os_consolePuts(const char* str, uint32_t len);
 
 static jx_os_mutex_t* jx_os_mutexCreate(void);
 static void jx_os_mutexDestroy(jx_os_mutex_t* mutex);
@@ -455,6 +457,7 @@ static uint32_t jx_os_fileWrite(jx_os_file_t* f, const void* buffer, uint32_t le
 static uint64_t jx_os_fileGetSize(jx_os_file_t* f);
 static void jx_os_fileSeek(jx_os_file_t* f, int64_t offset, jx_file_seek_origin origin);
 static uint64_t jx_os_fileTell(jx_os_file_t* f);
+static void jx_os_fileFlush(jx_os_file_t* f);
 static int32_t jx_os_fileGetTime(jx_os_file_t* f, jx_file_time_type type, jx_os_file_time_t* time);
 
 static int32_t jx_os_fsSetBaseDir(jx_file_base_dir whichDir, jx_file_base_dir baseDir, const char* relPath);

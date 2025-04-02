@@ -1,56 +1,45 @@
-#include <jlib/logger.h>
 #include <jlib/allocator.h>
-#include <jlib/string.h>
+#include <jlib/array.h>
+#include <jlib/dbg.h>
+#include <jlib/error.h>
+#include <jlib/logger.h>
+#include <jlib/macros.h>
 #include <jlib/memory.h>
 #include <jlib/os.h>
-#include <jlib/macros.h>
+#include <jlib/string.h>
 
-static const char* kLogLevelPrefix[] = {
-	"(d) ",
-	"(i) ",
-	"(!) ",
-	"(x) ",
-	"(F) ",
-};
-JX_STATIC_ASSERT(JX_COUNTOF(kLogLevelPrefix) == JX_NUM_LOG_LEVELS);
+static jx_logger_i* jlogger_createFileLogger(jx_allocator_i* allocator, jx_file_base_dir baseDir, const char* relPath, uint32_t flags);
+static jx_logger_i* jlogger_createInMemoryLogger(jx_allocator_i* allocator, uint32_t flags);
+static jx_logger_i* jlogger_createConsoleLogger(jx_allocator_i* allocator, uint32_t flags);
+static jx_logger_i* jlogger_createCompositeLogger(jx_allocator_i* allocator, uint32_t flags);
+static void jlogger_destroy(jx_logger_i* logger);
+static int32_t jlogger_inmemory_dumpToBuffer(jx_logger_i* logger, jx_string_buffer_t* sb);
+static int32_t jlogger_inmemory_dumpToLogger(jx_logger_i* logger, jx_logger_i* dst);
+static void jlogger_compositeLoggerAddChild(jx_logger_i* compoundLogger, jx_logger_i* childLogger);
 
-typedef struct _jx_logger_i
-{
-	JX_INHERITS(jx_logger_i);
-
-	jx_allocator_i* m_Allocator;
-	jx_os_mutex_t* m_Mutex;
-	uint32_t m_Flags;
-
-	void (*destroy)(jx_logger_i* logger);
-} _jx_logger_i;
-
-static jx_logger_i* _jlogger_createFileLogger(jx_allocator_i* allocator, jx_file_base_dir baseDir, const char* relPath, uint32_t flags);
-static jx_logger_i* _jlogger_createInMemoryLogger(jx_allocator_i* allocator, uint32_t flags);
-static void _jlogger_destroy(jx_logger_i* logger);
-static const char* _jlogger_getInMemoryLoggerBuffer(jx_logger_i* logger);
+static void jlogger_generic_logf(jx_logger_i* logger, jx_log_level level, const char* tag, const char* fmt, ...);
+static void jlogger_generic_vlogf(jx_logger_i* logger, jx_log_level level, const char* tag, const char* fmt, va_list argList);
 
 jx_logger_api* logger_api = &(jx_logger_api){
 	.m_SystemLogger = NULL,
-	.createFileLogger = _jlogger_createFileLogger,
-	.createInMemoryLogger = _jlogger_createInMemoryLogger,
-	.destroyLogger = _jlogger_destroy,
-	.getInMemoryLoggerBuffer = _jlogger_getInMemoryLoggerBuffer
+	.createFileLogger = jlogger_createFileLogger,
+	.createInMemoryLogger = jlogger_createInMemoryLogger,
+	.createConsoleLogger = jlogger_createConsoleLogger,
+	.createCompositeLogger = jlogger_createCompositeLogger,
+	.destroyLogger = jlogger_destroy,
+	.inMemoryLoggerDumpToBuffer = jlogger_inmemory_dumpToBuffer,
+	.inMemoryLoggerDumpToLogger = jlogger_inmemory_dumpToLogger,
+	.compositeLoggerAddChild = jlogger_compositeLoggerAddChild,
 };
-
-static _jx_logger_i* _jlogger_createLoggerInterface(jx_allocator_i* allocator, uint32_t flags, uint32_t loggerDataSize);
-static void _jlogger_destroyLoggerInterface(_jx_logger_i* logger);
-static void _jlogger_text_logf(jx_logger_o* inst, jx_log_level level, const char* fmt, ...);
-static void _jlogger_text_vlogf(jx_logger_o* inst, jx_log_level level, const char* fmt, va_list argList);
 
 bool jx_logger_initAPI(jx_allocator_i* allocator)
 {
-	logger_api->m_SystemLogger = _jlogger_createInMemoryLogger(allocator, JX_LOGGER_FLAGS_MULTITHREADED | JX_LOGGER_FLAGS_APPEND_TIMESTAMP);
+	logger_api->m_SystemLogger = jlogger_createInMemoryLogger(allocator, JX_LOGGER_FLAGS_MULTITHREADED | JX_LOGGER_FLAGS_APPEND_TIMESTAMP);
 	if (!logger_api->m_SystemLogger) {
 		return false;
 	}
 
-	JX_LOG_INFO(logger_api->m_SystemLogger, "log: System logger initialized.\n");
+	JX_LOG_INFO(logger_api->m_SystemLogger, "log", "System logger initialized.\n");
 
 	return true;
 }
@@ -58,270 +47,458 @@ bool jx_logger_initAPI(jx_allocator_i* allocator)
 void jx_logger_shutdownAPI(void)
 {
 	if (logger_api->m_SystemLogger) {
-		JX_LOG_INFO(logger_api->m_SystemLogger, "log: Closing system logger.\n");
-		_jlogger_destroy(logger_api->m_SystemLogger);
+		JX_LOG_INFO(logger_api->m_SystemLogger, "log", "Closing system logger.\n");
+		logger_api->m_SystemLogger->destroy(logger_api->m_SystemLogger);
 		logger_api->m_SystemLogger = NULL;
 	}
 }
 
-static void _jlogger_destroy(jx_logger_i* logger)
+static void jlogger_destroy(jx_logger_i* logger)
 {
-	_jx_logger_i* loggerInterface = (_jx_logger_i*)logger;
-	loggerInterface->destroy(logger);
-	_jlogger_destroyLoggerInterface(loggerInterface);
-}
-
-//////////////////////////////////////////////////////////////////////////
-// Logger interface
-//
-static _jx_logger_i* _jlogger_createLoggerInterface(jx_allocator_i* allocator, uint32_t flags, uint32_t loggerDataSize)
-{
-	const uint32_t requiredMemory = 0
-		+ sizeof(_jx_logger_i)
-		+ loggerDataSize
-		;
-
-	uint8_t* buffer = JX_ALLOC(allocator, requiredMemory);
-	if (!buffer) {
-		return NULL;
-	}
-
-	uint8_t* ptr = buffer;
-	_jx_logger_i* loggerInterface = (_jx_logger_i*)ptr;
-	ptr += sizeof(_jx_logger_i);
-	loggerInterface->super.m_Inst = (jx_logger_o*)ptr;
-	ptr += loggerDataSize;
-
-	loggerInterface->m_Flags = flags;
-	loggerInterface->m_Allocator = allocator;
-	loggerInterface->m_Mutex = (flags & JX_LOGGER_FLAGS_MULTITHREADED) != 0
-		? os_api->mutexCreate()
-		: NULL
-		;
-
-	return loggerInterface;
-}
-
-static void _jlogger_destroyLoggerInterface(_jx_logger_i* logger)
-{
-	jx_allocator_i* allocator = logger->m_Allocator;
-
-	if (logger->m_Mutex) {
-		os_api->mutexDestroy(logger->m_Mutex);
-		logger->m_Mutex = NULL;
-	}
-
-	JX_FREE(allocator, logger);
+	logger->destroy(logger);
 }
 
 //////////////////////////////////////////////////////////////////////////
 // File logger
 //
-typedef struct _jx_file_logger_o
+// TODO: Use jx_string_buffer_t to avoid limiting the log line to predefined size.
+typedef struct jx_file_logger_t
 {
+	JX_INHERITS(jx_logger_i);
+	jx_allocator_i* m_Allocator;
+	jx_os_mutex_t* m_Mutex;
 	jx_os_file_t* m_File;
-} _jx_file_logger_o;
+	uint32_t m_Flags;
+	JX_PAD(4);
+} jx_file_logger_t;
 
-static void _jlogger_file_puts(jx_logger_o* inst, const char* str, uint32_t len);
-static void _jlogger_file_destroy(jx_logger_i* inst);
+static void jlogger_file_destroy(jx_logger_i* logger);
+static void jlogger_file_vlogf(jx_logger_i* logger, jx_log_level level, const char* tag, const char* fmt, va_list argList);
+static void jlogger_file_writeLine(jx_logger_i* logger, const jx_log_line_t* line);
+static void jlogger_file_writeStr(jx_file_logger_t* inst, const char* str, uint32_t len);
 
-static jx_logger_i* _jlogger_createFileLogger(jx_allocator_i* allocator, jx_file_base_dir baseDir, const char* relPath, uint32_t flags)
+static jx_logger_i* jlogger_createFileLogger(jx_allocator_i* allocator, jx_file_base_dir baseDir, const char* relPath, uint32_t flags)
 {
-	_jx_logger_i* loggerInterface = _jlogger_createLoggerInterface(allocator, flags, sizeof(_jx_file_logger_o));
-	if (!loggerInterface) {
+	jx_file_logger_t* logger = (jx_file_logger_t*)JX_ALLOC(allocator, sizeof(jx_file_logger_t));
+	if (!logger) {
 		return NULL;
 	}
 
-	_jx_file_logger_o* loggerData = (_jx_file_logger_o*)loggerInterface->super.m_Inst;
-	loggerData->m_File = os_api->fileOpenWrite(baseDir, relPath);
-	if (!loggerData->m_File) {
-		_jlogger_destroyLoggerInterface(loggerInterface);
+	jx_memset(logger, 0, sizeof(jx_file_logger_t));
+
+	logger->super.destroy = jlogger_file_destroy;
+	logger->super.logf = jlogger_generic_logf;
+	logger->super.vlogf = jlogger_generic_vlogf;
+	logger->super.writeLine = jlogger_file_writeLine;
+
+	logger->m_Allocator = allocator;
+	logger->m_Flags = flags;
+	logger->m_Mutex = (flags & JX_LOGGER_FLAGS_MULTITHREADED) != 0
+		? jx_os_mutexCreate()
+		: NULL
+		;
+	logger->m_File = jx_os_fileOpenWrite(baseDir, relPath);
+	if (!logger->m_File) {
+		jlogger_file_destroy(&logger->super);
 		return NULL;
 	}
 
-	loggerInterface->super.logf = _jlogger_text_logf;
-	loggerInterface->super.vlogf = _jlogger_text_vlogf;
-	loggerInterface->super.puts = _jlogger_file_puts;
-
-	loggerInterface->destroy = _jlogger_file_destroy;
-
-	return &loggerInterface->super;
+	return &logger->super;
 }
 
-static void _jlogger_file_puts(jx_logger_o* inst, const char* str, uint32_t len)
+static void jlogger_file_destroy(jx_logger_i* logger)
 {
-	_jx_logger_i* loggerInterface = (_jx_logger_i*)((uint8_t*)inst - sizeof(_jx_logger_i));
-	_jx_file_logger_o* loggerData = (_jx_file_logger_o*)inst;
+	jx_file_logger_t* inst = (jx_file_logger_t*)logger;
 
+	if (inst->m_File) {
+		jx_os_fileClose(inst->m_File);
+		inst->m_File = NULL;
+	}
+
+	if (inst->m_Mutex) {
+		jx_os_mutexDestroy(inst->m_Mutex);
+		inst->m_Mutex = NULL;
+	}
+
+	JX_FREE(inst->m_Allocator, inst);
+}
+
+// <level indicator> <thread id> <timestamp> <tag>: <log message>
+static void jlogger_file_writeLine(jx_logger_i* logger, const jx_log_line_t* line)
+{
+	static const char* kLogLevelPrefix[] = {
+		[JX_LOG_LEVEL_DEBUG]   = "(d) ",
+		[JX_LOG_LEVEL_INFO]    = "(i) ",
+		[JX_LOG_LEVEL_WARNING] = "(!) ",
+		[JX_LOG_LEVEL_ERROR]   = "(x) ",
+		[JX_LOG_LEVEL_FATAL]   = "(F) ",
+	};
+	JX_STATIC_ASSERT(JX_COUNTOF(kLogLevelPrefix) == JX_LOG_LEVEL_COUNT);
+
+	jx_file_logger_t* inst = (jx_file_logger_t*)logger;
+
+	if (inst->m_Mutex) {
+		jx_os_mutexLock(inst->m_Mutex);
+	}
+
+	if (line->m_Level < JX_LOG_LEVEL_COUNT && (inst->m_Flags & JX_LOGGER_FLAGS_HIDE_LOG_LEVEL_INDICATOR) == 0) {
+		jlogger_file_writeStr(inst, kLogLevelPrefix[line->m_Level], UINT32_MAX);
+	}
+
+	if ((inst->m_Flags & JX_LOGGER_FLAGS_APPEND_THREAD_ID) != 0) {
+		char threadIDStr[64];
+		jx_snprintf(threadIDStr, JX_COUNTOF(threadIDStr), "0x%08X ", line->m_ThreadID);
+		jlogger_file_writeStr(inst, threadIDStr, 11);
+	}
+
+	if ((inst->m_Flags & JX_LOGGER_FLAGS_APPEND_TIMESTAMP) != 0) {
+		char timestamp[64];
+		const uint32_t timestampLen = jx_os_timestampToString(line->m_Timestamp, timestamp, JX_COUNTOF(timestamp));
+		jlogger_file_writeStr(inst, timestamp, timestampLen);
+	}
+
+	if (line->m_Tag) {
+		jlogger_file_writeStr(inst, line->m_Tag, UINT32_MAX);
+		jlogger_file_writeStr(inst, ": ", 2);
+	}
+
+	jlogger_file_writeStr(inst, line->m_Text, UINT32_MAX);
+
+	if ((inst->m_Flags & JX_LOGGER_FLAGS_FLUSH_ON_EVERY_LOG) != 0) {
+		jx_os_fileFlush(inst->m_File);
+	}
+
+	if (inst->m_Mutex) {
+		jx_os_mutexUnlock(inst->m_Mutex);
+	}
+}
+
+static void jlogger_file_writeStr(jx_file_logger_t* inst, const char* str, uint32_t len)
+{
 	len = len == UINT32_MAX
 		? jx_strlen(str)
 		: len
 		;
 
-	if (loggerInterface->m_Mutex) {
-		os_api->mutexLock(loggerInterface->m_Mutex);
-	}
-
-	os_api->fileWrite(loggerData->m_File, str, len);
-
-	if ((loggerInterface->m_Flags & JX_LOGGER_FLAGS_FLUSH_ON_EVERY_LOG) != 0) {
-		os_api->fileFlush(loggerData->m_File);
-	}
-
-	if (loggerInterface->m_Mutex) {
-		os_api->mutexUnlock(loggerInterface->m_Mutex);
-	}
-}
-
-static void _jlogger_file_destroy(jx_logger_i* logger)
-{
-	_jx_file_logger_o* inst = (_jx_file_logger_o*)logger->m_Inst;
-
-	if (inst->m_File) {
-		os_api->fileClose(inst->m_File);
-		inst->m_File = NULL;
-	}
+	jx_os_fileWrite(inst->m_File, str, len);
 }
 
 //////////////////////////////////////////////////////////////////////////
 // In-Memory logger
 //
-typedef struct _jx_inmemory_logger_o
+typedef struct jx_inmemory_logger_t
 {
-	char* m_Buffer;
-	uint32_t m_Capacity;
-	uint32_t m_Pos;
-} _jx_inmemory_logger_o;
+	JX_INHERITS(jx_logger_i);
+	jx_allocator_i* m_Allocator;
+	jx_allocator_i* m_TextAllocator;
+	jx_os_mutex_t* m_Mutex;
+	jx_log_line_t* m_LineArr;
+	uint32_t m_Flags;
+	JX_PAD(4);
+} jx_inmemory_logger_t;
 
-static void _jlogger_inmemory_puts(jx_logger_o* inst, const char* str, uint32_t len);
-static void _jlogger_inmemory_destroy(jx_logger_i* logger);
+static void jlogger_inmemory_destroy(jx_logger_i* logger);
+static void jlogger_inmemory_writeLine(jx_logger_i* logger, const jx_log_line_t* line);
 
-static jx_logger_i* _jlogger_createInMemoryLogger(jx_allocator_i* allocator, uint32_t flags)
+static jx_logger_i* jlogger_createInMemoryLogger(jx_allocator_i* allocator, uint32_t flags)
 {
-	_jx_logger_i* loggerInterface = _jlogger_createLoggerInterface(allocator, flags, sizeof(_jx_inmemory_logger_o));
-	if (!loggerInterface) {
+	jx_inmemory_logger_t* logger = (jx_inmemory_logger_t*)JX_ALLOC(allocator, sizeof(jx_inmemory_logger_t));
+	if (!logger) {
 		return NULL;
 	}
 
-	_jx_inmemory_logger_o* loggerData = (_jx_inmemory_logger_o*)loggerInterface->super.m_Inst;
-	loggerData->m_Buffer = NULL;
-	loggerData->m_Capacity = 0;
-	loggerData->m_Pos = 0;
-
-	loggerInterface->super.logf = _jlogger_text_logf;
-	loggerInterface->super.vlogf = _jlogger_text_vlogf;
-	loggerInterface->super.puts = _jlogger_inmemory_puts;
-
-	loggerInterface->destroy = _jlogger_inmemory_destroy;
-
-	return &loggerInterface->super;
-}
-
-static void _jlogger_inmemory_destroy(jx_logger_i* logger)
-{
-	_jx_logger_i* loggerInterface = (_jx_logger_i*)logger;
-	_jx_inmemory_logger_o* inst = (_jx_inmemory_logger_o*)logger->m_Inst;
-
-	JX_FREE(loggerInterface->m_Allocator, inst->m_Buffer);
-}
-
-static void _jlogger_inmemory_puts(jx_logger_o* inst, const char* str, uint32_t len)
-{
-	_jx_logger_i* loggerInterface = (_jx_logger_i*)((uint8_t*)inst - sizeof(_jx_logger_i));
-	_jx_inmemory_logger_o* loggerData = (_jx_inmemory_logger_o*)inst;
-
-	len = len == UINT32_MAX
-		? jx_strlen(str)
-		: len
+	jx_memset(logger, 0, sizeof(jx_inmemory_logger_t));
+	
+	logger->super.destroy = jlogger_inmemory_destroy;
+	logger->super.logf = jlogger_generic_logf;
+	logger->super.vlogf = jlogger_generic_vlogf;
+	logger->super.writeLine = jlogger_inmemory_writeLine;
+	logger->m_Allocator = allocator;
+	logger->m_Flags = flags;
+	logger->m_Mutex = (flags & JX_LOGGER_FLAGS_MULTITHREADED) != 0
+		? jx_os_mutexCreate()
+		: NULL
 		;
-
-	if (loggerInterface->m_Mutex) {
-		os_api->mutexLock(loggerInterface->m_Mutex);
+	logger->m_TextAllocator = allocator_api->createLinearAllocator(1u << 20, allocator);
+	if (!logger->m_TextAllocator) {
+		jlogger_inmemory_destroy(&logger->super);
+		return NULL;
+	}
+	logger->m_LineArr = (jx_log_line_t*)jx_array_create(allocator);
+	if (!logger->m_LineArr) {
+		jlogger_inmemory_destroy(&logger->super);
+		return NULL;
 	}
 
-	if (loggerData->m_Pos + len >= loggerData->m_Capacity) {
-		const uint32_t oldCapacity = loggerData->m_Capacity;
-		
-		uint32_t extraCapacity = 2048;
-		while (extraCapacity < len) {
-			extraCapacity += 2048;
-		}
+	return &logger->super;
+}
 
-		const uint32_t newCapacity = oldCapacity + extraCapacity;
+static void jlogger_inmemory_destroy(jx_logger_i* logger)
+{
+	jx_inmemory_logger_t* inst = (jx_inmemory_logger_t*)logger;
 
-		char* buffer = (char*)JX_ALLOC(loggerInterface->m_Allocator, newCapacity);
-		if (!buffer) {
-			if (loggerInterface->m_Mutex) {
-				os_api->mutexUnlock(loggerInterface->m_Mutex);
-			}
-			return;
-		}
+	jx_array_free(inst->m_LineArr);
 
-		jx_memcpy(buffer, loggerData->m_Buffer, oldCapacity);
-
-		JX_FREE(loggerInterface->m_Allocator, loggerData->m_Buffer);
-		loggerData->m_Buffer = buffer;
-		loggerData->m_Capacity = newCapacity;
+	if (inst->m_TextAllocator) {
+		allocator_api->destroyLinearAllocator(inst->m_TextAllocator);
+		inst->m_TextAllocator = NULL;
 	}
 
-	jx_memcpy(&loggerData->m_Buffer[loggerData->m_Pos], str, len);
-	loggerData->m_Pos += len;
-	loggerData->m_Buffer[loggerData->m_Pos] = '\0';
+	if (inst->m_Mutex) {
+		jx_os_mutexDestroy(inst->m_Mutex);
+		inst->m_Mutex = NULL;
+	}
 
-	if (loggerInterface->m_Mutex) {
-		os_api->mutexUnlock(loggerInterface->m_Mutex);
+	JX_FREE(inst->m_Allocator, inst);
+}
+
+static void jlogger_inmemory_writeLine(jx_logger_i* logger, const jx_log_line_t* line)
+{
+	jx_inmemory_logger_t* inst = (jx_inmemory_logger_t*)logger;
+
+	if (inst->m_Mutex) {
+		jx_os_mutexLock(inst->m_Mutex);
+	}
+
+	jx_log_line_t tmp = {
+		.m_Level = line->m_Level,
+		.m_Tag = line->m_Tag,
+		.m_Timestamp = line->m_Timestamp,
+		.m_ThreadID = line->m_ThreadID,
+	};
+	tmp.m_Text = jx_strdup(line->m_Text, inst->m_TextAllocator);
+	jx_array_push_back(inst->m_LineArr, tmp);
+
+	if (inst->m_Mutex) {
+		jx_os_mutexUnlock(inst->m_Mutex);
 	}
 }
 
-static const char* _jlogger_getInMemoryLoggerBuffer(jx_logger_i* logger)
+static int32_t jlogger_inmemory_dumpToBuffer(jx_logger_i* logger, jx_string_buffer_t* sb)
 {
-	return ((_jx_inmemory_logger_o*)logger->m_Inst)->m_Buffer;
+	JX_NOT_IMPLEMENTED();
+	return JX_ERROR_OPERATION_FAILED;
+}
+
+static int32_t jlogger_inmemory_dumpToLogger(jx_logger_i* logger, jx_logger_i* dst)
+{
+	jx_inmemory_logger_t* inst = (jx_inmemory_logger_t*)logger;
+
+	if (inst->m_Mutex) {
+		jx_os_mutexLock(inst->m_Mutex);
+	}
+
+	const uint32_t numLines = (uint32_t)jx_array_sizeu(inst->m_LineArr);
+	for (uint32_t iLine = 0; iLine < numLines; ++iLine) {
+		dst->writeLine(dst, &inst->m_LineArr[iLine]);
+	}
+
+	if (inst->m_Mutex) {
+		jx_os_mutexUnlock(inst->m_Mutex);
+	}
+
+	return JX_ERROR_NONE;
 }
 
 //////////////////////////////////////////////////////////////////////////
-// Common logger functions
+// Console logger
 //
-static void _jlogger_text_logf(jx_logger_o* inst, jx_log_level level, const char* fmt, ...)
+typedef struct jx_console_logger_t
+{
+	JX_INHERITS(jx_logger_i);
+	jx_allocator_i* m_Allocator;
+	jx_os_mutex_t* m_Mutex;
+	uint32_t m_Flags;
+	JX_PAD(4);
+} jx_console_logger_t;
+
+static void jlogger_console_destroy(jx_logger_i* logger);
+static void jlogger_console_writeLine(jx_logger_i* logger, const jx_log_line_t* line);
+
+static jx_logger_i* jlogger_createConsoleLogger(jx_allocator_i* allocator, uint32_t flags)
+{
+	jx_console_logger_t* logger = (jx_console_logger_t*)JX_ALLOC(allocator, sizeof(jx_console_logger_t));
+	if (!logger) {
+		return NULL;
+	}
+
+	jx_memset(logger, 0, sizeof(jx_console_logger_t));
+
+	logger->super.destroy = jlogger_console_destroy;
+	logger->super.logf = jlogger_generic_logf;
+	logger->super.vlogf = jlogger_generic_vlogf;
+	logger->super.writeLine = jlogger_console_writeLine;
+	logger->m_Allocator = allocator;
+	logger->m_Flags = flags;
+	logger->m_Mutex = (flags & JX_LOGGER_FLAGS_MULTITHREADED) != 0
+		? jx_os_mutexCreate()
+		: NULL
+		;
+	return &logger->super;
+}
+
+static void jlogger_console_destroy(jx_logger_i* logger)
+{
+	jx_console_logger_t* inst = (jx_console_logger_t*)logger;
+
+	if (inst->m_Mutex) {
+		jx_os_mutexDestroy(inst->m_Mutex);
+		inst->m_Mutex = NULL;
+	}
+
+	JX_FREE(inst->m_Allocator, logger);
+}
+
+static void jlogger_console_writeLine(jx_logger_i* logger, const jx_log_line_t* line)
+{
+	jx_console_logger_t* inst = (jx_console_logger_t*)logger;
+
+	if (inst->m_Mutex) {
+		jx_os_mutexLock(inst->m_Mutex);
+	}
+
+	if ((inst->m_Flags & JX_LOGGER_FLAGS_HIDE_LOG_LEVEL_INDICATOR) == 0) {
+		switch (line->m_Level) {
+		case JX_LOG_LEVEL_DEBUG: {
+			jx_os_consolePuts("\x1b[32m", 5);
+		} break;
+		case JX_LOG_LEVEL_INFO: {
+//			jx_os_consolePuts("\x1b[37m", 5);
+		} break;
+		case JX_LOG_LEVEL_WARNING: {
+			jx_os_consolePuts("\x1b[33m", 5);
+		} break;
+		case JX_LOG_LEVEL_ERROR: {
+			jx_os_consolePuts("\x1b[31m", 5);
+		} break;
+		case JX_LOG_LEVEL_FATAL: {
+			jx_os_consolePuts("\x1b[41m", 5);
+		} break;
+		}
+	}
+
+	if ((inst->m_Flags & JX_LOGGER_FLAGS_APPEND_THREAD_ID) != 0) {
+		char threadIDStr[64];
+		jx_snprintf(threadIDStr, JX_COUNTOF(threadIDStr), "0x%08X ", line->m_ThreadID);
+		jx_os_consolePuts(threadIDStr, 11);
+	}
+
+	if ((inst->m_Flags & JX_LOGGER_FLAGS_APPEND_TIMESTAMP) != 0) {
+		char timestamp[64];
+		const uint32_t timestampLen = jx_os_timestampToString(line->m_Timestamp, timestamp, JX_COUNTOF(timestamp));
+		jx_os_consolePuts(timestamp, timestampLen);
+	}
+
+	if (line->m_Tag) {
+		jx_os_consolePuts(line->m_Tag, UINT32_MAX);
+		jx_os_consolePuts(": ", 2);
+	}
+
+	jx_os_consolePuts(line->m_Text, UINT32_MAX);
+
+	if ((inst->m_Flags & JX_LOGGER_FLAGS_HIDE_LOG_LEVEL_INDICATOR) == 0) {
+		jx_os_consolePuts("\x1b[0m", UINT32_MAX);
+	}
+
+	if (inst->m_Mutex) {
+		jx_os_mutexUnlock(inst->m_Mutex);
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Compound logger
+//
+typedef struct jx_composite_logger_t
+{
+	JX_INHERITS(jx_logger_i);
+	jx_allocator_i* m_Allocator;
+	jx_os_mutex_t* m_Mutex;
+	jx_logger_i** m_ChildArr;
+	uint32_t m_Flags;
+	JX_PAD(4);
+} jx_composite_logger_t;
+
+static void jlogger_compositeLogger_destroy(jx_logger_i* inst);
+static void jlogger_compositeLogger_writeLine(jx_logger_i* inst, const jx_log_line_t* line);
+
+static jx_logger_i* jlogger_createCompositeLogger(jx_allocator_i* allocator, uint32_t flags)
+{
+	jx_composite_logger_t* logger = (jx_composite_logger_t*)JX_ALLOC(allocator, sizeof(jx_composite_logger_t));
+	if (!logger) {
+		return NULL;
+	}
+
+	jx_memset(logger, 0, sizeof(jx_composite_logger_t));
+
+	logger->super.destroy = jlogger_compositeLogger_destroy;
+	logger->super.logf = jlogger_generic_logf;
+	logger->super.vlogf = jlogger_generic_vlogf;
+	logger->super.writeLine = jlogger_compositeLogger_writeLine;
+	logger->m_Allocator = allocator;
+	logger->m_Flags = flags;
+	logger->m_Mutex = (flags & JX_LOGGER_FLAGS_MULTITHREADED) != 0
+		? jx_os_mutexCreate()
+		: NULL
+		;
+	logger->m_ChildArr = (jx_logger_i**)jx_array_create(allocator);
+	if (!logger->m_ChildArr) {
+		jlogger_compositeLogger_destroy(&logger->super);
+		return NULL;
+	}
+
+	return &logger->super;
+}
+
+static void jlogger_compositeLogger_destroy(jx_logger_i* logger)
+{
+	jx_composite_logger_t* inst = (jx_composite_logger_t*)logger;
+
+	const uint32_t numChildren = (uint32_t)jx_array_sizeu(inst->m_ChildArr);
+	for (uint32_t iChild = 0; iChild < numChildren; ++iChild) {
+		jx_logger_i* child = inst->m_ChildArr[iChild];
+		child->destroy(child);
+	}
+
+	jx_array_free(inst->m_ChildArr);
+	inst->m_ChildArr = NULL;
+
+	JX_FREE(inst->m_Allocator, inst);
+}
+
+static void jlogger_compositeLogger_writeLine(jx_logger_i* logger, const jx_log_line_t* line)
+{
+	jx_composite_logger_t* inst = (jx_composite_logger_t*)logger;
+	const uint32_t numChildren = (uint32_t)jx_array_sizeu(inst->m_ChildArr);
+	for (uint32_t iChild = 0; iChild < numChildren; ++iChild) {
+		jx_logger_i* child = inst->m_ChildArr[iChild];
+		child->writeLine(child, line);
+	}
+}
+
+static void jlogger_compositeLoggerAddChild(jx_logger_i* logger, jx_logger_i* childLogger)
+{
+	jx_composite_logger_t* inst = (jx_composite_logger_t*)logger;
+	jx_array_push_back(inst->m_ChildArr, childLogger);
+}
+
+static void jlogger_generic_logf(jx_logger_i* logger, jx_log_level level, const char* tag, const char* fmt, ...)
 {
 	va_list argList;
 	va_start(argList, fmt);
-	_jlogger_text_vlogf(inst, level, fmt, argList);
+	logger->vlogf(logger, level, tag, fmt, argList);
 	va_end(argList);
 }
 
-// <level indicator> <thread id> <timestamp> <log message>
-static void _jlogger_text_vlogf(jx_logger_o* inst, jx_log_level level, const char* fmt, va_list argList)
+static void jlogger_generic_vlogf(jx_logger_i* logger, jx_log_level level, const char* tag, const char* fmt, va_list argList)
 {
-	_jx_logger_i* loggerInterface = (_jx_logger_i*)((uint8_t*)inst - sizeof(_jx_logger_i));
-
 	char logLine[4096];
-	const uint32_t logLineLen = jx_vsnprintf(logLine, JX_COUNTOF(logLine), fmt, argList);
+	jx_vsnprintf(logLine, JX_COUNTOF(logLine), fmt, argList);
 
-	if (loggerInterface->m_Mutex) {
-		os_api->mutexLock(loggerInterface->m_Mutex);
-	}
-
-	if ((loggerInterface->m_Flags & JX_LOGGER_FLAGS_HIDE_LOG_LEVEL_INDICATOR) == 0) {
-		loggerInterface->super.puts(inst, kLogLevelPrefix[level], UINT32_MAX);
-	}
-
-	if ((loggerInterface->m_Flags & JX_LOGGER_FLAGS_APPEND_THREAD_ID) != 0) {
-		const uint32_t threadID = os_api->threadGetID();
-
-		char threadIDStr[64];
-		jx_snprintf(threadIDStr, JX_COUNTOF(threadIDStr), "0x%08X ", threadID);
-		loggerInterface->super.puts(inst, threadIDStr, 11);
-	}
-
-	if ((loggerInterface->m_Flags & JX_LOGGER_FLAGS_APPEND_TIMESTAMP) != 0) {
-		char timestamp[64];
-		const uint32_t timestampLen = os_api->timestampToString(os_api->timestampNow(), timestamp, JX_COUNTOF(timestamp));
-		loggerInterface->super.puts(inst, timestamp, timestampLen);
-	}
-
-	loggerInterface->super.puts(inst, logLine, logLineLen);
-
-	if (loggerInterface->m_Mutex) {
-		os_api->mutexUnlock(loggerInterface->m_Mutex);
-	}
+	logger->writeLine(logger, &(jx_log_line_t){
+		.m_Level = level,
+		.m_Tag = tag,
+		.m_Text = logLine,
+		.m_ThreadID = jx_os_threadGetID(),
+		.m_Timestamp = jx_os_timestampNow()
+	});
 }
