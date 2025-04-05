@@ -41,7 +41,6 @@ typedef jx_ir_instruction_t* (*irUnaryOpFunc)(jx_ir_context_t* ctx, jx_ir_value_
 typedef jx_ir_instruction_t* (*irBinaryOpFunc)(jx_ir_context_t* ctx, jx_ir_value_t* op1, jx_ir_value_t* op2);
 
 static irUnaryOpFunc kIRUnaryOps[] = {
-	[JCC_NODE_EXPR_NOT] = jx_ir_instrNot,
 	[JCC_NODE_EXPR_NEG] = jx_ir_instrNeg,
 	[JCC_NODE_EXPR_BITWISE_NOT] = jx_ir_instrNot,
 };
@@ -843,8 +842,27 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 		jx_ir_value_t* exprVal = jirgenGenExpression(ctx, unaryNode->m_Expr);
 		val = jirgenGenLoad(ctx, exprVal, expr->m_Type);
 	} break; 
+	case JCC_NODE_EXPR_NOT: {
+		// C11/6.5.3.3: The result of the logical negation operator ! is 0 if the value of its operand compares
+		// unequal to 0, 1 if the value of its operand compares equal to 0. The result has type int. The expression 
+		// !E is equivalent to (0 == E)
+		jx_cc_ast_expr_unary_t* unaryNode = (jx_cc_ast_expr_unary_t*)expr;
+		jx_ir_value_t* exprVal = jirgenGenExpression(ctx, unaryNode->m_Expr);
+
+		// Convert to boolean
+		jx_ir_value_t* toBoolVal = jirgenConvertToBool(ctx, exprVal);
+
+		// Invert boolean
+		jx_ir_instruction_t* toBoolNotInstr = jx_ir_instrNot(irctx, toBoolVal);
+		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, toBoolNotInstr);
+		jx_ir_value_t* toBoolNotVal = jx_ir_instrToValue(toBoolNotInstr);
+
+		// Zero-extend to i32
+		jx_ir_instruction_t* zextInstr = jx_ir_instrZeroExt(irctx, toBoolNotVal, jx_ir_typeGetPrimitive(irctx, JIR_TYPE_I32));
+		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, zextInstr);
+		val = jx_ir_instrToValue(zextInstr);
+	} break;
 	case JCC_NODE_EXPR_NEG:
-	case JCC_NODE_EXPR_NOT: 
 	case JCC_NODE_EXPR_BITWISE_NOT: {
 		jx_cc_ast_expr_unary_t* unaryNode = (jx_cc_ast_expr_unary_t*)expr;
 		jx_ir_value_t* exprVal = jirgenGenExpression(ctx, unaryNode->m_Expr);
