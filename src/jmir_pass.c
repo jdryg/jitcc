@@ -221,10 +221,65 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 }
 
 //////////////////////////////////////////////////////////////////////////
+// Fix 
+// - mov memDst, memSrc => mov vr, memSrc; mov memDst, vr;
+//
+static void jmir_funcPass_fixMemMemOpsDestroy(jx_mir_function_pass_o* inst, jx_allocator_i* allocator);
+static bool jmir_funcPass_fixMemMemOpsRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func);
+
+bool jx_mir_funcPassCreate_fixMemMemOps(jx_mir_function_pass_t* pass, jx_allocator_i* allocator)
+{
+	pass->m_Inst = NULL;
+	pass->run = jmir_funcPass_fixMemMemOpsRun;
+	pass->destroy = jmir_funcPass_fixMemMemOpsDestroy;
+
+	return true;
+}
+
+static void jmir_funcPass_fixMemMemOpsDestroy(jx_mir_function_pass_o* inst, jx_allocator_i* allocator)
+{
+}
+
+static bool jmir_funcPass_fixMemMemOpsRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
+{
+	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
+	while (bb) {
+		jx_mir_instruction_t* instr = bb->m_InstrListHead;
+		while (instr) {
+			jx_mir_instruction_t* instrNext = instr->m_Next;
+
+			switch (instr->m_OpCode) {
+			case JMIR_OP_MOV:
+			case JMIR_OP_MOVSX:
+			case JMIR_OP_MOVZX: {
+				jx_mir_operand_t* dst = instr->m_Operands[0];
+				jx_mir_operand_t* src = instr->m_Operands[1];
+				const bool isDstMem = dst->m_Kind == JMIR_OPERAND_MEMORY_REF || dst->m_Kind == JMIR_OPERAND_STACK_OBJECT;
+				const bool isSrcMem = src->m_Kind == JMIR_OPERAND_MEMORY_REF || src->m_Kind == JMIR_OPERAND_STACK_OBJECT;
+				if (isDstMem && isSrcMem) {
+					jx_mir_operand_t* vreg = jx_mir_opVirtualReg(ctx, func, dst->m_Type);
+					jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, vreg, src));
+					jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, dst, vreg));
+					jx_mir_bbRemoveInstr(ctx, bb, instr);
+					jx_mir_instrFree(ctx, instr);
+				}
+			} break;
+			}
+
+			instr = instrNext;
+		}
+
+		bb = bb->m_Next;
+	}
+
+	return false;
+}
+
+//////////////////////////////////////////////////////////////////////////
 // Register allocator using Iterated Register Coalescing algorithm from
 // https://www.cse.iitm.ac.in/~krishna/cs6013/george.pdf
 // 
-#define JMIR_REGALLOC_MAX_INSTR_DEFS    4
+#define JMIR_REGALLOC_MAX_INSTR_DEFS    8
 #define JMIR_REGALLOC_MAX_INSTR_USES    4
 #define JMIR_REGALLOC_MAX_ITERATIONS    10
 
@@ -669,6 +724,7 @@ static void jmir_regAlloc_instrAddUse(jmir_func_pass_regalloc_t* pass, jmir_inst
 		return;
 	}
 
+	JX_CHECK(instrInfo->m_NumUses + 1 < JMIR_REGALLOC_MAX_INSTR_DEFS, "Too many instruction uses");
 	instrInfo->m_Uses[instrInfo->m_NumUses++] = id;
 }
 
@@ -677,6 +733,7 @@ static void jmir_regAlloc_instrAddDef(jmir_func_pass_regalloc_t* pass, jmir_inst
 	JX_CHECK(regID != JMIR_MEMORY_REG_NONE, "Invalid register ID");
 	const uint32_t id = jmir_regAlloc_mapRegToID(pass, regID);
 	JX_CHECK(id != UINT32_MAX, "Failed to map register to node index");
+	JX_CHECK(instrInfo->m_NumDefs + 1 < JMIR_REGALLOC_MAX_INSTR_DEFS, "Too many instruction defs");
 	instrInfo->m_Defs[instrInfo->m_NumDefs++] = id;
 }
 
@@ -777,6 +834,8 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 		if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
 			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseRegID);
 			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexRegID);
+		} else if (src->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+			// NOTE: External symbols are RIP based so there is no register to use.
 		} else {
 			JX_CHECK(src->m_Kind == JMIR_OPERAND_STACK_OBJECT, "lea source operand expected to be a memory ref or a stack object.");
 		}
@@ -786,7 +845,18 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 		jmir_regAlloc_instrAddDef(pass, instrInfo, dst->u.m_RegID);
 	} break;
 	case JMIR_OP_CALL: {
-		JX_NOT_IMPLEMENTED();
+		jx_mir_operand_t* targetOp = instr->m_Operands[0];
+		jx_mir_function_t* targetFunc = jx_mir_getFunctionByName(pass->m_Ctx, targetOp->u.m_ExternalSymbolName);
+		JX_CHECK(targetFunc, "Function not found!");
+		const uint32_t numRegArgs = jx_min_u32(targetFunc->m_NumArgs, JX_COUNTOF(kMIRFuncArgIReg));
+		for (uint32_t iRegArg = 0; iRegArg < numRegArgs; ++iRegArg) {
+			jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgIReg[iRegArg]);
+		}
+
+		const uint32_t numCallerSavedRegs = JX_COUNTOF(kMIRFuncCallerSavedIReg);
+		for (uint32_t iReg = 0; iReg < numCallerSavedRegs; ++iReg) {
+			jmir_regAlloc_instrAddDef(pass, instrInfo, kMIRFuncCallerSavedIReg[iReg]);
+		}
 	} break;
 	case JMIR_OP_PUSH: {
 		JX_NOT_IMPLEMENTED();
