@@ -148,6 +148,8 @@ static bool jx64_binary_op_reg_reg(jx_x64_instr_encoding_t* enc, const uint8_t* 
 static bool jx64_binary_op_reg_mem(jx_x64_instr_encoding_t* enc, const uint8_t* opcode, uint32_t opcodeSize, jx_x64_reg reg, const jx_x64_mem_t* mem);
 static bool jx64_mov_reg_imm(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, uint64_t src_imm, jx_x64_size src_imm_sz);
 static bool jx64_mov_mem_imm(jx_x64_instr_encoding_t* enc, const jx_x64_mem_t* dst_m, uint64_t src_imm, jx_x64_size src_imm_sz);
+static bool jx64_movsx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, jx_x64_reg src_r);
+static bool jx64_movzx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, jx_x64_reg src_r);
 static bool jx64_instrBuf_push8(jx_x64_instr_buffer_t* ib, uint8_t b);
 static bool jx64_instrBuf_push16(jx_x64_instr_buffer_t* ib, uint16_t w);
 static bool jx64_instrBuf_push32(jx_x64_instr_buffer_t* ib, uint32_t dw);
@@ -552,26 +554,11 @@ bool jx64_movsx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 	jx_x64_instr_encoding_t* enc = &(jx_x64_instr_encoding_t) { 0 };
 
 	if (src.m_Type == JX64_OPERAND_REG) {
-		if (src.m_Size == JX64_SIZE_8) {
-			// NOTE: Reverse the order of operands because jx64_binary_op_reg_reg assumes the instruction
-			// is in the form "op r/m, r", but in this case it's actually "op r, r/m"
-			const uint8_t opcode[] = { 0x0F, 0xBE };
-			if (!jx64_binary_op_reg_reg(enc, opcode, JX_COUNTOF(opcode), src.u.m_Reg, dst.u.m_Reg)) {
-				return false;
-			}
-		} else if (src.m_Size == JX64_SIZE_16) {
-			// NOTE: Reverse the order of operands because jx64_binary_op_reg_reg assumes the instruction
-			// is in the form "op r/m, r", but in this case it's actually "op r, r/m"
-			const uint8_t opcode[] = { 0x0F, 0xBF };
-			if (!jx64_binary_op_reg_reg(enc, opcode, JX_COUNTOF(opcode), src.u.m_Reg, dst.u.m_Reg)) {
-				return false;
-			}
-		} else if (src.m_Size == JX64_SIZE_32) {
-			if (!jx64_math_binary_op_reg_reg(enc, 0x62, dst.u.m_Reg, src.u.m_Reg)) {
-				return false;
-			}
+		if (!jx64_movsx_reg_reg(enc, dst.u.m_Reg, src.u.m_Reg)) {
+			return false;
 		}
 	} else if (src.m_Type == JX64_OPERAND_MEM) {
+		JX_CHECK(false, "Untested code below! If this assert hits check if it's correct. Otherwise implemement jx64_movsx_reg_mem.");
 		if (src.m_Size == JX64_SIZE_8) {
 			const uint8_t opcode[] = { 0x0F, 0xBE };
 			if (!jx64_binary_op_reg_mem(enc, opcode, JX_COUNTOF(opcode), dst.u.m_Reg, &src.u.m_Mem)) {
@@ -637,24 +624,11 @@ bool jx64_movzx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 	jx_x64_instr_encoding_t* enc = &(jx_x64_instr_encoding_t) { 0 };
 
 	if (src.m_Type == JX64_OPERAND_REG) {
-		if (src.m_Size == JX64_SIZE_8) {
-			// NOTE: Reverse the order of operands because jx64_binary_op_reg_reg assumes the instruction
-			// is in the form "op r/m, r", but in this case it's actually "op r, r/m"
-			const uint8_t opcode[] = { 0x0F, 0xB6 };
-			if (!jx64_binary_op_reg_reg(enc, opcode, JX_COUNTOF(opcode), src.u.m_Reg, dst.u.m_Reg)) {
-				return false;
-			}
-		} else if (src.m_Size == JX64_SIZE_16) {
-			// NOTE: Reverse the order of operands because jx64_binary_op_reg_reg assumes the instruction
-			// is in the form "op r/m, r", but in this case it's actually "op r, r/m"
-			const uint8_t opcode[] = { 0x0F, 0xB7 };
-			if (!jx64_binary_op_reg_reg(enc, opcode, JX_COUNTOF(opcode), src.u.m_Reg, dst.u.m_Reg)) {
-				return false;
-			}
-		} else if (src.m_Size == JX64_SIZE_32) {
-			JX_NOT_IMPLEMENTED();
+		if (!jx64_movzx_reg_reg(enc, dst.u.m_Reg, src.u.m_Reg)) {
+			return false;
 		}
 	} else if (src.m_Type == JX64_OPERAND_MEM) {
+		JX_CHECK(false, "Untested code below! If this assert hits check if it's correct. Otherwise implemement jx64_movzx_reg_mem.");
 		if (src.m_Size == JX64_SIZE_8) {
 			const uint8_t opcode[] = { 0x0F, 0xB6 };
 			if (!jx64_binary_op_reg_mem(enc, opcode, JX_COUNTOF(opcode), dst.u.m_Reg, &src.u.m_Mem)) {
@@ -2170,7 +2144,7 @@ static bool jx64_binary_op_reg_reg(jx_x64_instr_encoding_t* enc, const uint8_t* 
 		|| src == JX64_REG_NONE
 		|| JX64_REG_IS_RIP(dst)
 		|| JX64_REG_IS_RIP(src)
-//		|| JX64_REG_GET_SIZE(dst) != JX64_REG_GET_SIZE(src) // NOTE: Removed for movzx
+		|| JX64_REG_GET_SIZE(dst) != JX64_REG_GET_SIZE(src)
 		;
 	if (invalidOperands) {
 		return false;
@@ -2524,6 +2498,80 @@ static bool jx64_mov_mem_imm(jx_x64_instr_encoding_t* enc, const jx_x64_mem_t* d
 		jx64_instrEnc_disp(enc, true, JX64_SIZE_32, dst_m->m_Displacement);
 		jx64_instrEnc_imm(enc, true, src_imm_sz == JX64_SIZE_64 ? JX64_SIZE_32 : src_imm_sz, src_imm);
 	}
+
+	return true;
+}
+
+static bool jx64_movsx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, jx_x64_reg src_r)
+{
+	jx_x64_size src_r_sz = JX64_REG_GET_SIZE(src_r);
+	jx_x64_size dst_r_sz = JX64_REG_GET_SIZE(dst_r);
+
+	const bool invalidOperands = false
+		|| dst_r == JX64_REG_NONE
+		|| src_r == JX64_REG_NONE
+		|| JX64_REG_IS_RIP(dst_r)
+		|| JX64_REG_IS_RIP(src_r)
+		|| src_r_sz == JX64_SIZE_64
+		;
+	if (invalidOperands) {
+		return false;
+	}
+
+	const bool needsREX = false
+		|| (dst_r_sz == JX64_SIZE_8 && (JX64_REG_GET_ID(dst_r) >= JX64_REG_ID_RSP || JX64_REG_GET_ID(src_r) >= JX64_REG_ID_RSP))
+		|| dst_r_sz == JX64_SIZE_64
+		|| JX64_REG_IS_HI(dst_r)
+		|| JX64_REG_IS_HI(src_r)
+		;
+
+	jx64_instrEnc_operandSize(enc, dst_r_sz == JX64_SIZE_16);
+	jx64_instrEnc_rex(enc, needsREX, dst_r_sz == JX64_SIZE_64, JX64_REG_HI(src_r), 0, JX64_REG_HI(dst_r));
+	if (src_r_sz == JX64_SIZE_8) {
+		jx64_instrEnc_opcode2(enc, 0x0F, 0xBE);
+	} else if (src_r_sz == JX64_SIZE_16) {
+		jx64_instrEnc_opcode2(enc, 0x0F, 0xBF);
+	} else if (src_r_sz == JX64_SIZE_32) {
+		jx64_instrEnc_opcode1(enc, 0x63);
+	}
+	jx64_instrEnc_modrm(enc, 0b11, JX64_REG_LO(src_r), JX64_REG_LO(dst_r));
+
+	return true;
+}
+
+static bool jx64_movzx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, jx_x64_reg src_r)
+{
+	jx_x64_size src_r_sz = JX64_REG_GET_SIZE(src_r);
+	jx_x64_size dst_r_sz = JX64_REG_GET_SIZE(dst_r);
+
+	const bool invalidOperands = false
+		|| dst_r == JX64_REG_NONE
+		|| src_r == JX64_REG_NONE
+		|| JX64_REG_IS_RIP(dst_r)
+		|| JX64_REG_IS_RIP(src_r)
+		|| src_r_sz == JX64_SIZE_64 
+		;
+	if (invalidOperands) {
+		return false;
+	}
+
+	const bool needsREX = false
+		|| (dst_r_sz == JX64_SIZE_8 && (JX64_REG_GET_ID(dst_r) >= JX64_REG_ID_RSP || JX64_REG_GET_ID(src_r) >= JX64_REG_ID_RSP))
+		|| dst_r_sz == JX64_SIZE_64
+		|| JX64_REG_IS_HI(dst_r)
+		|| JX64_REG_IS_HI(src_r)
+		;
+
+	jx64_instrEnc_operandSize(enc, dst_r_sz == JX64_SIZE_16);
+	jx64_instrEnc_rex(enc, needsREX, dst_r_sz == JX64_SIZE_64, JX64_REG_HI(src_r), 0, JX64_REG_HI(dst_r));
+	if (src_r_sz == JX64_SIZE_8) {
+		jx64_instrEnc_opcode2(enc, 0x0F, 0xB6);
+	} else if (src_r_sz == JX64_SIZE_16) {
+		jx64_instrEnc_opcode2(enc, 0x0F, 0xB7);
+	} else if (src_r_sz == JX64_SIZE_32) {
+		JX_CHECK(false, "Use mov reg, reg instead!");
+	}
+	jx64_instrEnc_modrm(enc, 0b11, JX64_REG_LO(src_r), JX64_REG_LO(dst_r));
 
 	return true;
 }

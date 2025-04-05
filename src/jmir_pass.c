@@ -846,6 +846,7 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 	} break;
 	case JMIR_OP_CALL: {
 		jx_mir_operand_t* targetOp = instr->m_Operands[0];
+		JX_CHECK(targetOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL, "call reg not implemented yet. This will crash below!");
 		jx_mir_function_t* targetFunc = jx_mir_getFunctionByName(pass->m_Ctx, targetOp->u.m_ExternalSymbolName);
 		JX_CHECK(targetFunc, "Function not found!");
 		const uint32_t numRegArgs = jx_min_u32(targetFunc->m_NumArgs, JX_COUNTOF(kMIRFuncArgIReg));

@@ -757,7 +757,7 @@ int main(int argc, char** argv)
 	jx_allocator_i* allocator = allocator_api->createAllocator("jcc");
 
 #if 1
-	for (uint32_t iTest = 1; iTest <= 40; ++iTest) {
+	for (uint32_t iTest = 1; iTest <= 86; ++iTest) {
 		char sourceFile[256];
 		jx_snprintf(sourceFile, JX_COUNTOF(sourceFile), "test/c-testsuite/%05d.c", iTest);
 
@@ -766,6 +766,26 @@ int main(int argc, char** argv)
 		const bool skipTest = false
 			|| iTest == 25 // Uses external functions (strlen)
 			|| iTest == 40 // Uses external functions (calloc)
+			|| iTest == 45 // Global pointer to global variable (relocations)
+			|| iTest == 49 // Global pointer to global variable (relocations)
+			|| iTest == 56 // Uses external functions (printf)
+			|| iTest == 61 // Missing; Requires preprocessor
+			|| iTest == 62 // Missing; Requires preprocessor
+			|| iTest == 63 // Missing; Requires preprocessor
+			|| iTest == 64 // Missing; Requires preprocessor
+			|| iTest == 65 // Missing; Requires preprocessor
+			|| iTest == 66 // Missing; Requires preprocessor
+			|| iTest == 67 // Missing; Requires preprocessor
+			|| iTest == 68 // Missing; Requires preprocessor
+			|| iTest == 69 // Missing; Requires preprocessor
+			|| iTest == 70 // Missing; Requires preprocessor
+			|| iTest == 71 // Missing; Requires preprocessor
+			|| iTest == 74 // Missing; Requires preprocessor
+			|| iTest == 75 // Missing; Requires preprocessor
+			|| iTest == 79 // Missing; Requires preprocessor
+			|| iTest == 83 // Missing; Requires preprocessor
+			|| iTest == 84 // Missing; Requires preprocessor
+			|| iTest == 85 // Missing; Requires preprocessor
 			;
 		if (skipTest) {
 			JX_SYS_LOG_WARNING(NULL, "SKIPPED\n");
@@ -834,7 +854,7 @@ int main(int argc, char** argv)
 #else
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-	const char* sourceFile = "test/c-testsuite/00037.c";
+	const char* sourceFile = "test/c-testsuite/00086.c";
 //	const char* sourceFile = "test/pointer_arithmetic.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
