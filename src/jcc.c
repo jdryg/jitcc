@@ -390,6 +390,7 @@ jx_cc_context_t* jx_cc_createContext(jx_allocator_i* allocator, jx_logger_i* log
 
 	jx_memset(ctx, 0, sizeof(jx_cc_context_t));
 	ctx->m_Allocator = allocator;
+	ctx->m_Logger = logger;
 
 	ctx->m_LinearAllocator = allocator_api->createLinearAllocator(1u << 20, allocator);
 	if (!ctx->m_LinearAllocator) {
@@ -474,6 +475,7 @@ jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_d
 	char* source = (char*)jx_os_fsReadFile(baseDir, filename, ctx->m_Allocator, true, &sourceLen);
 	if (!source) {
 		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Failed to open file \"%s\".", filename);
+		JX_FREE(ctx->m_Allocator, unit);
 		return NULL;
 	}
 
