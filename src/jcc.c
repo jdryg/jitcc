@@ -8,7 +8,6 @@
 // - No global state. All tokenizer and parser state are contained 
 //   in structs which must be allocated (either on the heap or the stack).
 // - No exit() calls on errors. 
-// - Error list per translation unit.
 // - No CRT (uses my custom replacement functions)
 // - String (token, label) interning
 // - Converted fat AST node struct into hierarchy of node types
@@ -30,6 +29,7 @@
 #include <jlib/allocator.h>
 #include <jlib/array.h>
 #include <jlib/hashmap.h>
+#include <jlib/logger.h>
 #include <jlib/math.h>
 #include <jlib/memory.h>
 #include <jlib/os.h>
@@ -290,9 +290,6 @@ typedef struct jcc_translation_unit_t
 	uint32_t m_NextLabelID;
 	uint32_t m_NextLocalVarID;
 	uint32_t m_NextGlobalVarID;
-
-	// Errors
-	char** m_ErrorsArr;
 } jcc_translation_unit_t;
 
 typedef struct jx_cc_context_t
@@ -301,7 +298,7 @@ typedef struct jx_cc_context_t
 	jx_allocator_i* m_LinearAllocator;
 	jx_string_table_t* m_StringTable;
 	jx_cc_translation_unit_t** m_TranslationUnitsArr;
-	uint32_t m_FileID;
+	jx_logger_i* m_Logger;
 } jx_cc_context_t;
 
 jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, char* source, uint64_t sourceLen);
@@ -382,9 +379,9 @@ static jx_cc_type_t* jcc_typeAllocEnum(jx_cc_context_t* ctx);
 static jx_cc_type_t* jcc_typeAllocStruct(jx_cc_context_t* ctx);
 static bool jcc_astAddType(jx_cc_context_t* ctx, jx_cc_ast_node_t* node);
 
-static void jcc_tuError(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const jx_cc_source_loc_t* loc, const char* fmt, ...);
+static void jcc_logError(jx_cc_context_t* ctx, const jx_cc_source_loc_t* loc, const char* fmt, ...);
 
-jx_cc_context_t* jx_cc_createContext(jx_allocator_i* allocator)
+jx_cc_context_t* jx_cc_createContext(jx_allocator_i* allocator, jx_logger_i* logger)
 {
 	jx_cc_context_t* ctx = (jx_cc_context_t*)JX_ALLOC(allocator, sizeof(jx_cc_context_t));
 	if (!ctx) {
@@ -444,14 +441,6 @@ void jx_cc_destroyContext(jx_cc_context_t* ctx)
 			global = global->m_Next;
 		}
 
-		const uint32_t numErrors = (uint32_t)jx_array_sizeu(tu->m_ErrorsArr);
-		for (uint32_t iErr = 0; iErr < numErrors; ++iErr) {
-			JX_FREE(ctx->m_Allocator, tu->m_ErrorsArr[iErr]);
-			tu->m_ErrorsArr[iErr] = NULL;
-		}
-		jx_array_free(tu->m_ErrorsArr);
-
-		JX_FREE(ctx->m_Allocator, tu->m_FilePath);
 		JX_FREE(ctx->m_Allocator, tu);
 	}
 	jx_array_free(ctx->m_TranslationUnitsArr);
@@ -480,35 +469,18 @@ jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_d
 	jx_memset(unit, 0, sizeof(jx_cc_translation_unit_t));
 
 	jcc_translation_unit_t* tu = &(jcc_translation_unit_t){ 0 };
-	tu->m_ErrorsArr = (char**)jx_array_create(ctx->m_Allocator);
-	if (!tu->m_ErrorsArr) {
-		JX_FREE(ctx->m_Allocator, unit);
-		return NULL;
-	}
-
-	// Generate file full path
-	{
-		char baseDirPath[256];
-		jx_os_fsGetBaseDir(baseDir, baseDirPath, JX_COUNTOF(baseDirPath));
-
-		char filePath[256];
-		jx_snprintf(filePath, JX_COUNTOF(filePath), "%s/%s", baseDirPath, filename);
-		unit->m_FilePath = jx_strdup(filePath, ctx->m_Allocator);
-	}
-
-	jx_array_push_back(ctx->m_TranslationUnitsArr, unit);
 
 	uint64_t sourceLen = 0ull;
 	char* source = (char*)jx_os_fsReadFile(baseDir, filename, ctx->m_Allocator, true, &sourceLen);
 	if (!source) {
-		jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Failed to open file \"%s\".", filename);
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Failed to open file \"%s\".", filename);
 		return NULL;
 	}
 
 	tu->m_CurFilename = filename;
 
 	if (!jcc_tuEnterScope(ctx, tu)) {
-		jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 		goto end;
 	}
 
@@ -525,7 +497,7 @@ jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_d
 	for (jx_cc_token_t* t = tok; t->m_Kind != JCC_TOKEN_EOF; t = t->m_Next) {
 		if (t->m_Kind == JCC_TOKEN_PREPROC_NUMBER) {
 			if (!jcc_convertPreprocessorNumber(t)) {
-				jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Failed to convert preprocessor number.");
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Failed to convert preprocessor number.");
 				jcc_tuLeaveScope(ctx, tu);
 				goto end;
 			}
@@ -541,8 +513,9 @@ jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_d
 	jcc_tuLeaveScope(ctx, tu);
 
 end:
-	unit->m_ErrorsArr = tu->m_ErrorsArr;
 	unit->m_Globals = tu->m_GlobalsHead;
+
+	jx_array_push_back(ctx->m_TranslationUnitsArr, unit);
 
 	return unit;
 }
@@ -1033,6 +1006,7 @@ static jx_cc_ast_expr_t* jcc_astAllocExprSub(jx_cc_context_t* ctx, jx_cc_ast_exp
 	}
 
 	if (!node) {
+		jcc_logError(ctx, &tok->m_Loc, "Invalid operands.");
 		return NULL; // ERROR: "invalid operands"
 	}
 
@@ -1589,7 +1563,7 @@ static jx_cc_type_t* jcc_parseDeclarationSpecifiers(jx_cc_context_t* ctx, jcc_tr
 			;
 		if (isStorageClassSpec) {
 			if (!attr) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Storage class specifier is not allowed in this context");
+				jcc_logError(ctx, &tok->m_Loc, "Storage class specifier is not allowed in this context");
 				return NULL;
 			}
 			
@@ -1604,13 +1578,13 @@ static jx_cc_type_t* jcc_parseDeclarationSpecifiers(jx_cc_context_t* ctx, jcc_tr
 			} else if (jcc_tokExpect(&tok, JCC_TOKEN_THREAD_LOCAL)) {
 				attr->m_Flags |= JCC_VAR_ATTR_IS_TLS_Msk;
 			} else {
-				jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Unreachable code path reached!");
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Unreachable code path reached!");
 				JX_CHECK(false, "Should not land here!");
 				return NULL;
 			}
 			
 			if ((attr->m_Flags & JCC_VAR_ATTR_IS_TYPEDEF_Msk) != 0 && (attr->m_Flags & (JCC_VAR_ATTR_IS_STATIC_Msk | JCC_VAR_ATTR_IS_EXTERN_Msk | JCC_VAR_ATTR_IS_INLINE_Msk | JCC_VAR_ATTR_IS_TLS_Msk)) != 0) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "typedef may not be used together with static, extern, inline, __thread or _Thread_local");
+				jcc_logError(ctx, &tok->m_Loc, "typedef may not be used together with static, extern, inline, __thread or _Thread_local");
 				return NULL;
 			}
 			
@@ -1634,12 +1608,12 @@ static jx_cc_type_t* jcc_parseDeclarationSpecifiers(jx_cc_context_t* ctx, jcc_tr
 			if (jcc_tokExpect(&tok , JCC_TOKEN_OPEN_PAREN)) {
 				ty = jcc_parseTypename(ctx, tu, &tok);
 				if (!ty) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Expected typename after '('");
+					jcc_logError(ctx, &tok->m_Loc, "Expected typename after '('");
 					return NULL;
 				}
 
 				if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ')' after typename");
+					jcc_logError(ctx, &tok->m_Loc, "Expected ')' after typename");
 					return NULL;
 				}
 			}
@@ -1650,19 +1624,19 @@ static jx_cc_type_t* jcc_parseDeclarationSpecifiers(jx_cc_context_t* ctx, jcc_tr
 		
 		if (jcc_tokExpect(&tok, JCC_TOKEN_ALIGNAS)) {
 			if (!attr) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "_Alignas is not allowed in this context");
+				jcc_logError(ctx, &tok->m_Loc, "_Alignas is not allowed in this context");
 				return NULL;
 			}
 			
 			if (!jcc_tokExpect(&tok, JCC_TOKEN_OPEN_PAREN)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected '(' after _Alignas");
+				jcc_logError(ctx, &tok->m_Loc, "Expected '(' after _Alignas");
 				return NULL;
 			}
 			
 			if (jcc_tuIsTypename(ctx, tu, tok)) {
 				jx_cc_type_t* alignType = jcc_parseTypename(ctx, tu, &tok);
 				if (!alignType) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Expected typename after '('");
+					jcc_logError(ctx, &tok->m_Loc, "Expected typename after '('");
 					return NULL;
 				}
 
@@ -1671,13 +1645,13 @@ static jx_cc_type_t* jcc_parseDeclarationSpecifiers(jx_cc_context_t* ctx, jcc_tr
 				bool err = false;
 				attr->m_Align = (uint32_t)jcc_parseConstExpression(ctx, tu, &tok, &err);
 				if (err) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Expected constant expression after '('");
+					jcc_logError(ctx, &tok->m_Loc, "Expected constant expression after '('");
 					return NULL;
 				}
 			}
 		
 			if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ')'");
+				jcc_logError(ctx, &tok->m_Loc, "Expected ')'");
 				return NULL;
 			}
 
@@ -1730,7 +1704,7 @@ static jx_cc_type_t* jcc_parseDeclarationSpecifiers(jx_cc_context_t* ctx, jcc_tr
 		} else if (jcc_tokExpect(&tok, JCC_TOKEN_UNSIGNED)) {
 			counter |= UNSIGNED;
 		} else {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Unexpected token");
+			jcc_logError(ctx, &tok->m_Loc, "Unexpected token");
 			return NULL;
 		}
 		
@@ -1791,7 +1765,7 @@ static jx_cc_type_t* jcc_parseDeclarationSpecifiers(jx_cc_context_t* ctx, jcc_tr
 			ty = kType_double;
 			break;
 		default:
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Invalid type");
+			jcc_logError(ctx, &tok->m_Loc, "Invalid type");
 			return NULL;
 		}
 	}
@@ -1800,7 +1774,7 @@ static jx_cc_type_t* jcc_parseDeclarationSpecifiers(jx_cc_context_t* ctx, jcc_tr
 	if (is_atomic) {
 		ty = jcc_typeCopy(ctx, ty);
 		if (!ty) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return NULL;
 		}
 
@@ -1832,7 +1806,7 @@ static jx_cc_type_t* jcc_parseFunctionParameters(jx_cc_context_t* ctx, jcc_trans
 		while (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
 			if (cur != &head) {
 				if (!jcc_tokExpect(&tok, JCC_TOKEN_COMMA)) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ',' after parameter declaration");
+					jcc_logError(ctx, &tok->m_Loc, "Expected ',' after parameter declaration");
 					return NULL;
 				}
 			}
@@ -1841,7 +1815,7 @@ static jx_cc_type_t* jcc_parseFunctionParameters(jx_cc_context_t* ctx, jcc_trans
 				is_variadic = true;
 
 				if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ')' after '...'");
+					jcc_logError(ctx, &tok->m_Loc, "Expected ')' after '...'");
 					return NULL;
 				}
 
@@ -1850,14 +1824,14 @@ static jx_cc_type_t* jcc_parseFunctionParameters(jx_cc_context_t* ctx, jcc_trans
 
 			jx_cc_type_t* paramType = jcc_parseDeclarationSpecifiers(ctx, tu, &tok, NULL);
 			if (!paramType) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected type");
+				jcc_logError(ctx, &tok->m_Loc, "Expected type");
 				return NULL;
 			}
 
 			jx_cc_type_t* ty2 = jcc_typeCopy(ctx, paramType);
 			ty2 = jcc_parseDeclarator(ctx, tu, &tok, ty2);
 			if (!ty2) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected declarator after type");
+				jcc_logError(ctx, &tok->m_Loc, "Expected declarator after type");
 				return NULL;
 			}
 
@@ -1868,7 +1842,8 @@ static jx_cc_type_t* jcc_parseFunctionParameters(jx_cc_context_t* ctx, jcc_trans
 				// context. For example, *argv[] is converted to **argv by this.
 				ty2 = jcc_typeAllocPointerTo(ctx, ty2->m_BaseType);
 				if (!ty2) {
-					return NULL; // ERROR: memory allocation failed.
+					jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+					return NULL;
 				}
 
 				ty2->m_DeclName = name;
@@ -1877,7 +1852,8 @@ static jx_cc_type_t* jcc_parseFunctionParameters(jx_cc_context_t* ctx, jcc_trans
 				// only in the parameter context.
 				ty2 = jcc_typeAllocPointerTo(ctx, ty2);
 				if (!ty2) {
-					return NULL; // ERROR: memory allocation failed.
+					jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+					return NULL;
 				}
 
 				ty2->m_DeclName = name;
@@ -1893,7 +1869,8 @@ static jx_cc_type_t* jcc_parseFunctionParameters(jx_cc_context_t* ctx, jcc_trans
 
 		ty = jcc_typeAllocFunc(ctx, ty);
 		if (!ty) {
-			return NULL; // ERROR: memory allocation failed.
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			return NULL;
 		}
 
 		ty->m_FuncParams = head.m_Next;
@@ -1917,7 +1894,7 @@ static jx_cc_type_t* jcc_parseArrayDimensions(jx_cc_context_t* ctx, jcc_translat
 	if (jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_BRACKET)) {
 		ty = jcc_parseTypeSuffix(ctx, tu, &tok, ty);
 		if (!ty) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected type suffix");
+			jcc_logError(ctx, &tok->m_Loc, "Expected type suffix");
 			return NULL;
 		}
 
@@ -1928,28 +1905,28 @@ static jx_cc_type_t* jcc_parseArrayDimensions(jx_cc_context_t* ctx, jcc_translat
 	} else {
 		jx_cc_ast_expr_t* expr = jcc_parseConditional(ctx, tu, &tok);
 		if (!expr) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected expression");
+			jcc_logError(ctx, &tok->m_Loc, "Expected expression");
 			return NULL;
 		}
 
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_BRACKET)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ']' after expression");
+			jcc_logError(ctx, &tok->m_Loc, "Expected ']' after expression");
 			return NULL;
 		}
 
 		ty = jcc_parseTypeSuffix(ctx, tu, &tok, ty);
 		if (!ty) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected type suffix");
+			jcc_logError(ctx, &tok->m_Loc, "Expected type suffix");
 			return NULL;
 		}
 
 		if (!jcc_astIsConstExpression(ctx, tu, expr)) {
-			jcc_tuError(ctx, tu, &expr->super.m_Token->m_Loc, "Expected constant expression. Variable-length arrays are not supported.");
+			jcc_logError(ctx, &expr->super.m_Token->m_Loc, "Expected constant expression. Variable-length arrays are not supported.");
 		} else {
 			bool err = false;
 			const int64_t arrayLen = jcc_astEvalConstExpression(ctx, tu, expr, &err);
 			if (err) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to evaluate constant expression");
+				jcc_logError(ctx, &tok->m_Loc, "Failed to evaluate constant expression");
 				return NULL;
 			}
 
@@ -1975,13 +1952,13 @@ static jx_cc_type_t* jcc_parseTypeSuffix(jx_cc_context_t* ctx, jcc_translation_u
 	if (jcc_tokExpect(&tok, JCC_TOKEN_OPEN_PAREN)) {
 		ty = jcc_parseFunctionParameters(ctx, tu, &tok, ty);
 		if (!ty) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse function parameter list");
+			jcc_logError(ctx, &tok->m_Loc, "Failed to parse function parameter list");
 			return NULL;
 		}
 	} else if (jcc_tokExpect(&tok, JCC_TOKEN_OPEN_BRACKET)) {
 		ty = jcc_parseArrayDimensions(ctx, tu, &tok, ty);
 		if (!ty) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse array dimensions");
+			jcc_logError(ctx, &tok->m_Loc, "Failed to parse array dimensions");
 			return NULL;
 		}
 	}
@@ -1999,7 +1976,8 @@ static jx_cc_type_t* jcc_parsePointers(jx_cc_context_t* ctx, jcc_translation_uni
 	while (jcc_tokExpect(&tok, JCC_TOKEN_MUL)) {
 		ty = jcc_typeAllocPointerTo(ctx, ty);
 		if (!ty) {
-			return NULL; // ERROR: memory allocation failed.
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			return NULL;
 		}
 		
 		while (jcc_tokIs(tok, JCC_TOKEN_CONST) || jcc_tokIs(tok, JCC_TOKEN_VOLATILE) || jcc_tokIs(tok, JCC_TOKEN_RESTRICT)) {
@@ -2019,7 +1997,7 @@ static jx_cc_type_t* jcc_parseDeclarator(jx_cc_context_t* ctx, jcc_translation_u
 
 	ty = jcc_parsePointers(ctx, tu, &tok, ty);
 	if (!ty) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse pointers");
+		jcc_logError(ctx, &tok->m_Loc, "Failed to parse pointers");
 		return NULL;
 	}
 	
@@ -2030,19 +2008,19 @@ static jx_cc_type_t* jcc_parseDeclarator(jx_cc_context_t* ctx, jcc_translation_u
 		jcc_parseDeclarator(ctx, tu, &tok, &dummy);
 
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ')' after declarator");
+			jcc_logError(ctx, &tok->m_Loc, "Expected ')' after declarator");
 			return NULL;
 		}
 
 		ty = jcc_parseTypeSuffix(ctx, tu, &tok, ty);
 		if (!ty) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected type suffix after ')'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected type suffix after ')'");
 			return NULL;
 		}
 
 		ty = jcc_parseDeclarator(ctx, tu, &start, ty);
 		if (!ty) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected declarator after type suffix");
+			jcc_logError(ctx, &tok->m_Loc, "Expected declarator after type suffix");
 			return NULL;
 		}
 	} else {
@@ -2056,12 +2034,11 @@ static jx_cc_type_t* jcc_parseDeclarator(jx_cc_context_t* ctx, jcc_translation_u
 
 		ty = jcc_parseTypeSuffix(ctx, tu, &tok, ty);
 		if (!ty) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected type suffix");
+			jcc_logError(ctx, &tok->m_Loc, "Expected type suffix");
 			return NULL;
 		}
 
 		ty->m_DeclName = name;
-//		ty->m_DeclNamePos = name_pos;
 	}
 
 	*tokenListPtr = tok;
@@ -2076,7 +2053,7 @@ static jx_cc_type_t* jcc_parseAbstractDeclarator(jx_cc_context_t* ctx, jcc_trans
 
 	ty = jcc_parsePointers(ctx, tu, &tok, ty);
 	if (!ty) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse pointers");
+		jcc_logError(ctx, &tok->m_Loc, "Failed to parse pointers");
 		return NULL;
 	}
 	
@@ -2087,25 +2064,25 @@ static jx_cc_type_t* jcc_parseAbstractDeclarator(jx_cc_context_t* ctx, jcc_trans
 		jcc_parseAbstractDeclarator(ctx, tu, &tok, &dummy);
 
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ')' after declarator");
+			jcc_logError(ctx, &tok->m_Loc, "Expected ')' after declarator");
 			return NULL;
 		}
 
 		ty = jcc_parseTypeSuffix(ctx, tu, &tok, ty);
 		if (!ty) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected type suffix");
+			jcc_logError(ctx, &tok->m_Loc, "Expected type suffix");
 			return NULL;
 		}
 
 		ty = jcc_parseAbstractDeclarator(ctx, tu, &start, ty);
 		if (!ty) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse abstract declarator");
+			jcc_logError(ctx, &tok->m_Loc, "Failed to parse abstract declarator");
 			return NULL;
 		}
 	} else {
 		ty = jcc_parseTypeSuffix(ctx, tu, &tok, ty);
 		if (!ty) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected type suffix");
+			jcc_logError(ctx, &tok->m_Loc, "Expected type suffix");
 			return NULL;
 		}
 	}
@@ -2122,13 +2099,13 @@ static jx_cc_type_t* jcc_parseTypename(jx_cc_context_t* ctx, jcc_translation_uni
 
 	jx_cc_type_t* ty = jcc_parseDeclarationSpecifiers(ctx, tu, &tok, NULL);
 	if (!ty) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse declaration specifiers");
+		jcc_logError(ctx, &tok->m_Loc, "Failed to parse declaration specifiers");
 		return NULL;
 	}
 
 	ty = jcc_parseAbstractDeclarator(ctx, tu, &tok, ty);
 	if (!ty) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse abstract declarator");
+		jcc_logError(ctx, &tok->m_Loc, "Failed to parse abstract declarator");
 		return NULL;
 	}
 
@@ -2172,7 +2149,8 @@ static jx_cc_type_t* jcc_parseEnum(jx_cc_context_t* ctx, jcc_translation_unit_t*
 
 	jx_cc_type_t* ty = jcc_typeAllocEnum(ctx);
 	if (!ty) {
-		return NULL; // ERROR: memory allocation failed?
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+		return NULL;
 	}
 	
 	// Read a struct tag.
@@ -2185,17 +2163,17 @@ static jx_cc_type_t* jcc_parseEnum(jx_cc_context_t* ctx, jcc_translation_unit_t*
 	if (tag && !jcc_tokIs(tok, JCC_TOKEN_OPEN_CURLY_BRACKET)) {
 		jx_cc_type_t* ty = jcc_tuFindTag(tu, tag);
 		if (!ty) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Unknown enum tag '%s'", tag->m_String);
+			jcc_logError(ctx, &tok->m_Loc, "Unknown enum tag '%s'", tag->m_String);
 			return NULL;
 		}
 		
 		if (ty->m_Kind != JCC_TYPE_ENUM) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "'%s' is not an enum tag", tag->m_String);
+			jcc_logError(ctx, &tok->m_Loc, "'%s' is not an enum tag", tag->m_String);
 			return NULL;
 		}
 	} else {
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_OPEN_CURLY_BRACKET)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected '{'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected '{'");
 			return NULL;
 		}
 
@@ -2205,7 +2183,7 @@ static jx_cc_type_t* jcc_parseEnum(jx_cc_context_t* ctx, jcc_translation_unit_t*
 		while (!jcc_tokConsumeEndOfList(&tok)) {
 			if (!first) {
 				if (!jcc_tokExpect(&tok, JCC_TOKEN_COMMA)) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ','");
+					jcc_logError(ctx, &tok->m_Loc, "Expected ','");
 					return NULL;
 				}
 			}
@@ -2213,7 +2191,7 @@ static jx_cc_type_t* jcc_parseEnum(jx_cc_context_t* ctx, jcc_translation_unit_t*
 
 			const char* name = jcc_tokGetIdentifier(ctx, tok);
 			if (!name) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected identifier");
+				jcc_logError(ctx, &tok->m_Loc, "Expected identifier");
 				return NULL;
 			}
 
@@ -2223,14 +2201,15 @@ static jx_cc_type_t* jcc_parseEnum(jx_cc_context_t* ctx, jcc_translation_unit_t*
 				bool err = false;
 				val = (int32_t)jcc_parseConstExpression(ctx, tu, &tok, &err);
 				if (err) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse constant expression");
+					jcc_logError(ctx, &tok->m_Loc, "Failed to parse constant expression");
 					return NULL;
 				}
 			}
 
 			jcc_var_scope_t* sc = jcc_tuPushVarScope(ctx, tu, name);
 			if (!sc) {
-				return NULL; // ERROR: failed to push variable to scope.
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Failed to push variable to scope.");
+				return NULL;
 			}
 
 			sc->m_Enum = ty;
@@ -2252,7 +2231,7 @@ static jx_cc_type_t* jcc_parseTypeof(jx_cc_context_t* ctx, jcc_translation_unit_
 {
 	jx_cc_token_t* tok = *tokenListPtr;
 	if (!jcc_tokExpect(&tok, JCC_TOKEN_OPEN_PAREN)) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Expected '('");
+		jcc_logError(ctx, &tok->m_Loc, "Expected '('");
 		return NULL;
 	}
 	
@@ -2260,13 +2239,13 @@ static jx_cc_type_t* jcc_parseTypeof(jx_cc_context_t* ctx, jcc_translation_unit_
 	if (jcc_tuIsTypename(ctx, tu, tok)) {
 		ty = jcc_parseTypename(ctx, tu, &tok);
 		if (!ty) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse typename");
+			jcc_logError(ctx, &tok->m_Loc, "Failed to parse typename");
 			return NULL;
 		}
 	} else {
 		jx_cc_ast_expr_t* node = jcc_parseExpression(ctx, tu, &tok);
 		if (!node) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected expression");
+			jcc_logError(ctx, &tok->m_Loc, "Expected expression");
 			return NULL;
 		}
 
@@ -2278,7 +2257,7 @@ static jx_cc_type_t* jcc_parseTypeof(jx_cc_context_t* ctx, jcc_translation_unit_
 	}
 
 	if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ')'");
+		jcc_logError(ctx, &tok->m_Loc, "Expected ')'");
 		return NULL;
 	}
 
@@ -2301,7 +2280,7 @@ static jx_cc_ast_stmt_t* jcc_parseDeclaration(jx_cc_context_t* ctx, jcc_translat
 	while (!jcc_tokIs(tok, JCC_TOKEN_SEMICOLON)) {
 		if (!first) {
 			if (!jcc_tokExpect(&tok, JCC_TOKEN_COMMA)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ','");
+				jcc_logError(ctx, &tok->m_Loc, "Expected ','");
 				goto error;
 			}
 		}
@@ -2311,17 +2290,17 @@ static jx_cc_ast_stmt_t* jcc_parseDeclaration(jx_cc_context_t* ctx, jcc_translat
 
 		jx_cc_type_t* ty = jcc_parseDeclarator(ctx, tu, &tok, basety);
 		if (!ty) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse declarator");
+			jcc_logError(ctx, &tok->m_Loc, "Failed to parse declarator");
 			goto error;
 		}
 
 		if (ty->m_Kind == JCC_TYPE_VOID) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Variable declared void");
+			jcc_logError(ctx, &tok->m_Loc, "Variable declared void");
 			goto error;
 		}
 		
 		if (!ty->m_DeclName) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Variable name omitted");
+			jcc_logError(ctx, &tok->m_Loc, "Variable name omitted");
 			goto error;
 		}
 
@@ -2349,7 +2328,7 @@ static jx_cc_ast_stmt_t* jcc_parseDeclaration(jx_cc_context_t* ctx, jcc_translat
 
 			if (jcc_tokExpect(&tok, JCC_TOKEN_ASSIGN)) {
 				if (!jcc_parseGlobalVarInitializer(ctx, tu, &tok, var)) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse initializer");
+					jcc_logError(ctx, &tok->m_Loc, "Failed to parse initializer");
 					goto error;
 				}
 			}
@@ -2366,7 +2345,7 @@ static jx_cc_ast_stmt_t* jcc_parseDeclaration(jx_cc_context_t* ctx, jcc_translat
 			if (jcc_tokExpect(&tok, JCC_TOKEN_ASSIGN)) {
 				jx_cc_ast_expr_t* expr = jcc_parseLocalVarInitializer(ctx, tu, &tok, var);
 				if (!expr) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse variable initializer");
+					jcc_logError(ctx, &tok->m_Loc, "Failed to parse variable initializer");
 					goto error;
 				}
 
@@ -2379,12 +2358,12 @@ static jx_cc_ast_stmt_t* jcc_parseDeclaration(jx_cc_context_t* ctx, jcc_translat
 			}
 
 			if (var->m_Type->m_Size < 0) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Variable has incomplete type");
+				jcc_logError(ctx, &tok->m_Loc, "Variable has incomplete type");
 				goto error;
 			}
 
 			if (var->m_Type->m_Kind == JCC_TYPE_VOID) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Variable declared void");
+				jcc_logError(ctx, &tok->m_Loc, "Variable declared void");
 				goto error;
 			}
 		}
@@ -2410,7 +2389,7 @@ static jx_cc_token_t* jcc_skipExcessElement(jx_cc_context_t* ctx, jcc_translatio
 	if (jcc_tokExpect(&tok, JCC_TOKEN_OPEN_CURLY_BRACKET)) {
 		tok = jcc_skipExcessElement(ctx, tu, tok);
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_CURLY_BRACKET)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected '}'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected '}'");
 			return NULL;
 		}
 
@@ -2430,12 +2409,14 @@ static bool jcc_parseStringInitializer(jx_cc_context_t* ctx, jcc_translation_uni
 	if (init->m_IsFlexible) {
 		jx_cc_type_t* arrayType = jcc_typeAllocArrayOf(ctx, init->m_Type->m_BaseType, tok->m_Type->m_ArrayLen);
 		if (!arrayType) {
-			return false; // ERROR: memory allocation failed.
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			return false;
 		}
 
 		jcc_initializer_t* arrayInit = jcc_allocInitializer(ctx, arrayType, false);
 		if (!arrayInit) {
-			return false; // ERROR: memory allocation failed.
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			return false;
 		}
 
 		jx_memcpy(init, arrayInit, sizeof(jcc_initializer_t));
@@ -2449,6 +2430,7 @@ static bool jcc_parseStringInitializer(jx_cc_context_t* ctx, jcc_translation_uni
 		for (int i = 0; i < len; i++) {
 			jx_cc_ast_expr_t* constExpr = jcc_astAllocExprIConst(ctx, (int64_t)str[i], kType_int, tok);
 			if (!constExpr) {
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return false;
 			}
 		
@@ -2460,6 +2442,7 @@ static bool jcc_parseStringInitializer(jx_cc_context_t* ctx, jcc_translation_uni
 		for (int i = 0; i < len; i++) {
 			jx_cc_ast_expr_t* constExpr = jcc_astAllocExprIConst(ctx, (int64_t)str[i], kType_int, tok);
 			if (!constExpr) {
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return false;
 			}
 
@@ -2471,6 +2454,7 @@ static bool jcc_parseStringInitializer(jx_cc_context_t* ctx, jcc_translation_uni
 		for (int i = 0; i < len; i++) {
 			jx_cc_ast_expr_t* constExpr = jcc_astAllocExprIConst(ctx, (int64_t)str[i], kType_int, tok);
 			if (!constExpr) {
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return false;
 			}
 
@@ -2478,7 +2462,8 @@ static bool jcc_parseStringInitializer(jx_cc_context_t* ctx, jcc_translation_uni
 		}
 	} break;
 	default:
-		return false; // ERROR: Invalid initializer base type size.
+		jcc_logError(ctx, &tok->m_Loc, "Invalid initializer base type size");
+		return false;
 	}
 	
 	tok = tok->m_Next; // Skip ?
@@ -2518,43 +2503,43 @@ static bool jcc_parseArrayDesignator(jx_cc_context_t* ctx, jcc_translation_unit_
 	jx_cc_token_t* tok = *tokenListPtr;
 
 	if (!jcc_tokExpect(&tok, JCC_TOKEN_OPEN_BRACKET)) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Expected '['");
-		return false; // Expected '['
+		jcc_logError(ctx, &tok->m_Loc, "Expected '['");
+		return false;
 	}
 
 	bool err = false;
 	*begin = (int)jcc_parseConstExpression(ctx, tu, &tok, &err);
 	if (err) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse constant expression");
+		jcc_logError(ctx, &tok->m_Loc, "Failed to parse constant expression");
 		return false;
 	}
 	if (*begin >= ty->m_ArrayLen) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Array designator index exceeds array bounds");
+		jcc_logError(ctx, &tok->m_Loc, "Array designator index exceeds array bounds");
 		return false;
 	}
 	
 	if (jcc_tokExpect(&tok, JCC_TOKEN_ELLIPSIS)) {
 		*end = (int)jcc_parseConstExpression(ctx, tu, &tok, &err);
 		if (err) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse constant expression");
+			jcc_logError(ctx, &tok->m_Loc, "Failed to parse constant expression");
 			return false;
 		}
 		if (*end >= ty->m_ArrayLen) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Array designator index exceeds array bounds");
+			jcc_logError(ctx, &tok->m_Loc, "Array designator index exceeds array bounds");
 			return false;
 		}
 		
 		if (*end < *begin) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Array designator range [%d, %d] is empty", *begin, *end);
-			return false; // ERROR: array designator range [%d, %d] is empty
+			jcc_logError(ctx, &tok->m_Loc, "Array designator range [%d, %d] is empty", *begin, *end);
+			return false;
 		}
 	} else {
 		*end = *begin;
 	}
 
 	if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_BRACKET)) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ']'");
-		return false; // ERROR: Expected ']'
+		jcc_logError(ctx, &tok->m_Loc, "Expected ']'");
+		return false;
 	}
 	
 	*tokenListPtr = tok;
@@ -2569,12 +2554,12 @@ static jx_cc_struct_member_t* jcc_parseStructDesignator(jx_cc_context_t* ctx, jc
 	jx_cc_token_t* start = tok;
 
 	if (!jcc_tokExpect(&tok, JCC_TOKEN_DOT)) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Expected '.'");
+		jcc_logError(ctx, &tok->m_Loc, "Expected '.'");
 		return NULL;
 	}
 
 	if (tok->m_Kind != JCC_TOKEN_IDENTIFIER) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Expected a field designator");
+		jcc_logError(ctx, &tok->m_Loc, "Expected a field designator");
 		return NULL;
 	}
 	
@@ -2596,7 +2581,7 @@ static jx_cc_struct_member_t* jcc_parseStructDesignator(jx_cc_context_t* ctx, jc
 	}
 	
 	if (!member) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Struct has no such member");
+		jcc_logError(ctx, &tok->m_Loc, "Struct has no such member");
 		return NULL;
 	}
 
@@ -2612,13 +2597,13 @@ static bool jcc_parseDesignation(jx_cc_context_t* ctx, jcc_translation_unit_t* t
 
 	if (jcc_tokIs(tok, JCC_TOKEN_OPEN_BRACKET)) {
 		if (init->m_Type->m_Kind != JCC_TYPE_ARRAY) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Array index in non-array initializer");
+			jcc_logError(ctx, &tok->m_Loc, "Array index in non-array initializer");
 			return false;
 		}
 		
 		int begin, end;
 		if (!jcc_parseArrayDesignator(ctx, tu, &tok, init->m_Type, &begin, &end)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Invalid array designator");
+			jcc_logError(ctx, &tok->m_Loc, "Invalid array designator");
 			return false;
 		}
 		
@@ -2626,7 +2611,7 @@ static bool jcc_parseDesignation(jx_cc_context_t* ctx, jcc_translation_unit_t* t
 		for (int i = begin; i <= end; i++) {
 			tok = designationTok;
 			if (!jcc_parseDesignation(ctx, tu, &tok, init->m_Children[i])) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse designation");
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse designation");
 				return false;
 			}
 		}
@@ -2638,36 +2623,36 @@ static bool jcc_parseDesignation(jx_cc_context_t* ctx, jcc_translation_unit_t* t
 		if (init->m_Type->m_Kind == JCC_TYPE_STRUCT) {
 			jx_cc_struct_member_t* mem = jcc_parseStructDesignator(ctx, tu, &tok, init->m_Type);
 			if (!mem) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected struct designator");
+				jcc_logError(ctx, &tok->m_Loc, "Expected struct designator");
 				return false;
 			}
 
 			if (!jcc_parseDesignation(ctx, tu, &tok, init->m_Children[mem->m_ID])) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse designation");
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse designation");
 				return false;
 			}
 
 			init->m_Expr = NULL;
 			
 			if (!jcc_parseStructInitializer2(ctx, tu, &tok, init, mem->m_Next)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse initializer");
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse initializer");
 				return false;
 			}
 		} else if (init->m_Type->m_Kind == JCC_TYPE_UNION) {
 			jx_cc_struct_member_t* mem = jcc_parseStructDesignator(ctx, tu, &tok, init->m_Type);
 			if (!mem) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected union designator");
+				jcc_logError(ctx, &tok->m_Loc, "Expected union designator");
 				return false;
 			}
 
 			init->m_Members = mem;
 
 			if (!jcc_parseDesignation(ctx, tu, &tok, init->m_Children[mem->m_ID])) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse designation");
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse designation");
 				return false;
 			}
 		} else {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Field name not in struct or union initializer");
+			jcc_logError(ctx, &tok->m_Loc, "Field name not in struct or union initializer");
 			return false;
 		}
 	} else {
@@ -2692,7 +2677,8 @@ static int64_t jcc_countArrayInitElements(jx_cc_context_t* ctx, jcc_translation_
 	jcc_initializer_t* dummy = jcc_allocInitializer(ctx, ty->m_BaseType, true);
 	if (!dummy) {
 		*err = true;
-		return 0; // ERROR: memory allocation failed.
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+		return 0;
 	}
 	
 	int64_t idx = 0;
@@ -2702,7 +2688,7 @@ static int64_t jcc_countArrayInitElements(jx_cc_context_t* ctx, jcc_translation_
 	while (!jcc_tokConsumeEndOfList(&tok)) {
 		if (!first) {
 			if (!jcc_tokExpect(&tok, JCC_TOKEN_COMMA)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ','");
+				jcc_logError(ctx, &tok->m_Loc, "Expected ','");
 				*err = true;
 				return 0;
 			}
@@ -2712,20 +2698,20 @@ static int64_t jcc_countArrayInitElements(jx_cc_context_t* ctx, jcc_translation_
 		if (jcc_tokExpect(&tok, JCC_TOKEN_OPEN_BRACKET)) {
 			idx = jcc_parseConstExpression(ctx, tu, &tok, err);
 			if (*err) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse constant expression");
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse constant expression");
 				return 0;
 			}
 
 			if (jcc_tokIs(tok, JCC_TOKEN_ELLIPSIS)) {
 				idx = jcc_parseConstExpression(ctx, tu, &tok, err);
 				if (*err) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse constant expression");
+					jcc_logError(ctx, &tok->m_Loc, "Failed to parse constant expression");
 					return true;
 				}
 			}
 
 			if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_BRACKET)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ']'");
+				jcc_logError(ctx, &tok->m_Loc, "Expected ']'");
 				*err = true;
 				return 0;
 			}
@@ -2733,6 +2719,7 @@ static int64_t jcc_countArrayInitElements(jx_cc_context_t* ctx, jcc_translation_
 			jcc_parseDesignation(ctx, tu, &tok, dummy);
 		} else {
 			if (!jcc_parseInitializer2(ctx, tu, &tok, dummy)) {
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse initializer.");
 				return 0; // ERROR
 			}
 		}
@@ -2750,7 +2737,7 @@ static bool jcc_parseArrayInitializer1(jx_cc_context_t* ctx, jcc_translation_uni
 	jx_cc_token_t* tok = *tokenListPtr;
 
 	if (!jcc_tokExpect(&tok, JCC_TOKEN_OPEN_CURLY_BRACKET)) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Expected '{'");
+		jcc_logError(ctx, &tok->m_Loc, "Expected '{'");
 		return false;
 	}
 	
@@ -2758,13 +2745,14 @@ static bool jcc_parseArrayInitializer1(jx_cc_context_t* ctx, jcc_translation_uni
 		bool err = false;
 		const int64_t len = jcc_countArrayInitElements(ctx, tu, tok, init->m_Type, &err);
 		if (err) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to calculate array size");
+			jcc_logError(ctx, &tok->m_Loc, "Failed to calculate array size");
 			return false;
 		}
 
 		jcc_initializer_t* arrayInit = jcc_allocInitializer(ctx, jcc_typeAllocArrayOf(ctx, init->m_Type->m_BaseType, (int)len), false);
 		if (!arrayInit) {
-			return false; // ERROR: memory allocation failed.
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			return false;
 		}
 
 		jx_memcpy(init, arrayInit, sizeof(jcc_initializer_t));
@@ -2774,13 +2762,14 @@ static bool jcc_parseArrayInitializer1(jx_cc_context_t* ctx, jcc_translation_uni
 		bool err = false;
 		const int64_t len = jcc_countArrayInitElements(ctx, tu, tok, init->m_Type, &err);
 		if (err) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to calculate array size");
-			return false; // ERROR: Failed to calculate array size
+			jcc_logError(ctx, &tok->m_Loc, "Failed to calculate array size");
+			return false;
 		}
 
 		jcc_initializer_t* arrayInit = jcc_allocInitializer(ctx, jcc_typeAllocArrayOf(ctx, init->m_Type->m_BaseType, (int)len), false);
 		if (!arrayInit) {
-			return false; // ERROR: memory allocation failed.
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			return false;
 		}
 
 		jx_memcpy(init, arrayInit, sizeof(jcc_initializer_t));
@@ -2790,7 +2779,7 @@ static bool jcc_parseArrayInitializer1(jx_cc_context_t* ctx, jcc_translation_uni
 	for (int idx = 0; !jcc_tokConsumeEndOfList(&tok); idx++) {
 		if (!first) {
 			if (!jcc_tokExpect(&tok, JCC_TOKEN_COMMA)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ','");
+				jcc_logError(ctx, &tok->m_Loc, "Expected ','");
 				return false;
 			}
 		}
@@ -2799,7 +2788,7 @@ static bool jcc_parseArrayInitializer1(jx_cc_context_t* ctx, jcc_translation_uni
 		if (jcc_tokIs(tok, JCC_TOKEN_OPEN_BRACKET)) {
 			int begin, end;
 			if (!jcc_parseArrayDesignator(ctx, tu, &tok, init->m_Type, &begin, &end)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse array designator");
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse array designator");
 				return false;
 			}
 			
@@ -2807,7 +2796,7 @@ static bool jcc_parseArrayInitializer1(jx_cc_context_t* ctx, jcc_translation_uni
 			for (int j = begin; j <= end; j++) {
 				tok = designationToken;
 				if (!jcc_parseDesignation(ctx, tu, &tok, init->m_Children[j])) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse designation");
+					jcc_logError(ctx, &tok->m_Loc, "Failed to parse designation");
 					return false;
 				}
 			}
@@ -2841,13 +2830,14 @@ static bool jcc_parseArrayInitializer2(jx_cc_context_t* ctx, jcc_translation_uni
 		bool err = false;
 		const int64_t len = jcc_countArrayInitElements(ctx, tu, tok, init->m_Type, &err);
 		if (err) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to calculate array size");
+			jcc_logError(ctx, &tok->m_Loc, "Failed to calculate array size");
 			return false;
 		}
 
 		jcc_initializer_t* arrayInit = jcc_allocInitializer(ctx, jcc_typeAllocArrayOf(ctx, init->m_Type->m_BaseType, (int)len), false);
 		if (!arrayInit) {
-			return false; // ERROR: memory allocation failed.
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			return false;
 		}
 
 		jx_memcpy(init, arrayInit, sizeof(jcc_initializer_t));
@@ -2857,7 +2847,7 @@ static bool jcc_parseArrayInitializer2(jx_cc_context_t* ctx, jcc_translation_uni
 		jx_cc_token_t* start = tok;
 		if (i > 0) {
 			if (!jcc_tokExpect(&tok, JCC_TOKEN_COMMA)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ','");
+				jcc_logError(ctx, &tok->m_Loc, "Expected ','");
 				return false;
 			}
 		}
@@ -2883,7 +2873,7 @@ static bool jcc_parseStructInitializer1(jx_cc_context_t* ctx, jcc_translation_un
 	jx_cc_token_t* tok = *tokenListPtr;
 
 	if (!jcc_tokExpect(&tok, JCC_TOKEN_OPEN_CURLY_BRACKET)) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Expected '{'");
+		jcc_logError(ctx, &tok->m_Loc, "Expected '{'");
 		return false;
 	}
 	
@@ -2893,7 +2883,7 @@ static bool jcc_parseStructInitializer1(jx_cc_context_t* ctx, jcc_translation_un
 	while (!jcc_tokConsumeEndOfList(&tok)) {
 		if (!first) {
 			if (!jcc_tokExpect(&tok, JCC_TOKEN_COMMA)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ','");
+				jcc_logError(ctx, &tok->m_Loc, "Expected ','");
 				return false;
 			}
 		}
@@ -2902,18 +2892,20 @@ static bool jcc_parseStructInitializer1(jx_cc_context_t* ctx, jcc_translation_un
 		if (jcc_tokIs(tok, JCC_TOKEN_DOT)) {
 			mem = jcc_parseStructDesignator(ctx, tu, &tok, init->m_Type);
 			if (!mem) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Member not found");
+				jcc_logError(ctx, &tok->m_Loc, "Member not found");
 				return false;
 			}
 
 			if (!jcc_parseDesignation(ctx, tu, &tok, init->m_Children[mem->m_ID])) {
-				return false; // ERROR: Expected designation
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse designation.");
+				return false;
 			}
 
 			mem = mem->m_Next;
 		} else {
 			if (mem) {
 				if (!jcc_parseInitializer2(ctx, tu, &tok, init->m_Children[mem->m_ID])) {
+					jcc_logError(ctx, &tok->m_Loc, "Failed to parse initializer");
 					return false;
 				}
 
@@ -2921,7 +2913,8 @@ static bool jcc_parseStructInitializer1(jx_cc_context_t* ctx, jcc_translation_un
 			} else {
 				tok = jcc_skipExcessElement(ctx, tu, tok);
 				if (!tok) {
-					return false; // ERROR: Syntax error
+					jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Syntax error.");
+					return false;
 				}
 			}
 		}
@@ -2943,7 +2936,7 @@ static bool jcc_parseStructInitializer2(jx_cc_context_t* ctx, jcc_translation_un
 		
 		if (!first) {
 			if (!jcc_tokExpect(&tok, JCC_TOKEN_COMMA)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ','");
+				jcc_logError(ctx, &tok->m_Loc, "Expected ','");
 				return false;
 			}
 		}
@@ -2955,6 +2948,7 @@ static bool jcc_parseStructInitializer2(jx_cc_context_t* ctx, jcc_translation_un
 		}
 		
 		if (!jcc_parseInitializer2(ctx, tu, &tok, init->m_Children[mem->m_ID])) {
+			jcc_logError(ctx, &tok->m_Loc, "Failed to parse initializer.");
 			return false;
 		}
 	}
@@ -2976,18 +2970,19 @@ static bool jcc_parseUnionInitializer(jx_cc_context_t* ctx, jcc_translation_unit
 
 		jx_cc_struct_member_t* mem = jcc_parseStructDesignator(ctx, tu, &tok, init->m_Type);
 		if (!mem) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected struct designator");
+			jcc_logError(ctx, &tok->m_Loc, "Expected struct designator");
 			return false;
 		}
 
 		init->m_Members = mem;
 
 		if (!jcc_parseDesignation(ctx, tu, &tok, init->m_Children[mem->m_ID])) {
-			return false; // ERROR: Expected designation
+			jcc_logError(ctx, &tok->m_Loc, "Failed to parse designation.");
+			return false;
 		}
 
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_CURLY_BRACKET)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected '}'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected '}'");
 			return false;
 		}
 	} else {
@@ -2995,17 +2990,19 @@ static bool jcc_parseUnionInitializer(jx_cc_context_t* ctx, jcc_translation_unit
 
 		if (jcc_tokExpect(&tok, JCC_TOKEN_OPEN_CURLY_BRACKET)) {
 			if (!jcc_parseInitializer2(ctx, tu, &tok, init->m_Children[0])) {
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse initializer.");
 				return false;
 			}
 
 			jcc_tokExpect(&tok, JCC_TOKEN_COMMA); // optional
 
 			if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_CURLY_BRACKET)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected '}'");
+				jcc_logError(ctx, &tok->m_Loc, "Expected '}'");
 				return false;
 			}
 		} else {
 			if (!jcc_parseInitializer2(ctx, tu, &tok, init->m_Children[0])) {
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse initializer.");
 				return false;
 			}
 		}
@@ -3026,18 +3023,18 @@ static bool jcc_parseInitializer2(jx_cc_context_t* ctx, jcc_translation_unit_t* 
 	if (init->m_Type->m_Kind == JCC_TYPE_ARRAY) {
 		if (tok->m_Kind == JCC_TOKEN_STRING_LITERAL) {
 			if (!jcc_parseStringInitializer(ctx, tu, &tok, init)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected string initializer");
+				jcc_logError(ctx, &tok->m_Loc, "Expected string initializer");
 				return false;
 			}
 		} else {
 			if (jcc_tokIs(tok, JCC_TOKEN_OPEN_CURLY_BRACKET)) {
 				if (!jcc_parseArrayInitializer1(ctx, tu, &tok, init)) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Expected array initializer");
+					jcc_logError(ctx, &tok->m_Loc, "Expected array initializer");
 					return false;
 				}
 			} else {
 				if (!jcc_parseArrayInitializer2(ctx, tu, &tok, init, 0)) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Expected array initializer");
+					jcc_logError(ctx, &tok->m_Loc, "Expected array initializer");
 					return false;
 				}
 			}
@@ -3045,7 +3042,7 @@ static bool jcc_parseInitializer2(jx_cc_context_t* ctx, jcc_translation_unit_t* 
 	} else if (init->m_Type->m_Kind == JCC_TYPE_STRUCT) {
 		if (jcc_tokIs(tok, JCC_TOKEN_OPEN_CURLY_BRACKET)) {
 			if (!jcc_parseStructInitializer1(ctx, tu, &tok, init)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected struct initializer");
+				jcc_logError(ctx, &tok->m_Loc, "Expected struct initializer");
 				return false;
 			}
 		} else {
@@ -3056,11 +3053,12 @@ static bool jcc_parseInitializer2(jx_cc_context_t* ctx, jcc_translation_unit_t* 
 			// Handle that case first.
 			jx_cc_ast_expr_t* expr = jcc_parseAssignment(ctx, tu, &tok);
 			if (!expr) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected expression");
+				jcc_logError(ctx, &tok->m_Loc, "Expected expression");
 				return false;
 			}
 
 			if (!jcc_astAddType(ctx, &expr->super)) {
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Failed to add type to expression node.");
 				return false;
 			}
 
@@ -3068,12 +3066,12 @@ static bool jcc_parseInitializer2(jx_cc_context_t* ctx, jcc_translation_unit_t* 
 				init->m_Expr = expr;
 			} else {
 				if (!init->m_Type->m_StructMembers) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Initializer for empty aggregate requires explicit braces.");
+					jcc_logError(ctx, &tok->m_Loc, "Initializer for empty aggregate requires explicit braces.");
 					return false;
 				}
 
 				if (!jcc_parseStructInitializer2(ctx, tu, &tok, init, init->m_Type->m_StructMembers)) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse struct initializer");
+					jcc_logError(ctx, &tok->m_Loc, "Failed to parse struct initializer");
 					return false;
 				}
 			}
@@ -3081,18 +3079,19 @@ static bool jcc_parseInitializer2(jx_cc_context_t* ctx, jcc_translation_unit_t* 
 	} else if (init->m_Type->m_Kind == JCC_TYPE_UNION) {
 		if (jcc_tokIs(tok, JCC_TOKEN_OPEN_CURLY_BRACKET)) {
 			if (!jcc_parseUnionInitializer(ctx, tu, &tok, init)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected union initializer");
+				jcc_logError(ctx, &tok->m_Loc, "Expected union initializer");
 				return false;
 			}
 		} else {
 			jx_cc_token_t* start = tok;
 			jx_cc_ast_expr_t* expr = jcc_parseAssignment(ctx, tu, &tok);
 			if (!expr) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected expression");
+				jcc_logError(ctx, &tok->m_Loc, "Expected expression");
 				return false;
 			}
 
 			if (!jcc_astAddType(ctx, &expr->super)) {
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Failed to add type to expression node.");
 				return false;
 			}
 
@@ -3100,7 +3099,7 @@ static bool jcc_parseInitializer2(jx_cc_context_t* ctx, jcc_translation_unit_t* 
 				init->m_Expr = expr;
 			} else {
 				if (!init->m_Type->m_StructMembers) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Initializer for empty aggregate requires explicit braces.");
+					jcc_logError(ctx, &tok->m_Loc, "Initializer for empty aggregate requires explicit braces.");
 					return false;
 				}
 
@@ -3114,18 +3113,18 @@ static bool jcc_parseInitializer2(jx_cc_context_t* ctx, jcc_translation_unit_t* 
 			// An initializer for a scalar variable can be surrounded by
 			// braces. E.g. `int x = {3};`. Handle that case.
 			if (!jcc_parseInitializer2(ctx, tu, &tok, init)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse initializer");
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse initializer");
 				return false;
 			}
 
 			if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_CURLY_BRACKET)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected '}'");
+				jcc_logError(ctx, &tok->m_Loc, "Expected '}'");
 				return false;
 			}
 		} else {
 			init->m_Expr = jcc_parseAssignment(ctx, tu, &tok);
 			if (!init->m_Expr) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse expression");
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse expression");
 				return false;
 			}
 		}
@@ -3136,7 +3135,7 @@ static bool jcc_parseInitializer2(jx_cc_context_t* ctx, jcc_translation_unit_t* 
 	return true;
 }
 
-static jx_cc_type_t* jcc_copyStructType(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const jx_cc_type_t* ty)
+static jx_cc_type_t* jcc_copyStructType(jx_cc_context_t* ctx, const jx_cc_type_t* ty)
 {
 	jx_cc_type_t* copy = jcc_typeCopy(ctx, ty);
 	
@@ -3146,6 +3145,7 @@ static jx_cc_type_t* jcc_copyStructType(jx_cc_context_t* ctx, jcc_translation_un
 	for (jx_cc_struct_member_t* mem = copy->m_StructMembers; mem; mem = mem->m_Next) {
 		jx_cc_struct_member_t* m = (jx_cc_struct_member_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_cc_struct_member_t));
 		if (!m) {
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return NULL;
 		}
 
@@ -3166,17 +3166,20 @@ static jcc_initializer_t* jcc_parseInitializer(jx_cc_context_t* ctx, jcc_transla
 
 	jcc_initializer_t* init = jcc_allocInitializer(ctx, ty, true);
 	if (!init) {
-		return NULL; // ERROR: memory allocation failed.
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+		return NULL;
 	}
 
 	if (!jcc_parseInitializer2(ctx, tu, &tok, init)) {
-		return NULL; // ERROR: Failed to parse initializer
+		jcc_logError(ctx, &tok->m_Loc, "Failed to parse initializer.");
+		return NULL;
 	}
 	
 	if ((ty->m_Kind == JCC_TYPE_STRUCT || ty->m_Kind == JCC_TYPE_UNION) && (ty->m_Flags & JCC_TYPE_FLAGS_IS_FLEXIBLE_Msk) != 0) {
-		jx_cc_type_t* copy = jcc_copyStructType(ctx, tu, ty);
+		jx_cc_type_t* copy = jcc_copyStructType(ctx, ty);
 		if (!copy) {
-			return NULL; // ERROR: memory allocation failed.
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			return NULL;
 		}
 		
 		jx_cc_struct_member_t* mem = copy->m_StructMembers;
@@ -3473,12 +3476,14 @@ static bool jcc_parseGlobalVarInitializer(jx_cc_context_t* ctx, jcc_translation_
 
 	jcc_initializer_t* init = jcc_parseInitializer(ctx, tu, &tok, var->m_Type, &var->m_Type);
 	if (!init) {
+		jcc_logError(ctx, &tok->m_Loc, "Failed to parse global var initializer.");
 		return false;
 	}
 	
 	jx_cc_relocation_t head = { 0 };
 	char* buf = (char*)JX_ALLOC(ctx->m_LinearAllocator, var->m_Type->m_Size);
 	if (!buf) {
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 		return false;
 	}
 
@@ -3543,12 +3548,12 @@ static jx_cc_ast_stmt_t* jcc_parseAsmStatement(jx_cc_context_t* ctx, jcc_transla
 	}
 	
 	if (!jcc_tokExpect(&tok, JCC_TOKEN_OPEN_PAREN)) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Expected '(' after 'asm'");
+		jcc_logError(ctx, &tok->m_Loc, "Expected '(' after 'asm'");
 		return NULL;
 	}
 	
 	if (tok->m_Kind != JCC_TOKEN_STRING_LITERAL || tok->m_Type->m_BaseType->m_Kind != JCC_TYPE_CHAR) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Expected string literal after '('");
+		jcc_logError(ctx, &tok->m_Loc, "Expected string literal after '('");
 		return NULL;
 	}
 	
@@ -3556,12 +3561,13 @@ static jx_cc_ast_stmt_t* jcc_parseAsmStatement(jx_cc_context_t* ctx, jcc_transla
 	tok = tok->m_Next;
 
 	if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ')' after string literal");
+		jcc_logError(ctx, &tok->m_Loc, "Expected ')' after string literal");
 		return NULL;
 	}
 
 	jx_cc_ast_stmt_t* node = jcc_astAllocStmtAsm(ctx, asmStrTok->m_Val_string, 0, *tokenListPtr);
 	if (!node) {
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 		return NULL;
 	}
 
@@ -3660,17 +3666,17 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_SEMICOLON)) {
 			expr = jcc_parseExpression(ctx, tu, &tok);
 			if (!expr) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected expression");
+				jcc_logError(ctx, &tok->m_Loc, "Expected expression");
 				return NULL;
 			}
 
 			if (!jcc_tokExpect(&tok, JCC_TOKEN_SEMICOLON)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ';'");
+				jcc_logError(ctx, &tok->m_Loc, "Expected ';'");
 				return NULL;
 			}
 
 			if (!jcc_astAddType(ctx, &expr->super)) {
-				jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return NULL;
 			}
 
@@ -3678,7 +3684,7 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 			if (ty->m_Kind != JCC_TYPE_STRUCT && ty->m_Kind != JCC_TYPE_UNION) {
 				expr = jcc_astAllocExprCast(ctx, expr, tu->m_CurFunction->m_Type->m_FuncRetType);
 				if (!expr) {
-					jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+					jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 					return NULL;
 				}
 			}
@@ -3686,29 +3692,29 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 
 		node = jcc_astAllocStmtReturn(ctx, expr, *tokenListPtr);
 		if (!node) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return NULL;
 		}
 	} else if (jcc_tokExpect(&tok, JCC_TOKEN_IF)) {
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_OPEN_PAREN)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected '(' after 'if'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected '(' after 'if'");
 			return NULL;
 		}
 
 		jx_cc_ast_expr_t* condExpr = jcc_parseExpression(ctx, tu, &tok);
 		if (!condExpr) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected expression after '('");
+			jcc_logError(ctx, &tok->m_Loc, "Expected expression after '('");
 			return NULL;
 		}
 
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ')' after expression");
+			jcc_logError(ctx, &tok->m_Loc, "Expected ')' after expression");
 			return NULL;
 		}
 
 		jx_cc_ast_stmt_t* thenStmt = jcc_parseStatement(ctx, tu, &tok);
 		if (!thenStmt) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected statement after 'if'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected statement after 'if'");
 			return NULL;
 		}
 
@@ -3716,7 +3722,7 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 		if (jcc_tokExpect(&tok, JCC_TOKEN_ELSE)) {
 			elseStmt = jcc_parseStatement(ctx, tu, &tok);
 			if (!elseStmt) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected statement after 'else'");
+				jcc_logError(ctx, &tok->m_Loc, "Expected statement after 'else'");
 				return NULL;
 			}
 		}
@@ -3727,46 +3733,46 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 
 		node = jcc_astAllocStmtIf(ctx, condExpr, thenStmt, elseStmt, thenLbl, elseLbl, endLbl, *tokenListPtr);
 		if (!node) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return NULL;
 		}
 	} else if (jcc_tokExpect(&tok, JCC_TOKEN_SWITCH)) {
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_OPEN_PAREN)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected '(' after 'switch'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected '(' after 'switch'");
 			return NULL;
 		}
 
 		jx_cc_ast_expr_t* condExpr = jcc_parseExpression(ctx, tu, &tok);
 		if (!condExpr) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected expression after '('");
+			jcc_logError(ctx, &tok->m_Loc, "Expected expression after '('");
 			return NULL;
 		}
 
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ')' after expression");
+			jcc_logError(ctx, &tok->m_Loc, "Expected ')' after expression");
 			return NULL;
 		}
 		
 		node = jcc_astAllocStmtSwitch(ctx, condExpr, jcc_tuGenerateUniqueLabel(ctx, tu), *tokenListPtr);
 		if (!node) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return NULL;
 		}
 		
 		if (!jcc_parseSwitchStatement(ctx, tu, node, &tok)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected statement after 'switch'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected statement after 'switch'");
 			return NULL;
 		}
 	} else if (jcc_tokExpect(&tok, JCC_TOKEN_CASE)) {
 		if (!tu->m_CurFuncSwitch) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Stray case statement");
+			jcc_logError(ctx, &tok->m_Loc, "Stray case statement");
 			return NULL;
 		}
 
 		bool err = false;
 		const int64_t begin = jcc_parseConstExpression(ctx, tu, &tok, &err);
 		if (err) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse constant expression");
+			jcc_logError(ctx, &tok->m_Loc, "Failed to parse constant expression");
 			return NULL;
 		}
 
@@ -3786,7 +3792,7 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 #endif
 
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_COLON)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ':' after constant expression");
+			jcc_logError(ctx, &tok->m_Loc, "Expected ':' after constant expression");
 			return NULL;
 		}
 
@@ -3794,13 +3800,13 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 
 		jx_cc_ast_stmt_t* caseStmt = jcc_parseStatement(ctx, tu, &tok);
 		if (!caseStmt) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected statement");
+			jcc_logError(ctx, &tok->m_Loc, "Expected statement");
 			return NULL;
 		}
 
 		node = jcc_astAllocStmtCase(ctx, caseLbl, begin, end, caseStmt, *tokenListPtr);
 		if (!node) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return NULL;
 		}
 
@@ -3808,12 +3814,12 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 		jcc_tuSwitchAddCase(ctx, tu, node, false);
 	} else if (jcc_tokExpect(&tok, JCC_TOKEN_DEFAULT)) {
 		if (!tu->m_CurFuncSwitch) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Stray default statement");
+			jcc_logError(ctx, &tok->m_Loc, "Stray default statement");
 			return NULL;
 		}
 		
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_COLON)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ':'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected ':'");
 			return NULL;
 		}
 
@@ -3821,20 +3827,20 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 
 		jx_cc_ast_stmt_t* caseStmt = jcc_parseStatement(ctx, tu, &tok);
 		if (!caseStmt) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected statement");
+			jcc_logError(ctx, &tok->m_Loc, "Expected statement");
 			return NULL;
 		}
 
 		node = jcc_astAllocStmtCase(ctx, lbl, INT64_MAX, INT64_MAX, caseStmt, *tokenListPtr);
 		if (!node) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return NULL;
 		}
 
 		jcc_tuSwitchAddCase(ctx, tu, node, true);
 	} else if (jcc_tokExpect(&tok, JCC_TOKEN_FOR)) {
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_OPEN_PAREN)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected '(' after 'for'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected '(' after 'for'");
 			return NULL;
 		}
 
@@ -3847,14 +3853,14 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 		jx_cc_ast_stmt_t* bodyStmt = NULL;
 
 		if (!jcc_tuEnterScope(ctx, tu)) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return NULL;
 		}
 		{
 			if (jcc_tuIsTypename(ctx, tu, tok)) {
 				jx_cc_type_t* basety = jcc_parseDeclarationSpecifiers(ctx, tu, &tok, NULL);
 				if (!basety) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse declaration specifiers.");
+					jcc_logError(ctx, &tok->m_Loc, "Failed to parse declaration specifiers.");
 					return NULL;
 				}
 
@@ -3864,33 +3870,33 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 			}
 
 			if (!initStmt) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse for loop initialization statement.");
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse for loop initialization statement.");
 				return NULL;
 			}
 
 			if (!jcc_tokIs(tok, JCC_TOKEN_SEMICOLON)) {
 				condExpr = jcc_parseExpression(ctx, tu, &tok);
 				if (!condExpr) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Expected for loop conditional expression");
+					jcc_logError(ctx, &tok->m_Loc, "Expected for loop conditional expression");
 					return NULL;
 				}
 			}
 
 			if (!jcc_tokExpect(&tok, JCC_TOKEN_SEMICOLON)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ';' after for loop terminator expression");
+				jcc_logError(ctx, &tok->m_Loc, "Expected ';' after for loop terminator expression");
 				return NULL;
 			}
 
 			if (!jcc_tokIs(tok, JCC_TOKEN_CLOSE_PAREN)) {
 				incExpr = jcc_parseExpression(ctx, tu, &tok);
 				if (!incExpr) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Expected for loop iteration expression");
+					jcc_logError(ctx, &tok->m_Loc, "Expected for loop iteration expression");
 					return NULL;
 				}
 			}
 
 			if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ')'");
+				jcc_logError(ctx, &tok->m_Loc, "Expected ')'");
 				return NULL;
 			}
 
@@ -3901,7 +3907,7 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 
 			bodyStmt = jcc_parseStatement(ctx, tu, &tok);
 			if (!bodyStmt) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected statement");
+				jcc_logError(ctx, &tok->m_Loc, "Expected statement");
 				return NULL;
 			}
 
@@ -3912,23 +3918,23 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 
 		node = jcc_astAllocStmtFor(ctx, newBrkLbl, newContLbl, bodyLbl, initStmt, condExpr, incExpr, bodyStmt, *tokenListPtr);
 		if (!node) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return NULL;
 		}
 	} else if (jcc_tokExpect(&tok, JCC_TOKEN_WHILE)) {
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_OPEN_PAREN)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected '(' after 'while'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected '(' after 'while'");
 			return NULL;
 		}
 		
 		jx_cc_ast_expr_t* condExpr = jcc_parseExpression(ctx, tu, &tok);
 		if (!condExpr) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected expression after '('");
+			jcc_logError(ctx, &tok->m_Loc, "Expected expression after '('");
 			return NULL;
 		}
 
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ')' after expression");
+			jcc_logError(ctx, &tok->m_Loc, "Expected ')' after expression");
 			return NULL;
 		}
 		
@@ -3943,7 +3949,7 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 		
 		jx_cc_ast_stmt_t* bodyStmt = jcc_parseStatement(ctx, tu, &tok);
 		if (!bodyStmt) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected statement");
+			jcc_logError(ctx, &tok->m_Loc, "Expected statement");
 			return NULL;
 		}
 		
@@ -3952,7 +3958,7 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 
 		node = jcc_astAllocStmtFor(ctx, newBrkLbl, newContLbl, bodyLbl, NULL, condExpr, NULL, bodyStmt, *tokenListPtr);
 		if (!node) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return NULL;
 		}
 	} else if (jcc_tokExpect(&tok, JCC_TOKEN_DO)) {
@@ -3967,7 +3973,7 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 		
 		jx_cc_ast_stmt_t* bodyStmt = jcc_parseStatement(ctx, tu, &tok);
 		if (!bodyStmt) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected statement after 'do'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected statement after 'do'");
 			return NULL;
 		}
 		
@@ -3975,45 +3981,45 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 		tu->m_CurFuncContinueLabel = curContLbl;
 		
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_WHILE)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected 'while' after loop body");
+			jcc_logError(ctx, &tok->m_Loc, "Expected 'while' after loop body");
 			return NULL;
 		}
 
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_OPEN_PAREN)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected '(' after 'while'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected '(' after 'while'");
 			return NULL;
 		}
 
 		jx_cc_ast_expr_t* condExpr = jcc_parseExpression(ctx, tu, &tok);
 		if (!condExpr) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected expression after '('");
+			jcc_logError(ctx, &tok->m_Loc, "Expected expression after '('");
 			return NULL;
 		}
 
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ')' after expression");
+			jcc_logError(ctx, &tok->m_Loc, "Expected ')' after expression");
 			return NULL;
 		}
 
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_SEMICOLON)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ';' after ')'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected ';' after ')'");
 			return NULL;
 		}
 
 		node = jcc_astAllocStmtDo(ctx, newBrkLbl, newContLbl, bodyLbl, condExpr, bodyStmt, *tokenListPtr);
 		if (!node) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return NULL;
 		}
 	} else if (jcc_tokExpect(&tok, JCC_TOKEN_ASM)) {
 		node = jcc_parseAsmStatement(ctx, tu, &tok);
 		if (!node) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse asm statement");
+			jcc_logError(ctx, &tok->m_Loc, "Failed to parse asm statement");
 			return NULL;
 		}
 	} else if (jcc_tokExpect(&tok, JCC_TOKEN_GOTO)) {
 		if (!jcc_tokIs(tok, JCC_TOKEN_IDENTIFIER)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected identifier after 'goto'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected identifier after 'goto'");
 			return NULL;
 		}
 
@@ -4021,47 +4027,47 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 		tok = tok->m_Next;
 
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_SEMICOLON)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ';' after identifier");
+			jcc_logError(ctx, &tok->m_Loc, "Expected ';' after identifier");
 			return NULL;
 		}
 
 		node = jcc_astAllocStmtGoto(ctx, lbl, *tokenListPtr);
 		if (!node) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return NULL;
 		}
 
 		jcc_tuFuncAddGoto(ctx, tu, node);
 	} else if (jcc_tokExpect(&tok, JCC_TOKEN_BREAK)) {
 		if (tu->m_CurFuncBreakLabel.m_ID == 0) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Stray break statement");
+			jcc_logError(ctx, &tok->m_Loc, "Stray break statement");
 			return NULL;
 		}
 
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_SEMICOLON)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ';' after 'break'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected ';' after 'break'");
 			return NULL;
 		}
 
 		node = jcc_astAllocStmtBreakContinue(ctx, tu->m_CurFuncBreakLabel, *tokenListPtr);
 		if (!node) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return NULL;
 		}
 	} else if (jcc_tokExpect(&tok, JCC_TOKEN_CONTINUE)) {
 		if (tu->m_CurFuncContinueLabel.m_ID == 0) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Stray continue statement.");
+			jcc_logError(ctx, &tok->m_Loc, "Stray continue statement.");
 			return NULL;
 		}
 
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_SEMICOLON)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ';' after 'continue'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected ';' after 'continue'");
 			return NULL;
 		}
 
 		node = jcc_astAllocStmtBreakContinue(ctx, tu->m_CurFuncContinueLabel, *tokenListPtr);
 		if (!node) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return NULL;
 		}
 	} else if (tok->m_Kind == JCC_TOKEN_IDENTIFIER && jcc_tokIs(tok->m_Next, JCC_TOKEN_COLON)) {
@@ -4072,13 +4078,13 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 
 		jx_cc_ast_stmt_t* stmt = jcc_parseStatement(ctx, tu, &tok);
 		if (!stmt) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected statement after ':'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected statement after ':'");
 			return NULL;
 		}
 
 		node = jcc_astAllocStmtLabel(ctx, lbl, uniqueLbl, stmt, tok);
 		if (!node) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return NULL;
 		}
 
@@ -4086,13 +4092,13 @@ static jx_cc_ast_stmt_t* jcc_parseStatement(jx_cc_context_t* ctx, jcc_translatio
 	} else if (jcc_tokExpect(&tok, JCC_TOKEN_OPEN_CURLY_BRACKET)) {
 		node = jcc_parseCompoundStatement(ctx, tu, &tok);
 		if (!node) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse compound statement");
+			jcc_logError(ctx, &tok->m_Loc, "Failed to parse compound statement");
 			return NULL;
 		}
 	} else {
 		node = jcc_parseExpressionStatement(ctx, tu, &tok);
 		if (!node) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse expression statement");
+			jcc_logError(ctx, &tok->m_Loc, "Failed to parse expression statement");
 			return NULL;
 		}
 	}
@@ -4111,12 +4117,12 @@ static jx_cc_ast_stmt_t* jcc_parseCompoundStatement(jx_cc_context_t* ctx, jcc_tr
 
 	jx_cc_ast_node_t** childArr = (jx_cc_ast_node_t**)jx_array_create(ctx->m_Allocator);
 	if (!childArr) {
-		jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 		return NULL;
 	}
 
 	if (!jcc_tuEnterScope(ctx, tu)) {
-		jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 		jx_array_free(childArr);
 		return NULL;
 	}
@@ -4128,14 +4134,14 @@ static jx_cc_ast_stmt_t* jcc_parseCompoundStatement(jx_cc_context_t* ctx, jcc_tr
 				jcc_var_attr_t attr = { 0 };
 				jx_cc_type_t* basety = jcc_parseDeclarationSpecifiers(ctx, tu, &tok, &attr);
 				if (!basety) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Expected declaration specifiers");
+					jcc_logError(ctx, &tok->m_Loc, "Expected declaration specifiers");
 					jx_array_free(childArr);
 					return NULL;
 				}
 
 				if ((attr.m_Flags & JCC_VAR_ATTR_IS_TYPEDEF_Msk) != 0) {
 					if (!jcc_parseTypedef(ctx, tu, &tok, basety)) {
-						jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse typedef");
+						jcc_logError(ctx, &tok->m_Loc, "Failed to parse typedef");
 						jx_array_free(childArr);
 						return NULL;
 					}
@@ -4145,7 +4151,7 @@ static jx_cc_ast_stmt_t* jcc_parseCompoundStatement(jx_cc_context_t* ctx, jcc_tr
 
 				if (jcc_isFunction(ctx, tu, tok)) {
 					if (!jcc_parseFunction(ctx, tu, &tok, basety, &attr)) {
-						jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse function");
+						jcc_logError(ctx, &tok->m_Loc, "Failed to parse function");
 						jx_array_free(childArr);
 						return NULL;
 					}
@@ -4155,7 +4161,7 @@ static jx_cc_ast_stmt_t* jcc_parseCompoundStatement(jx_cc_context_t* ctx, jcc_tr
 
 				if ((attr.m_Flags & JCC_VAR_ATTR_IS_EXTERN_Msk) != 0) {
 					if (!jcc_parseGlobalVariable(ctx, tu, &tok, basety, &attr)) {
-						jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse global variable");
+						jcc_logError(ctx, &tok->m_Loc, "Failed to parse global variable");
 						jx_array_free(childArr);
 						return NULL;
 					}
@@ -4165,14 +4171,14 @@ static jx_cc_ast_stmt_t* jcc_parseCompoundStatement(jx_cc_context_t* ctx, jcc_tr
 
 				child = jcc_parseDeclaration(ctx, tu, &tok, basety, &attr);
 				if (!child) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Expected declaration");
+					jcc_logError(ctx, &tok->m_Loc, "Expected declaration");
 					jx_array_free(childArr);
 					return NULL;
 				}
 			} else {
 				child = jcc_parseStatement(ctx, tu, &tok);
 				if (!child) {
-					jcc_tuError(ctx, tu, &tok->m_Loc, "Expected statement");
+					jcc_logError(ctx, &tok->m_Loc, "Expected statement");
 					jx_array_free(childArr);
 					return NULL;
 				}
@@ -4186,7 +4192,7 @@ static jx_cc_ast_stmt_t* jcc_parseCompoundStatement(jx_cc_context_t* ctx, jcc_tr
 			jx_array_push_back(childArr, &child->super);
 
 			if (!jcc_astAddType(ctx, &child->super)) {
-				jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Failed to add type to node.");
 				jx_array_free(childArr);
 				return NULL;
 			}
@@ -4215,12 +4221,12 @@ static jx_cc_ast_stmt_t* jcc_parseExpressionStatement(jx_cc_context_t* ctx, jcc_
 	} else {
 		jx_cc_ast_expr_t* expr = jcc_parseExpression(ctx, tu, &tok);
 		if (!expr) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse expression");
+			jcc_logError(ctx, &tok->m_Loc, "Failed to parse expression");
 			return NULL;
 		}
 
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_SEMICOLON)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ';'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected ';'");
 			return NULL;
 		}
 
@@ -4272,6 +4278,7 @@ static int64_t jcc_astEvalConstExpression(jx_cc_context_t* ctx, jcc_translation_
 static int64_t jcc_astEvalConstExpression2(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_ast_expr_t* node, char*** label, bool* err)
 {
 	if (!jcc_astAddType(ctx, &node->super)) {
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Failed to add type to expression node.");
 		*err = true;
 		return INT64_MAX;
 	}
@@ -4407,12 +4414,14 @@ static int64_t jcc_astEvalConstExpression2(jx_cc_context_t* ctx, jcc_translation
 	} break;
 	case JCC_NODE_EXPR_MEMBER: {
 		if (!label) {
-			*err = true; // ERROR: not a compile-time constant
+			jcc_logError(ctx, &node->super.m_Token->m_Loc, "Not a compile-time constant");
+			*err = true;
 			return 0;
 		}
 
 		if (node->m_Type->m_Kind != JCC_TYPE_ARRAY) {
-			*err = true; // ERROR: invalid initializer
+			jcc_logError(ctx, &node->super.m_Token->m_Loc, "Invalid initializer");
+			*err = true;
 			return 0;
 		}
 
@@ -4421,14 +4430,16 @@ static int64_t jcc_astEvalConstExpression2(jx_cc_context_t* ctx, jcc_translation
 	} break;
 	case JCC_NODE_VARIABLE:
 		if (!label) {
-			*err = true; // ERROR: not a compile-time constant
+			jcc_logError(ctx, &node->super.m_Token->m_Loc, "Not a compile-time constant");
+			*err = true;
 			return 0;
 		}
 
 		jx_cc_ast_expr_variable_t* varNode = (jx_cc_ast_expr_variable_t*)node;
 		jx_cc_object_t* var = varNode->m_Var;
 		if (var->m_Type->m_Kind != JCC_TYPE_ARRAY && var->m_Type->m_Kind != JCC_TYPE_FUNC) {
-			*err = true; // ERROR: invalid initializer
+			jcc_logError(ctx, &node->super.m_Token->m_Loc, "Invalid initializer");
+			*err = true;
 			return 0;
 		}
 
@@ -4439,7 +4450,8 @@ static int64_t jcc_astEvalConstExpression2(jx_cc_context_t* ctx, jcc_translation
 		return ((jx_cc_ast_expr_iconst_t*)node)->m_Value;
 	}
 
-	*err = true; // ERROR: not a compile-time constant
+	jcc_logError(ctx, &node->super.m_Token->m_Loc, "Not a compile-time constant");
+	*err = true;
 
 	return 0;
 }
@@ -4452,7 +4464,8 @@ static int64_t jcc_astEvalRValue(jx_cc_context_t* ctx, jcc_translation_unit_t* t
 
 		if ((varNode->m_Var->m_Flags & JCC_OBJECT_FLAGS_IS_LOCAL_Msk) != 0) {
 			*err = true;
-			return 0; // ERROR: not a compile-time constant
+			jcc_logError(ctx, &node->super.m_Token->m_Loc, "Not a compile-time constant");
+			return 0;
 		}
 
 		*label = &varNode->m_Var->m_Name;
@@ -4470,12 +4483,14 @@ static int64_t jcc_astEvalRValue(jx_cc_context_t* ctx, jcc_translation_unit_t* t
 	}
 	
 	*err = true;
-	return 0; // ERROR: invalid initializer
+	jcc_logError(ctx, &node->super.m_Token->m_Loc, "Invalid initializer");
+	return 0;
 }
 
 static bool jcc_astIsConstExpression(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_ast_expr_t* node)
 {
 	if (!jcc_astAddType(ctx, &node->super)) {
+		jcc_logError(ctx, &node->super.m_Token->m_Loc, "Failed to add type to expression node.");
 		return false;
 	}
 	
@@ -4539,12 +4554,14 @@ static int64_t jcc_parseConstExpression(jx_cc_context_t* ctx, jcc_translation_un
 
 	jx_cc_ast_expr_t* node = jcc_parseConditional(ctx, tu, &tok);
 	if (!node) {
+		jcc_logError(ctx, &tok->m_Loc, "Failed to parse constant expression.");
 		*err = true;
 		return 0;
 	}
 
 	const int64_t val = jcc_astEvalConstExpression(ctx, tu, node, err);
 	if (*err) {
+		jcc_logError(ctx, &tok->m_Loc, "Failed to evaluate constant expression.");
 		return 0;
 	}
 
@@ -4556,6 +4573,7 @@ static int64_t jcc_parseConstExpression(jx_cc_context_t* ctx, jcc_translation_un
 static double jcc_astEvalConstExpressionDouble(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_ast_expr_t* node, bool* err)
 {
 	if (!jcc_astAddType(ctx, &node->super)) {
+		jcc_logError(ctx, &node->super.m_Token->m_Loc, "Internal Error: Failed to add type to expression node.");
 		*err = true;
 		return 0.0;
 	}
@@ -4617,7 +4635,8 @@ static double jcc_astEvalConstExpressionDouble(jx_cc_context_t* ctx, jcc_transla
 	}
 	
 	*err = true;
-	return 0.0; // ERROR: not a compile-time constant
+	jcc_logError(ctx, &node->super.m_Token->m_Loc, "Not a compile-time constant");
+	return 0.0;
 }
 
 static jx_cc_ast_expr_t* jcc_astConvertToAssign(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_ast_expr_t* expr)
@@ -4631,9 +4650,11 @@ static jx_cc_ast_expr_t* jcc_astConvertToAssign(jx_cc_context_t* ctx, jcc_transl
 		}
 
 		if (!jcc_astAddType(ctx, &binary->m_ExprLHS->super)) {
+			jcc_logError(ctx, &expr->super.m_Token->m_Loc, "Internal Error: Failed to add type to expression node.");
 			return NULL;
 		}
 		if (!jcc_astAddType(ctx, &binary->m_ExprRHS->super)) {
+			jcc_logError(ctx, &expr->super.m_Token->m_Loc, "Internal Error: Failed to add type to expression node.");
 			return NULL;
 		}
 
@@ -4642,7 +4663,7 @@ static jx_cc_ast_expr_t* jcc_astConvertToAssign(jx_cc_context_t* ctx, jcc_transl
 		jx_cc_ast_expr_get_element_ptr_t* gep = (jx_cc_ast_expr_get_element_ptr_t*)expr;
 		node = jcc_astAllocExprBinary(ctx, JCC_NODE_EXPR_ASSIGN, gep->m_ExprPtr, expr, expr->super.m_Token);
 	} else {
-		JX_CHECK(false, "Cannot convert to assignment");
+		jcc_logError(ctx, &expr->super.m_Token->m_Loc, "Cannot convert expression to assignment.");
 	}
 
 	return node;
@@ -4718,18 +4739,18 @@ static jx_cc_ast_expr_t* jcc_parseConditional(jx_cc_context_t* ctx, jcc_translat
 		jx_cc_token_t* conditionalTok = tok;
 		jx_cc_ast_expr_t* thenExpr = jcc_parseExpression(ctx, tu, &tok);
 		if (!thenExpr) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected expression after '?'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected expression after '?'");
 			return NULL;
 		}
 
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_COLON)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ':' after expression");
+			jcc_logError(ctx, &tok->m_Loc, "Expected ':' after expression");
 			return NULL;
 		}
 
 		jx_cc_ast_expr_t* elseExpr = jcc_parseConditional(ctx, tu, &tok);
 		if (!elseExpr) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected expression after ':'");
+			jcc_logError(ctx, &tok->m_Loc, "Expected expression after ':'");
 			return NULL;
 		}
 
@@ -6070,9 +6091,9 @@ static jx_cc_ast_expr_t* jcc_parsePrimaryExpression(jx_cc_context_t* ctx, jcc_tr
 		
 		if (!node) {
 			if (jcc_tokIs(tok, JCC_TOKEN_OPEN_PAREN)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Implicit declaration of a function");
+				jcc_logError(ctx, &tok->m_Loc, "Implicit declaration of a function");
 			} else {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Undefined variable");
+				jcc_logError(ctx, &tok->m_Loc, "Undefined variable");
 			}
 			return NULL;
 		}
@@ -6115,7 +6136,7 @@ static bool jcc_parseTypedef(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, j
 	while (!jcc_tokExpect(&tok, JCC_TOKEN_SEMICOLON)) {
 		if (!first) {
 			if (!jcc_tokExpect(&tok, JCC_TOKEN_COMMA)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected ','");
+				jcc_logError(ctx, &tok->m_Loc, "Expected ','");
 				return false;
 			}
 		}
@@ -6123,18 +6144,18 @@ static bool jcc_parseTypedef(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, j
 		
 		jx_cc_type_t* ty = jcc_parseDeclarator(ctx, tu, &tok, basety);
 		if (!ty) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected declarator");
+			jcc_logError(ctx, &tok->m_Loc, "Expected declarator");
 			return false;
 		}
 
 		if (!ty->m_DeclName) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "typedef name omitted");
+			jcc_logError(ctx, &tok->m_Loc, "typedef name omitted");
 			return false;
 		}
 		
 		jcc_var_scope_t* scope = jcc_tuPushVarScope(ctx, tu, jcc_tokGetIdentifier(ctx, ty->m_DeclName));
 		if (!scope) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return false;
 		}
 
@@ -6150,7 +6171,7 @@ static bool jcc_createParamLocalVars(jx_cc_context_t* ctx, jcc_translation_unit_
 {
 	while (param) {
 		if (!param->m_DeclName) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Parameter name omitted.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Parameter name omitted.");
 			return false;
 		}
 
@@ -6235,18 +6256,18 @@ static bool jcc_parseFunction(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, 
 
 	jx_cc_type_t* ty = jcc_parseDeclarator(ctx, tu, &tok, basety);
 	if (!ty) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Expected declarator");
+		jcc_logError(ctx, &tok->m_Loc, "Expected declarator");
 		return false;
 	}
 
 	if (!ty->m_DeclName) {
-		jcc_tuError(ctx, tu, &tok->m_Loc, "Function name omitted");
+		jcc_logError(ctx, &tok->m_Loc, "Function name omitted");
 		return false;
 	}
 	
 	const char* name_str = jcc_tokGetIdentifier(ctx, ty->m_DeclName);
 	if (!name_str) {
-		jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 		return false;
 	}
 	
@@ -6254,17 +6275,17 @@ static bool jcc_parseFunction(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, 
 	if (fn) {
 		// Redeclaration
 		if ((fn->m_Flags && JCC_OBJECT_FLAGS_IS_FUNCTION_Msk) == 0) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Redeclared as different kind of symbol");
+			jcc_logError(ctx, &tok->m_Loc, "Redeclared as different kind of symbol");
 			return false;
 		}
 		
 		if ((fn->m_Flags & JCC_OBJECT_FLAGS_IS_DEFINITION_Msk) != 0 && jcc_tokIs(tok, JCC_TOKEN_OPEN_CURLY_BRACKET)) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Redefinition of %s", name_str);
+			jcc_logError(ctx, &tok->m_Loc, "Redefinition of %s", name_str);
 			return false;
 		}
 		
 		if ((fn->m_Flags & JCC_OBJECT_FLAGS_IS_STATIC_Msk) == 0 && (attr->m_Flags & JCC_VAR_ATTR_IS_STATIC_Msk) != 0) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Static declaration follows a non-static declaration");
+			jcc_logError(ctx, &tok->m_Loc, "Static declaration follows a non-static declaration");
 			return false;
 		}
 		
@@ -6277,7 +6298,7 @@ static bool jcc_parseFunction(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, 
 	} else {
 		fn = jcc_tuVarAllocGlobal(ctx, tu, name_str, ty);
 		if (!fn) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return false;
 		}
 
@@ -6294,7 +6315,7 @@ static bool jcc_parseFunction(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, 
 
 		fn->m_FuncRefsArr = (char**)jx_array_create(ctx->m_Allocator);
 		if (!fn->m_FuncRefsArr) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return false;
 		}
 	}
@@ -6310,7 +6331,7 @@ static bool jcc_parseFunction(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, 
 		jx_cc_object_t* funcPtr = tu->m_GlobalsTail;
 
 		if (!jcc_tuEnterScope(ctx, tu)) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return false;
 		}
 		{
@@ -6321,14 +6342,14 @@ static bool jcc_parseFunction(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, 
 			jx_cc_type_t* rty = ty->m_FuncRetType;
 			if ((rty->m_Kind == JCC_TYPE_STRUCT || rty->m_Kind == JCC_TYPE_UNION) && rty->m_Size > JCC_CONFIG_MAX_RETVAL_SIZE) {
 				if (!jcc_tuVarAllocLocal(ctx, tu, "$__retbuf__", jcc_typeAllocPointerTo(ctx, rty))) {
-					jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+					jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 					jcc_tuLeaveScope(ctx, tu);
 					return false;
 				}
 			}
 
 			if (!jcc_createParamLocalVars(ctx, tu, ty->m_FuncParams)) {
-				jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				jcc_tuLeaveScope(ctx, tu);
 				return false;
 			}
@@ -6341,14 +6362,14 @@ static bool jcc_parseFunction(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, 
 			if ((ty->m_Flags & JCC_TYPE_FLAGS_IS_VARIADIC_Msk) != 0) {
 				fn->m_FuncVarArgArea = jcc_tuVarAllocLocal(ctx, tu, "__va_area__", jcc_typeAllocArrayOf(ctx, kType_char, 136)); // TODO: Magic number!
 				if (!fn->m_FuncVarArgArea) {
-					jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+					jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 					jcc_tuLeaveScope(ctx, tu);
 					return false;
 				}
 			}
 
 			if (!jcc_tokExpect(&tok, JCC_TOKEN_OPEN_CURLY_BRACKET)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected '{'");
+				jcc_logError(ctx, &tok->m_Loc, "Expected '{'");
 				jcc_tuLeaveScope(ctx, tu);
 				return false;
 			}
@@ -6357,7 +6378,7 @@ static bool jcc_parseFunction(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, 
 			{
 				jx_cc_type_t* funcVarType = jcc_typeAllocArrayOf(ctx, kType_char, (int)jx_strlen(fn->m_Name) + 1);
 				if (!funcVarType) {
-					jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+					jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 					jcc_tuLeaveScope(ctx, tu);
 					return false;
 				}
@@ -6368,14 +6389,14 @@ static bool jcc_parseFunction(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, 
 				{
 					jcc_var_scope_t* funcVar = jcc_tuPushVarScope(ctx, tu, jx_strtable_insert(ctx->m_StringTable, "__func__", UINT32_MAX));
 					if (!funcVar) {
-						jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+						jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 						jcc_tuLeaveScope(ctx, tu);
 						return false;
 					}
 
 					funcVar->m_Var = jcc_tuVarAllocStringLiteral(ctx, tu, fn->m_Name, funcVarType);
 					if (!funcVar->m_Var) {
-						jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+						jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 						jcc_tuLeaveScope(ctx, tu);
 						return false;
 					}
@@ -6384,7 +6405,7 @@ static bool jcc_parseFunction(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, 
 
 			fn->m_FuncBody = jcc_parseCompoundStatement(ctx, tu, &tok);
 			if (!fn->m_FuncBody) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Expected compound statement");
+				jcc_logError(ctx, &tok->m_Loc, "Expected compound statement");
 				jcc_tuLeaveScope(ctx, tu);
 				return false;
 			}
@@ -6549,26 +6570,26 @@ static bool jcc_parse(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_to
 		jcc_var_attr_t attr = { 0 };
 		jx_cc_type_t* basety = jcc_parseDeclarationSpecifiers(ctx, tu, &tok, &attr);
 		if (!basety) {
-			jcc_tuError(ctx, tu, &tok->m_Loc, "Expected declaration specifiers");
+			jcc_logError(ctx, &tok->m_Loc, "Expected declaration specifiers");
 			return false;
 		}
 		
 		if ((attr.m_Flags & JCC_VAR_ATTR_IS_TYPEDEF_Msk) != 0) {
 			// Typedef
 			if (!jcc_parseTypedef(ctx, tu, &tok, basety)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse typedef");
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse typedef");
 				return false;
 			}
 		} else if (jcc_isFunction(ctx, tu, tok)) {
 			// Function
 			if (!jcc_parseFunction(ctx, tu, &tok, basety, &attr)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse function");
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse function");
 				return false;
 			}
 		} else {
 			// Global variable
 			if (!jcc_parseGlobalVariable(ctx, tu, &tok, basety, &attr)) {
-				jcc_tuError(ctx, tu, &tok->m_Loc, "Failed to parse global variable");
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse global variable");
 				return false;
 			}
 		}
@@ -7983,7 +8004,7 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 
 			cur->m_Next = jcc_allocToken(ctx, tu, JCC_TOKEN_PREPROC_NUMBER, q, p);
 			if (!cur->m_Next) {
-				jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return NULL;
 			}
 			cur = cur->m_Next;
@@ -7991,7 +8012,7 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 			// String literal
 			cur->m_Next = jcc_readStringLiteral(ctx, tu, p, p);
 			if (!cur->m_Next) {
-				jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return NULL;
 			}
 			cur = cur->m_Next;
@@ -8000,7 +8021,7 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 			// UTF-8 string literal
 			cur->m_Next = jcc_readStringLiteral(ctx, tu, p, p + 2);
 			if (!cur->m_Next) {
-				jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return NULL;
 			}
 			cur = cur->m_Next;
@@ -8009,7 +8030,7 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 			// UTF-16 string literal
 			cur->m_Next = jcc_readUTF16StringLiteral(ctx, tu, p, p + 1);
 			if (!cur->m_Next) {
-				jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return NULL;
 			}
 			cur = cur->m_Next;
@@ -8019,7 +8040,7 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 			// TODO: What type should L strings be?
 			cur->m_Next = jcc_readUTF32StringLiteral(ctx, tu, p, p + 1, kType_int);
 			if (!cur->m_Next) {
-				jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return NULL;
 			}
 			cur = cur->m_Next;
@@ -8028,7 +8049,7 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 			// UTF-32 string literal
 			cur->m_Next = jcc_readUTF32StringLiteral(ctx, tu, p, p + 1, kType_uint);
 			if (!cur->m_Next) {
-				jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return NULL;
 			}
 			cur = cur->m_Next;
@@ -8037,7 +8058,7 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 			// Character literal
 			cur->m_Next = jcc_readCharLiteral(ctx, tu, p, p, kType_int);
 			if (!cur->m_Next) {
-				jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return NULL;
 			}
 			cur = cur->m_Next;
@@ -8047,7 +8068,7 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 			// UTF-16 character literal
 			cur->m_Next = jcc_readCharLiteral(ctx, tu, p, p + 1, kType_ushort);
 			if (!cur->m_Next) {
-				jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return NULL;
 			}
 			cur = cur->m_Next;
@@ -8057,7 +8078,7 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 			// Wide character literal
 			cur->m_Next = jcc_readCharLiteral(ctx, tu, p, p + 1, kType_int);
 			if (!cur->m_Next) {
-				jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return NULL;
 			}
 			cur = cur->m_Next;
@@ -8066,7 +8087,7 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 			// UTF-32 character literal
 			cur->m_Next = jcc_readCharLiteral(ctx, tu, p, p + 1, kType_uint);
 			if (!cur->m_Next) {
-				jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return NULL;
 			}
 			cur = cur->m_Next;
@@ -8075,7 +8096,7 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 			// Keyword, punctuator or identifier
 			cur->m_Next = jcc_readKnownTokenOrIdentifier(ctx, tu, p);
 			if (!cur->m_Next) {
-				jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return NULL;
 			}
 			cur = cur->m_Next;
@@ -8083,14 +8104,14 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 		}
 
 		if (p == start) {
-			jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Unknown or invalid token '%c'", *p);
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Unknown or invalid token '%c'", *p);
 			return NULL;
 		}
 	}
 
 	cur->m_Next = jcc_allocToken(ctx, tu, JCC_TOKEN_EOF, p, p);
 	if (!cur->m_Next) {
-		jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 		return NULL;
 	}
 	cur = cur->m_Next;
@@ -8109,7 +8130,7 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 					const uint32_t len2 = jx_strlen(str2);
 					char* tmpBuf = (char*)JX_ALLOC(ctx->m_Allocator, len1 + len2);
 					if (!tmpBuf) {
-						jcc_tuError(ctx, tu, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+						jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 						return NULL;
 					}
 
@@ -8230,7 +8251,7 @@ static bool jcc_isIdentifierCodepoint2(uint32_t c)
 		;
 }
 
-static void jcc_tuError(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const jx_cc_source_loc_t* loc, const char* fmt, ...)
+static void jcc_logError(jx_cc_context_t* ctx, const jx_cc_source_loc_t* loc, const char* fmt, ...)
 {
 	char str[1024];
 
@@ -8239,9 +8260,5 @@ static void jcc_tuError(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const 
 	jx_vsnprintf(str, JX_COUNTOF(str), fmt, argList);
 	va_end(argList);
 
-	char msg[1024];
-	const uint32_t msgLen = jx_snprintf(msg, JX_COUNTOF(msg), "%s(%u): %s", loc->m_Filename, loc->m_LineNum, str);
-
-	char* copy = jx_strndup(msg, msgLen, ctx->m_Allocator);
-	jx_array_push_back(tu->m_ErrorsArr, copy);
+	JX_LOG_ERROR(ctx->m_Logger, "jcc", "%s(%u): %s", loc->m_Filename, loc->m_LineNum, str);
 }

@@ -12,6 +12,7 @@
 #endif
 
 typedef struct jx_allocator_i jx_allocator_i;
+typedef struct jx_logger_i jx_logger_i;
 typedef enum jx_file_base_dir jx_file_base_dir;
 
 typedef struct jx_cc_type_t jx_cc_type_t;
@@ -538,13 +539,11 @@ typedef struct jx_cc_struct_member_t
 typedef struct jx_cc_translation_unit_t
 {
 	jx_cc_object_t* m_Globals;
-	char** m_ErrorsArr;
-	char* m_FilePath;
 } jx_cc_translation_unit_t;
 
 typedef struct jx_cc_context_t jx_cc_context_t;
 
-jx_cc_context_t* jx_cc_createContext(jx_allocator_i* allocator);
+jx_cc_context_t* jx_cc_createContext(jx_allocator_i* allocator, jx_logger_i* logger);
 void jx_cc_destroyContext(jx_cc_context_t* ctx);
 jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_dir baseDir, const char* filename);
 
