@@ -319,10 +319,10 @@ bool jx_cpu_initAPI(void)
 void jx_cpu_logInfo(jx_logger_i* logger)
 {
 	jx_cpu_info* info = &s_CPUInfo;
-	JX_LOG_DEBUG(logger, "cpu: Vendor ID: %s\n", info->m_VendorID);
-	JX_LOG_DEBUG(logger, "cpu: Processor: %s\n", info->m_ProcessorBrandString);
-	JX_LOG_DEBUG(logger, "cpu: Family: %02Xh, Model: %02Xh, Stepping: %u\n", info->m_Version.m_FamilyID, info->m_Version.m_ModelID, info->m_Version.m_SteppingID);
-	JX_LOG_DEBUG(logger, "cpu: Features : %I64Xh\n", info->m_Features);
+	JX_LOG_DEBUG(logger, "cpu", "Vendor ID : % s\n", info->m_VendorID);
+	JX_LOG_DEBUG(logger, "cpu", "Processor: %s\n", info->m_ProcessorBrandString);
+	JX_LOG_DEBUG(logger, "cpu", "Family: %02Xh, Model: %02Xh, Stepping: %u\n", info->m_Version.m_FamilyID, info->m_Version.m_ModelID, info->m_Version.m_SteppingID);
+	JX_LOG_DEBUG(logger, "cpu", "Features : %I64Xh\n", info->m_Features);
 
 	char featureStr[256] = { 0 };
 	bool appendSeparator = false;
@@ -335,7 +335,7 @@ void jx_cpu_logInfo(jx_logger_i* logger)
 			appendSeparator = true;
 		}
 	}
-	JX_LOG_DEBUG(logger, "cpu: - %s\n", featureStr);
+	JX_LOG_DEBUG(logger, "cpu", "- %s\n", featureStr);
 }
 
 static const char* _jx_cpu_getVendorID(void)

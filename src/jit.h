@@ -5,6 +5,12 @@
 #include <stdbool.h>
 #include <jlib/macros.h>
 
+typedef struct jx_allocator_i jx_allocator_i;
+
+typedef struct jx_x64_label_t jx_x64_label_t;
+typedef struct jx_x64_func_t jx_x64_func_t;
+typedef struct jx_x64_global_var_t jx_x64_global_var_t;
+
 typedef enum jx_x64_size
 {
 	JX64_SIZE_8  = 0,
@@ -173,8 +179,6 @@ typedef enum jx_x64_reg
 	JX64_REG_NONE = 0xFF,
 } jx_x64_reg;
 
-typedef struct jx_x64_label_t jx_x64_label_t;
-
 typedef struct jx_x64_mem_t
 {
 	jx_x64_reg m_Base;
@@ -196,8 +200,6 @@ typedef struct jx_x64_operand_t
 	} u;
 } jx_x64_operand_t;
 
-typedef struct jx_allocator_i jx_allocator_i;
-
 typedef struct jx_x64_context_t jx_x64_context_t;
 
 jx_x64_context_t* jx_x64_createContext(jx_allocator_i* allocator);
@@ -211,14 +213,24 @@ void jx64_labelFree(jx_x64_context_t* ctx, jx_x64_label_t* lbl);
 void jx64_labelBind(jx_x64_context_t* ctx, jx_x64_label_t* lbl);
 uint32_t jx64_labelGetOffset(jx_x64_context_t* ctx, jx_x64_label_t* lbl);
 
-bool jx64_funcBegin(jx_x64_context_t* ctx, jx_x64_label_t* lbl);
+jx_x64_global_var_t* jx64_globalVarDeclare(jx_x64_context_t* ctx, const char* name);
+bool jx64_globalVarDefine(jx_x64_context_t* ctx, jx_x64_global_var_t* gv, const uint8_t* data, uint32_t sz);
+jx_x64_label_t* jx64_globalVarGetLabelByName(jx_x64_context_t* ctx, const char* name);
+
+jx_x64_func_t* jx64_funcDeclare(jx_x64_context_t* ctx, const char* name);
+bool jx64_funcBegin(jx_x64_context_t* ctx, jx_x64_func_t* func);
 void jx64_funcEnd(jx_x64_context_t* ctx);
+jx_x64_label_t* jx64_funcGetLabelByName(jx_x64_context_t* ctx, const char* name);
+jx_x64_label_t* jx64_funcGetLabel(jx_x64_context_t* ctx, jx_x64_func_t* func);
+uint32_t jx64_funcGetOffset(jx_x64_context_t* ctx, jx_x64_func_t* func);
 
 bool jx64_emitBytes(jx_x64_context_t* ctx, const uint8_t* bytes, uint32_t n);
 bool jx64_nop(jx_x64_context_t* ctx, uint32_t n);
 bool jx64_push(jx_x64_context_t* ctx, jx_x64_operand_t op);
 bool jx64_pop(jx_x64_context_t* ctx, jx_x64_operand_t op);
 bool jx64_mov(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_movsx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_movzx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
 bool jx64_add(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
 bool jx64_sub(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
 bool jx64_adc(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);

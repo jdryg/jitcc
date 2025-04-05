@@ -10,6 +10,7 @@
 
 static jx_string_buffer_t* _jx_strbuf_create(jx_allocator_i* allocator);
 static void _jx_strbuf_destroy(jx_string_buffer_t* sb);
+static void _jx_strbuf_reset(jx_string_buffer_t* sb);
 static int32_t _jx_strbuf_push(jx_string_buffer_t* sb, const char* str, uint32_t len);
 static int32_t _jx_strbuf_pop(jx_string_buffer_t* sb, uint32_t n);
 static const char* _jx_strbuf_peek(jx_string_buffer_t* sb, uint32_t n);
@@ -44,6 +45,7 @@ static char* _jstr_base64Encode(const uint8_t* data, uint32_t sz, uint32_t* len,
 jx_string_api* str_api = &(jx_string_api) {
 	.strbufCreate = _jx_strbuf_create,
 	.strbufDestroy = _jx_strbuf_destroy,
+	.strbufReset = _jx_strbuf_reset,
 	.strbufPush = _jx_strbuf_push,
 	.strbufPop = _jx_strbuf_pop,
 	.strbufPeek = _jx_strbuf_peek,
@@ -100,7 +102,8 @@ static jx_string_buffer_t* _jx_strbuf_create(jx_allocator_i* allocator)
 	jx_memset(sb, 0, sizeof(jx_string_buffer_t));
 	sb->m_Allocator = allocator;
 	sb->m_Buffer = jx_array_create(allocator);
-	_jx_strbuf_nullTerminate(sb);
+	_jx_strbuf_reset(sb);
+//	_jx_strbuf_nullTerminate(sb);
 
 	return sb;
 }
@@ -111,9 +114,18 @@ static void _jx_strbuf_destroy(jx_string_buffer_t* sb)
 	JX_FREE(sb->m_Allocator, sb);
 }
 
+static void _jx_strbuf_reset(jx_string_buffer_t* sb)
+{
+	jx_array_resize(sb->m_Buffer, 1);
+	sb->m_Buffer[0] = '\0';
+}
+
 static int32_t _jx_strbuf_push(jx_string_buffer_t* sb, const char* str, uint32_t len)
 {
 	const uint32_t sz = (uint32_t)jx_array_sizeu(sb->m_Buffer);
+	if (sz > 4000) {
+		int a = 0;
+	}
 	if (sb->m_Buffer[sz - 1] == '\0') {
 		jx_array_pop_back(sb->m_Buffer);
 	}

@@ -54,6 +54,7 @@ static double _jx_os_timestampConvertTo(int64_t delta, jx_os_time_units units);
 static uint32_t _jx_os_timestampToString(uint64_t ts, char* buffer, uint32_t max);
 static int32_t _jx_os_consoleOpen(void);
 static void _jx_os_consoleClose(bool waitForUserInput);
+static int32_t _jx_os_consolePuts(const char* str, uint32_t len);
 static jx_os_mutex_t* _jx_os_mutexCreate(void);
 static void _jx_os_mutexDestroy(jx_os_mutex_t* mutex);
 static void _jx_os_mutexLock(jx_os_mutex_t* mutex);
@@ -124,6 +125,7 @@ jx_os_api* os_api = &(jx_os_api){
 	.timestampToString = _jx_os_timestampToString,
 	.consoleOpen = _jx_os_consoleOpen,
 	.consoleClose = _jx_os_consoleClose,
+	.consolePuts = _jx_os_consolePuts,
 	.mutexCreate = _jx_os_mutexCreate,
 	.mutexDestroy = _jx_os_mutexDestroy,
 	.mutexLock = _jx_os_mutexLock,
@@ -266,7 +268,7 @@ void jx_os_logInfo(jx_logger_i* logger)
 
 					rtlGetVersion((PRTL_OSVERSIONINFOW)&osVersion);
 
-					JX_LOG_DEBUG(logger, "os: Windows x64 %u.%u.%u\n", osVersion.dwMajorVersion, osVersion.dwMinorVersion, osVersion.dwBuildNumber);
+					JX_LOG_DEBUG(logger, "os", "Windows x64 %u.%u.%u\n", osVersion.dwMajorVersion, osVersion.dwMinorVersion, osVersion.dwBuildNumber);
 
 					success = true;
 				}
@@ -345,7 +347,7 @@ void jx_os_logInfo(jx_logger_i* logger)
 				UINT dwBytes = 0;
 				verQueryValueA(verInfoBuffer, str, &lpBuffer, &dwBytes);
 				if (lpBuffer != NULL && dwBytes != 0) {
-					JX_LOG_DEBUG(logger, "os: Windows x64 %s\n", (const char*)lpBuffer);
+					JX_LOG_DEBUG(logger, "os", "Windows x64 %s\n", (const char*)lpBuffer);
 					success = true;
 				}
 
@@ -360,38 +362,38 @@ void jx_os_logInfo(jx_logger_i* logger)
 			// NOTE: This isn't accurate. On Win 10 reports Win 8 or greater.
 			// Does it require a manifest? If yes, what's the point?
 			if (IsWindows10OrGreater()) {
-				JX_LOG_DEBUG(logger, "os: Windows 10 or greater\n");
+				JX_LOG_DEBUG(logger, "os", "Windows 10 or greater\n");
 			} else if (IsWindows8Point1OrGreater()) {
-				JX_LOG_DEBUG(logger, "os: Windows 8.1 or greater\n");
+				JX_LOG_DEBUG(logger, "os", "Windows 8.1 or greater\n");
 			} else if (IsWindows8OrGreater()) {
-				JX_LOG_DEBUG(logger, "os: Windows 8 or greater\n");
+				JX_LOG_DEBUG(logger, "os", "Windows 8 or greater\n");
 			} else if (IsWindows7SP1OrGreater()) {
-				JX_LOG_DEBUG(logger, "os: Windows 7 SP1 or greater\n");
+				JX_LOG_DEBUG(logger, "os", "Windows 7 SP1 or greater\n");
 			} else if (IsWindows7OrGreater()) {
-				JX_LOG_DEBUG(logger, "os: Windows 7 or greater\n");
+				JX_LOG_DEBUG(logger, "os", "Windows 7 or greater\n");
 			} else if (IsWindowsVistaSP2OrGreater()) {
-				JX_LOG_DEBUG(logger, "os: Windows Vista SP2 or greater\n");
+				JX_LOG_DEBUG(logger, "os", "Windows Vista SP2 or greater\n");
 			} else if (IsWindowsVistaSP1OrGreater()) {
-				JX_LOG_DEBUG(logger, "os: Windows Vista SP1 or greater\n");
+				JX_LOG_DEBUG(logger, "os", "Windows Vista SP1 or greater\n");
 			} else if (IsWindowsVistaOrGreater()) {
-				JX_LOG_DEBUG(logger, "os: Windows Vista or greater\n");
+				JX_LOG_DEBUG(logger, "os", "Windows Vista or greater\n");
 			} else if (IsWindowsXPSP3OrGreater()) {
-				JX_LOG_DEBUG(logger, "os: Windows XP SP3 or greater\n");
+				JX_LOG_DEBUG(logger, "os", "Windows XP SP3 or greater\n");
 			} else if (IsWindowsXPSP2OrGreater()) {
-				JX_LOG_DEBUG(logger, "os: Windows XP SP2 or greater\n");
+				JX_LOG_DEBUG(logger, "os", "Windows XP SP2 or greater\n");
 			} else if (IsWindowsXPSP1OrGreater()) {
-				JX_LOG_DEBUG(logger, "os: Windows XP SP1 or greater\n");
+				JX_LOG_DEBUG(logger, "os", "Windows XP SP1 or greater\n");
 			} else if (IsWindowsXPOrGreater()) {
-				JX_LOG_DEBUG(logger, "os: Windows XP or greater\n");
+				JX_LOG_DEBUG(logger, "os", "Windows XP or greater\n");
 			} else {
-				JX_LOG_DEBUG(logger, "os: Windows Unknown\n");
+				JX_LOG_DEBUG(logger, "os", "Windows Unknown\n");
 			}
 		}
 	}
 
 	// Presice system timer
 	{
-		JX_LOG_DEBUG(logger, "os: Has precise timestamps: %s\n", s_OSContext.GetSystemTimePreciseAsFileTime != NULL ? "Yes" : "No");
+		JX_LOG_DEBUG(logger, "os", "Has precise timestamps: %s\n", s_OSContext.GetSystemTimePreciseAsFileTime != NULL ? "Yes" : "No");
 	}
 }
 
@@ -1523,6 +1525,21 @@ static void _jx_os_consoleClose(bool waitForUserInput)
 	FreeConsole();
 }
 
+static int32_t _jx_os_consolePuts(const char* str, uint32_t len)
+{
+	len = len == UINT32_MAX
+		? jx_strlen(str)
+		: len
+		;
+
+	uint32_t charsWritten;
+	if (!WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), str, len, &charsWritten, NULL)) {
+		return -1;
+	}
+
+	return (int32_t)charsWritten;
+}
+
 //////////////////////////////////////////////////////////////////////////
 // Mutex
 //
@@ -1959,17 +1976,17 @@ static int32_t _jx_os_fsSetBaseDir(jx_file_base_dir whichDir, jx_file_base_dir b
 	case JX_FILE_BASE_DIR_INSTALL:
 		return JX_ERROR_INVALID_ARGUMENT;
 	case JX_FILE_BASE_DIR_USERDATA:
-		JX_SYS_LOG_DEBUG("os: Setting User Data directory to \"%s\".\n", absPath);
+		JX_SYS_LOG_DEBUG("os", "Setting User Data directory to \"%s\".\n", absPath);
 		_jx_os_fsCreateDirectory(JX_FILE_BASE_DIR_ABSOLUTE_PATH, absPath);
 		jx_snprintf(s_OSContext.m_UserDataDir, JX_COUNTOF(s_OSContext.m_UserDataDir), "%s", absPath);
 		break;
 	case JX_FILE_BASE_DIR_USERAPPDATA:
-		JX_SYS_LOG_DEBUG("os: Setting User App Data directory to \"%s\".\n", absPath);
+		JX_SYS_LOG_DEBUG("os", "Setting User App Data directory to \"%s\".\n", absPath);
 		_jx_os_fsCreateDirectory(JX_FILE_BASE_DIR_ABSOLUTE_PATH, absPath);
 		jx_snprintf(s_OSContext.m_UserAppDataDir, JX_COUNTOF(s_OSContext.m_UserAppDataDir), "%s", absPath);
 		break;
 	case JX_FILE_BASE_DIR_TEMP:
-		JX_SYS_LOG_DEBUG("os: Setting Temp directory to \"%s\".\n", absPath);
+		JX_SYS_LOG_DEBUG("os", "Setting Temp directory to \"%s\".\n", absPath);
 		_jx_os_fsCreateDirectory(JX_FILE_BASE_DIR_ABSOLUTE_PATH, absPath);
 		jx_snprintf(s_OSContext.m_TempDir, JX_COUNTOF(s_OSContext.m_TempDir), "%s", absPath);
 		break;

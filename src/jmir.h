@@ -173,6 +173,16 @@ static const jx_mir_hw_reg kMIRFuncArgIReg[] = {
 	JMIR_HWREG_R9,
 };
 
+static const jx_mir_hw_reg kMIRFuncCallerSavedIReg[] = {
+	JMIR_HWREG_A,
+	JMIR_HWREG_C,
+	JMIR_HWREG_D,
+	JMIR_HWREG_R8,
+	JMIR_HWREG_R9,
+	JMIR_HWREG_R10,
+	JMIR_HWREG_R11,
+};
+
 typedef enum jx_mir_operand_kind
 {
 	JMIR_OPERAND_REGISTER = 0,
@@ -254,6 +264,12 @@ typedef struct jx_mir_function_t
 	JX_PAD(4);
 } jx_mir_function_t;
 
+typedef struct jx_mir_global_variable_t
+{
+	char* m_Name;
+	uint8_t* m_DataArr;
+} jx_mir_global_variable_t;
+
 typedef struct jx_mir_context_t jx_mir_context_t;
 
 typedef struct jx_mir_function_pass_o jx_mir_function_pass_o;
@@ -269,6 +285,15 @@ typedef struct jx_mir_function_pass_t
 jx_mir_context_t* jx_mir_createContext(jx_allocator_i* allocator);
 void jx_mir_destroyContext(jx_mir_context_t* ctx);
 void jx_mir_print(jx_mir_context_t* ctx, jx_string_buffer_t* sb);
+uint32_t jx_mir_getNumGlobalVars(jx_mir_context_t* ctx);
+jx_mir_global_variable_t* jx_mir_getGlobalVarByID(jx_mir_context_t* ctx, uint32_t id);
+uint32_t jx_mir_getNumFunctions(jx_mir_context_t* ctx);
+jx_mir_function_t* jx_mir_getFunctionByID(jx_mir_context_t* ctx, uint32_t id);
+jx_mir_function_t* jx_mir_getFunctionByName(jx_mir_context_t* ctx, const char* name);
+
+jx_mir_global_variable_t* jx_mir_globalVarBegin(jx_mir_context_t* ctx, const char* name);
+void jx_mir_globalVarEnd(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv);
+bool jx_mir_globalVarAppendData(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv, const uint8_t* data, uint32_t sz);
 
 jx_mir_function_t* jx_mir_funcBegin(jx_mir_context_t* ctx, jx_mir_type_kind retType, uint32_t numArgs, jx_mir_type_kind* args, uint32_t flags, const char* name);
 void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func);
@@ -443,6 +468,32 @@ static inline jx_mir_condition_code jx_mir_ccInvert(jx_mir_condition_code cc)
 	};
 
 	return kInvertedCC[cc];
+}
+
+static inline jx_mir_condition_code jx_mir_ccSwapOperands(jx_mir_condition_code cc)
+{
+	JX_CHECK(cc != JMIR_CC_O && cc != JMIR_CC_NO, "Don't know how to handle overflow when swapping operands. Is it symmetric or not? The table below swaps the condition code.");
+
+	static jx_mir_condition_code kSwappedCC[] = {
+		[JMIR_CC_O]   = JMIR_CC_NO, // ???
+		[JMIR_CC_NO]  = JMIR_CC_O,  // ???
+		[JMIR_CC_B]   = JMIR_CC_A,  // A < B  -> B > A
+		[JMIR_CC_NB]  = JMIR_CC_NA, // A >= b -> B <= A
+		[JMIR_CC_E]   = JMIR_CC_E,  // Symmetric
+		[JMIR_CC_NE]  = JMIR_CC_NE, // Symmetric
+		[JMIR_CC_BE]  = JMIR_CC_AE, // A <= B -> B >= A
+		[JMIR_CC_NBE] = JMIR_CC_B,  // A > B  -> B < A
+		[JMIR_CC_S]   = JMIR_CC_NS, //
+		[JMIR_CC_NS]  = JMIR_CC_S,  //
+		[JMIR_CC_P]   = JMIR_CC_P,  // Symmetric
+		[JMIR_CC_NP]  = JMIR_CC_NP, // Symmetric
+		[JMIR_CC_L]   = JMIR_CC_G,  // A < B  -> B > A
+		[JMIR_CC_NL]  = JMIR_CC_LE, // A >= B -> B <= A
+		[JMIR_CC_LE]  = JMIR_CC_GE, // A <= B -> B >= A
+		[JMIR_CC_NLE] = JMIR_CC_L,  // A > B  -> B < A
+	};
+
+	return kSwappedCC[cc];
 }
 
 #endif // JX_MACHINE_IR_H

@@ -79,6 +79,7 @@ typedef struct jx_mir_context_t
 	jx_allocator_i* m_Allocator;
 	jx_allocator_i* m_OperandAllocator;
 	jx_mir_function_t** m_FuncArr;
+	jx_mir_global_variable_t** m_GlobalVarArr;
 	jx_mir_function_pass_t* m_OnFuncEndPasses;
 } jx_mir_context_t;
 
@@ -90,6 +91,7 @@ static jx_mir_instruction_t* jmir_instrAlloc2(jx_mir_context_t* ctx, uint32_t op
 static jx_mir_instruction_t* jmir_instrAlloc3(jx_mir_context_t* ctx, uint32_t opcode, jx_mir_operand_t* op1, jx_mir_operand_t* op2, jx_mir_operand_t* op3);
 static jx_mir_operand_t* jmir_funcCreateArgument(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb, uint32_t argID, jx_mir_type_kind argType);
 static void jmir_funcFree(jx_mir_context_t* ctx, jx_mir_function_t* func);
+static void jmir_globalVarFree(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv);
 static jx_mir_frame_info_t* jmir_frameCreate(jx_mir_context_t* ctx);
 static void jmir_frameDestroy(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo);
 static jx_mir_stack_object_t* jmir_frameAllocObj(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo, uint32_t sz, uint32_t alignment);
@@ -114,6 +116,12 @@ jx_mir_context_t* jx_mir_createContext(jx_allocator_i* allocator)
 
 	ctx->m_FuncArr = (jx_mir_function_t**)jx_array_create(allocator);
 	if (!ctx->m_FuncArr) {
+		jx_mir_destroyContext(ctx);
+		return NULL;
+	}
+
+	ctx->m_GlobalVarArr = (jx_mir_global_variable_t**)jx_array_create(allocator);
+	if (!ctx->m_GlobalVarArr) {
 		jx_mir_destroyContext(ctx);
 		return NULL;
 	}
@@ -151,6 +159,24 @@ jx_mir_context_t* jx_mir_createContext(jx_allocator_i* allocator)
 
 			jx_memset(pass, 0, sizeof(jx_mir_function_pass_t));
 			if (!jx_mir_funcPassCreate_simplifyCondJmp(pass, ctx->m_Allocator)) {
+				JX_CHECK(false, "Failed to initialize function pass!");
+				JX_FREE(ctx->m_Allocator, pass);
+			} else {
+				cur->m_Next = pass;
+				cur = cur->m_Next;
+			}
+		}
+
+		// Fix mem/mem operations
+		{
+			jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_pass_t));
+			if (!pass) {
+				jx_mir_destroyContext(ctx);
+				return NULL;
+			}
+
+			jx_memset(pass, 0, sizeof(jx_mir_function_pass_t));
+			if (!jx_mir_funcPassCreate_fixMemMemOps(pass, ctx->m_Allocator)) {
 				JX_CHECK(false, "Failed to initialize function pass!");
 				JX_FREE(ctx->m_Allocator, pass);
 			} else {
@@ -240,6 +266,12 @@ void jx_mir_destroyContext(jx_mir_context_t* ctx)
 		}
 	}
 
+	const uint32_t numGlobalVars = (uint32_t)jx_array_sizeu(ctx->m_GlobalVarArr);
+	for (uint32_t iGV = 0; iGV < numGlobalVars; ++iGV) {
+		jmir_globalVarFree(ctx, ctx->m_GlobalVarArr[iGV]);
+	}
+	jx_array_free(ctx->m_GlobalVarArr);
+
 	const uint32_t numFuncs = (uint32_t)jx_array_sizeu(ctx->m_FuncArr);
 	for (uint32_t iFunc = 0; iFunc < numFuncs; ++iFunc) {
 		jmir_funcFree(ctx, ctx->m_FuncArr[iFunc]);
@@ -261,6 +293,81 @@ void jx_mir_print(jx_mir_context_t* ctx, jx_string_buffer_t* sb)
 		jx_mir_funcPrint(ctx, ctx->m_FuncArr[iFunc], sb);
 		jx_strbuf_pushCStr(sb, "\n");
 	}
+}
+
+uint32_t jx_mir_getNumGlobalVars(jx_mir_context_t* ctx)
+{
+	return (uint32_t)jx_array_sizeu(ctx->m_GlobalVarArr);
+}
+
+jx_mir_global_variable_t* jx_mir_getGlobalVarByID(jx_mir_context_t* ctx, uint32_t id)
+{
+	return ctx->m_GlobalVarArr[id];
+}
+
+uint32_t jx_mir_getNumFunctions(jx_mir_context_t* ctx)
+{
+	return (uint32_t)jx_array_sizeu(ctx->m_FuncArr);
+}
+
+jx_mir_function_t* jx_mir_getFunctionByID(jx_mir_context_t* ctx, uint32_t id)
+{
+	return ctx->m_FuncArr[id];
+}
+
+jx_mir_function_t* jx_mir_getFunctionByName(jx_mir_context_t* ctx, const char* name)
+{
+	const uint32_t numFunctions = (uint32_t)jx_array_sizeu(ctx->m_FuncArr);
+	for (uint32_t iFunc = 0; iFunc < numFunctions; ++iFunc) {
+		jx_mir_function_t* func = ctx->m_FuncArr[iFunc];
+		if (!jx_strcmp(func->m_Name, name)) {
+			return func;
+		}
+	}
+
+	return NULL;
+}
+
+jx_mir_global_variable_t* jx_mir_globalVarBegin(jx_mir_context_t* ctx, const char* name)
+{
+	jx_mir_global_variable_t* gv = (jx_mir_global_variable_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_global_variable_t));
+	if (!gv) {
+		return NULL;
+	}
+
+	jx_memset(gv, 0, sizeof(jx_mir_global_variable_t));
+	gv->m_Name = jx_strdup(name, ctx->m_Allocator);
+	if (!gv->m_Name) {
+		jmir_globalVarFree(ctx, gv);
+		return NULL;
+	}
+
+	gv->m_DataArr = (uint8_t*)jx_array_create(ctx->m_Allocator);
+	if (!gv->m_DataArr) {
+		jmir_globalVarFree(ctx, gv);
+		return NULL;
+	}
+
+	jx_array_push_back(ctx->m_GlobalVarArr, gv);
+
+	return gv;
+}
+
+void jx_mir_globalVarEnd(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv)
+{
+	JX_CHECK(jx_array_sizeu(gv->m_DataArr) > 0, "Empty global variable?");
+}
+
+bool jx_mir_globalVarAppendData(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv, const uint8_t* data, uint32_t sz)
+{
+	uint8_t* dst = jx_array_addnptr(gv->m_DataArr, sz);
+	if (!dst) {
+		return false;
+	}
+
+	jx_memcpy(dst, data, sz);
+
+	return true;
 }
 
 jx_mir_function_t* jx_mir_funcBegin(jx_mir_context_t* ctx, jx_mir_type_kind retType, uint32_t numArgs, jx_mir_type_kind* args, uint32_t flags, const char* name)
@@ -331,9 +438,9 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 	if (frameInfo->m_Size != 0) {
 		// NOTE: Prepend prologue instructions in reverse order.
 		jx_mir_basic_block_t* entryBlock = func->m_BasicBlockListHead;
-		jx_mir_bbAppendInstr(ctx, entryBlock, jx_mir_sub(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_SP), jx_mir_opIConst(ctx, func, JMIR_TYPE_I32, (int64_t)frameInfo->m_Size)));
-		jx_mir_bbAppendInstr(ctx, entryBlock, jx_mir_mov(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_BP), jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_SP)));
-		jx_mir_bbAppendInstr(ctx, entryBlock, jx_mir_push(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_BP)));
+		jx_mir_bbPrependInstr(ctx, entryBlock, jx_mir_sub(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_SP), jx_mir_opIConst(ctx, func, JMIR_TYPE_I32, (int64_t)frameInfo->m_Size)));
+		jx_mir_bbPrependInstr(ctx, entryBlock, jx_mir_mov(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_BP), jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_SP)));
+		jx_mir_bbPrependInstr(ctx, entryBlock, jx_mir_push(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_BP)));
 
 		// TODO: Maybe remove ret from exit block and jump to new exit block?
 		// TODO: Maybe support multiple exit blocks? Each block can know if it's an exit block once a ret instruction is appended.
@@ -1281,6 +1388,14 @@ static void jmir_funcFree(jx_mir_context_t* ctx, jx_mir_function_t* func)
 	JX_FREE(allocator, func->m_Args);
 	JX_FREE(allocator, func->m_Name);
 	JX_FREE(allocator, func);
+}
+
+static void jmir_globalVarFree(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv)
+{
+	jx_allocator_i* allocator = ctx->m_Allocator;
+	JX_FREE(allocator, gv->m_Name);
+	jx_array_free(gv->m_DataArr);
+	JX_FREE(allocator, gv);
 }
 
 static jx_mir_frame_info_t* jmir_frameCreate(jx_mir_context_t* ctx)

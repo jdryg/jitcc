@@ -20,6 +20,7 @@ typedef struct jx_string_api
 {
 	jx_string_buffer_t* (*strbufCreate)(jx_allocator_i* allocator);
 	void                (*strbufDestroy)(jx_string_buffer_t* sb);
+	void                (*strbufReset)(jx_string_buffer_t* sb);
 	int32_t             (*strbufPush)(jx_string_buffer_t* sb, const char* str, uint32_t len);
 	int32_t             (*strbufPop)(jx_string_buffer_t* sb, uint32_t n);
 	const char*         (*strbufPeek)(jx_string_buffer_t* sb, uint32_t n);
@@ -72,6 +73,7 @@ extern jx_string_api* str_api;
 
 static jx_string_buffer_t* jx_strbuf_create(jx_allocator_i* allocator);
 static void jx_strbuf_destroy(jx_string_buffer_t* sb);
+static void jx_strbuf_reset(jx_string_buffer_t* sb);
 static int32_t jx_strbuf_push(jx_string_buffer_t* sb, const char* str, uint32_t len);
 static int32_t jx_strbuf_pushCStr(jx_string_buffer_t* sb, const char* str);
 static int32_t jx_strbuf_pop(jx_string_buffer_t* sb, uint32_t n);

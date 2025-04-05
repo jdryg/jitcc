@@ -16,6 +16,11 @@ static inline void jx_strbuf_destroy(jx_string_buffer_t* sb)
 	str_api->strbufDestroy(sb);
 }
 
+static void jx_strbuf_reset(jx_string_buffer_t* sb)
+{
+	str_api->strbufReset(sb);
+}
+
 static inline int32_t jx_strbuf_push(jx_string_buffer_t* sb, const char* str, uint32_t len)
 {
 	return str_api->strbufPush(sb, str, len);
