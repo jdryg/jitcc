@@ -7,6 +7,7 @@
 // 
 #include "jcc.h"
 #include "jit.h"
+#include "jit_gen.h"
 #include "jir.h"
 #include "jir_gen.h"
 #include "jmir.h"
@@ -15,6 +16,8 @@
 #include <jlib/array.h>
 #include <jlib/config.h>
 #include <jlib/dbg.h>
+#include <jlib/error.h>
+#include <jlib/logger.h>
 #include <jlib/hashmap.h>
 #include <jlib/kernel.h>
 #include <jlib/math.h>
@@ -715,27 +718,135 @@ static void astCleanupObject(jx_cc_object_t* obj)
 	}
 }
 
+#include <Windows.h>
+
 int main(int argc, char** argv)
 {
 	jx_kernel_initAPI();
 
+	// Redirect system logger to file and console
+	{
+		// Change application directories.
+		if (os_api->fsSetBaseDir(JX_FILE_BASE_DIR_USERDATA, JX_FILE_BASE_DIR_USERDATA, "jitcc") != JX_ERROR_NONE || 
+			os_api->fsSetBaseDir(JX_FILE_BASE_DIR_USERAPPDATA, JX_FILE_BASE_DIR_USERAPPDATA, "jitcc") != JX_ERROR_NONE || 
+			os_api->fsSetBaseDir(JX_FILE_BASE_DIR_TEMP, JX_FILE_BASE_DIR_TEMP, "jitcc") != JX_ERROR_NONE) {
+			return -1;
+		}
+
+		jx_logger_i* sysLogger = logger_api->createCompositeLogger(allocator_api->m_SystemAllocator, 0);
+		if (sysLogger) {
+			jx_logger_i* fileLogger = logger_api->createFileLogger(allocator_api->m_SystemAllocator, JX_FILE_BASE_DIR_USERDATA, "jitcc.log", JX_LOGGER_FLAGS_MULTITHREADED | JX_LOGGER_FLAGS_APPEND_TIMESTAMP | JX_LOGGER_FLAGS_FLUSH_ON_EVERY_LOG);
+			if (fileLogger) {
+				logger_api->compositeLoggerAddChild(sysLogger, fileLogger);
+			}
+
+			jx_logger_i* consoleLogger = logger_api->createConsoleLogger(allocator_api->m_SystemAllocator, JX_LOGGER_FLAGS_MULTITHREADED);
+			if (consoleLogger) {
+				logger_api->compositeLoggerAddChild(sysLogger, consoleLogger);
+			}
+
+			// Replace system logger
+			{
+				logger_api->inMemoryLoggerDumpToLogger(logger_api->m_SystemLogger, fileLogger);
+				logger_api->destroyLogger(logger_api->m_SystemLogger);
+				logger_api->m_SystemLogger = sysLogger;
+			}
+		}
+	}
+
 	jx_allocator_i* allocator = allocator_api->createAllocator("jcc");
 
-	jx_cc_context_t* ctx = jx_cc_createContext(allocator);
+#if 1
+	for (uint32_t iTest = 1; iTest <= 40; ++iTest) {
+		char sourceFile[256];
+		jx_snprintf(sourceFile, JX_COUNTOF(sourceFile), "test/c-testsuite/%05d.c", iTest);
 
-//	const char* sourceFile = "test/c-testsuite/00010.c";
-	const char* sourceFile = "test/pointer_arithmetic.c";
+		JX_SYS_LOG_INFO(NULL, "%s: ", sourceFile);
 
-	printf("%s\n", sourceFile);
+		const bool skipTest = false
+			|| iTest == 25 // Uses external functions (strlen)
+			|| iTest == 40 // Uses external functions (calloc)
+			;
+		if (skipTest) {
+			JX_SYS_LOG_WARNING(NULL, "SKIPPED\n");
+			continue;
+		}
+
+		jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
+		jx_cc_translation_unit_t* tu = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_INSTALL, sourceFile);
+		if (tu) {
+			jx_ir_context_t* irCtx = jx_ir_createContext(allocator);
+			jx_irgen_context_t* genCtx = jx_irgen_createContext(irCtx, allocator);
+
+			jx_irgen_moduleGen(genCtx, sourceFile, tu);
+
+			jx_irgen_destroyContext(genCtx);
+
+			jx_mir_context_t* mirCtx = jx_mir_createContext(allocator);
+			jx_mirgen_context_t* mirGenCtx = jx_mirgen_createContext(irCtx, mirCtx, allocator);
+
+			jx_ir_module_t* irMod = jx_ir_getModule(irCtx, 0);
+			if (irMod) {
+				jx_mirgen_moduleGen(mirGenCtx, irMod);
+			}
+
+			jx_mirgen_destroyContext(mirGenCtx);
+
+			jx_x64_context_t* jitCtx = jx_x64_createContext(allocator);
+
+			if (jx_x64_emitCode(jitCtx, mirCtx, allocator)) {
+				uint32_t bufferSize = 0;
+				const uint8_t* buffer = jx64_getBuffer(jitCtx, &bufferSize);
+
+				void* execBuf = VirtualAlloc(NULL, bufferSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+				if (execBuf) {
+					jx_memcpy(execBuf, buffer, bufferSize);
+
+					DWORD oldProtect = 0;
+					VirtualProtect(execBuf, bufferSize, PAGE_EXECUTE_READWRITE, &oldProtect);
+
+					typedef int32_t(*pfnMain)(void);
+					jx_x64_label_t* lblMain = jx64_funcGetLabelByName(jitCtx, "main");
+					if (lblMain) {
+						pfnMain mainFunc = (pfnMain)((uint8_t*)execBuf + jx64_labelGetOffset(jitCtx, lblMain));
+						int32_t ret = mainFunc();
+						if (ret == 0) {
+							JX_SYS_LOG_DEBUG(NULL, "PASS\n", sourceFile);
+						} else {
+							JX_SYS_LOG_ERROR(NULL, "FAIL\n", sourceFile);
+						}
+					} else {
+						JX_SYS_LOG_ERROR(NULL, "main() not found!\n", sourceFile);
+					}
+
+					VirtualFree(execBuf, 0, MEM_RELEASE);
+				}
+			}
+
+			jx_x64_destroyContext(jitCtx);
+			jx_mir_destroyContext(mirCtx);
+			jx_ir_destroyContext(irCtx);
+		} else {
+			JX_SYS_LOG_ERROR(NULL, "Compilation failed.\n", sourceFile);
+		}
+		jx_cc_destroyContext(ctx);
+	}
+#else
+	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
+
+	const char* sourceFile = "test/c-testsuite/00037.c";
+//	const char* sourceFile = "test/pointer_arithmetic.c";
+
+	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
 	jx_cc_translation_unit_t* tu = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_INSTALL, sourceFile);
-	const uint32_t numErrors = (uint32_t)jx_array_sizeu(tu->m_ErrorsArr);
-	for (uint32_t iErr = 0; iErr < numErrors; ++iErr) {
-		printf("%s\n", tu->m_ErrorsArr[iErr]);
+	if (!tu) {
+		JX_SYS_LOG_INFO(NULL, "Failed to compile \"%s\"\n", sourceFile);
+		goto end;
 	}
 
 #if 0
 	// Cleanup ast
-	printf("Cleaning up AST...\n");
+	JX_SYS_LOG_INFO(NULL, "Cleaning up AST...\n");
 	{
 		jx_cc_object_t* ptr = globals;
 		while (ptr) {
@@ -746,7 +857,7 @@ int main(int argc, char** argv)
 #endif
 
 #if 0
-	printf("Saving AST to JSON...\n");
+	JX_SYS_LOG_INFO(NULL, "Saving AST to JSON...\n");
 	{
 		jx_config_t* ast = jx_config_createConfig(allocator);
 
@@ -766,7 +877,7 @@ int main(int argc, char** argv)
 	}
 #endif
 
-	printf("Building IR...\n");
+	JX_SYS_LOG_INFO(NULL, "Building IR...\n");
 	{
 		jx_ir_context_t* irCtx = jx_ir_createContext(allocator);
 		jx_irgen_context_t* genCtx = jx_irgen_createContext(irCtx, allocator);
@@ -778,7 +889,7 @@ int main(int argc, char** argv)
 		jx_string_buffer_t* sb = jx_strbuf_create(allocator);
 		jx_ir_print(irCtx, sb);
 		jx_strbuf_nullTerminate(sb);
-		printf("%s", jx_strbuf_getString(sb, NULL));
+		JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
 		jx_strbuf_destroy(sb);
 
 		{
@@ -795,8 +906,44 @@ int main(int argc, char** argv)
 			sb = jx_strbuf_create(allocator);
 			jx_mir_print(mirCtx, sb);
 			jx_strbuf_nullTerminate(sb);
-			printf("%s", jx_strbuf_getString(sb, NULL));
+			JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
 			jx_strbuf_destroy(sb);
+
+			jx_x64_context_t* jitCtx = jx_x64_createContext(allocator);
+
+			if (jx_x64_emitCode(jitCtx, mirCtx, allocator)) {
+				sb = jx_strbuf_create(allocator);
+
+				uint32_t bufferSize = 0;
+				const uint8_t* buffer = jx64_getBuffer(jitCtx, &bufferSize);
+				for (uint32_t i = 0; i < bufferSize; ++i) {
+					jx_strbuf_printf(sb, "%02X", buffer[i]);
+				}
+
+				jx_strbuf_nullTerminate(sb);
+				JX_SYS_LOG_INFO(NULL, "\n%s\n\n", jx_strbuf_getString(sb, NULL));
+				jx_strbuf_destroy(sb);
+
+				void* execBuf = VirtualAlloc(NULL, bufferSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+				if (execBuf) {
+					jx_memcpy(execBuf, buffer, bufferSize);
+
+					DWORD oldProtect = 0;
+					VirtualProtect(execBuf, bufferSize, PAGE_EXECUTE_READWRITE, &oldProtect);
+
+					typedef int32_t (*pfnMain)(void);
+					jx_x64_label_t* lblMain = jx64_funcGetLabelByName(jitCtx, "main");
+					if (lblMain) {
+						pfnMain mainFunc = (pfnMain)((uint8_t*)execBuf + jx64_labelGetOffset(jitCtx, lblMain));
+						int32_t ret = mainFunc();
+						JX_SYS_LOG_DEBUG(NULL, "main() returned %d\n", ret);
+					} else {
+						JX_SYS_LOG_ERROR(NULL, "main() not found!\n");
+					}
+
+					VirtualFree(execBuf, 0, MEM_RELEASE);
+				}
+			}
 
 			jx_mir_destroyContext(mirCtx);
 		}
@@ -804,7 +951,9 @@ int main(int argc, char** argv)
 		jx_ir_destroyContext(irCtx);
 	}
 
+end:
 	jx_cc_destroyContext(ctx);
+#endif
 
 	allocator_api->destroyAllocator(allocator);
 

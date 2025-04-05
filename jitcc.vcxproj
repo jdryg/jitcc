@@ -169,6 +169,7 @@
     <ClInclude Include="src\jir_gen.h" />
     <ClInclude Include="src\jir_pass.h" />
     <ClInclude Include="src\jit.h" />
+    <ClInclude Include="src\jit_gen.h" />
     <ClInclude Include="src\jmir.h" />
     <ClInclude Include="src\jmir_gen.h" />
     <ClInclude Include="src\jmir_pass.h" />
@@ -548,6 +549,7 @@
     </ClCompile>
     <ClCompile Include="src\jir.c" />
     <ClCompile Include="src\jir_gen.c" />
+    <ClCompile Include="src\jit_gen.c" />
     <ClCompile Include="src\jmir_gen.c" />
     <ClCompile Include="src\jir_pass.c" />
     <ClCompile Include="src\jit.c" />

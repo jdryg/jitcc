@@ -141,6 +141,9 @@
     <ClInclude Include="3rdparty\jlib\include\jlib\image.h">
       <Filter>3rdparty\jlib\include\jlib</Filter>
     </ClInclude>
+    <ClInclude Include="src\jit_gen.h">
+      <Filter>src</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\jcc.c">
@@ -487,6 +490,9 @@
     </ClCompile>
     <ClCompile Include="bin\test\c-testsuite\00100.c">
       <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="src\jit_gen.c">
+      <Filter>src</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
