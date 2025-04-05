@@ -873,3 +873,735 @@ static int32_t jir_comparePtrs(void* a, void* b)
 		: (uintptr_t)a > (uintptr_t)b ? 1 : 0
 		;
 }
+
+//////////////////////////////////////////////////////////////////////////
+// Constant folding
+//
+typedef struct jir_func_pass_const_folding_t
+{
+	jx_allocator_i* m_Allocator;
+} jir_func_pass_const_folding_t;
+
+static void jir_funcPass_constantFoldingDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator);
+static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func);
+static jx_ir_constant_t* jir_constFold_cmpConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs, jx_ir_condition_code cc);
+static jx_ir_constant_t* jir_constFold_addConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs);
+static jx_ir_constant_t* jir_constFold_subConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs);
+static jx_ir_constant_t* jir_constFold_mulConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs);
+static jx_ir_constant_t* jir_constFold_divConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs);
+static jx_ir_constant_t* jir_constFold_remConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs);
+static jx_ir_constant_t* jir_constFold_andConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs);
+static jx_ir_constant_t* jir_constFold_orConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs);
+static jx_ir_constant_t* jir_constFold_xorConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs);
+static jx_ir_constant_t* jir_constFold_shlConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs);
+static jx_ir_constant_t* jir_constFold_shrConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs);
+static jx_ir_constant_t* jir_constFold_truncConst(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
+static jx_ir_constant_t* jir_constFold_zextConst(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
+static jx_ir_constant_t* jir_constFold_sextConst(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
+
+bool jx_ir_funcPassCreate_constantFolding(jx_ir_function_pass_t* pass, jx_allocator_i* allocator)
+{
+	jir_func_pass_const_folding_t* inst = (jir_func_pass_const_folding_t*)JX_ALLOC(allocator, sizeof(jir_func_pass_const_folding_t));
+	if (!inst) {
+		return false;
+	}
+
+	jx_memset(inst, 0, sizeof(jir_func_pass_const_folding_t));
+	inst->m_Allocator = allocator;
+
+	pass->m_Inst = (jx_ir_function_pass_o*)inst;
+	pass->run = jir_funcPass_constantFoldingRun;
+	pass->destroy = jir_funcPass_constantFoldingDestroy;
+
+	return true;
+}
+
+static void jir_funcPass_constantFoldingDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator)
+{
+	jir_func_pass_const_folding_t* pass = (jir_func_pass_const_folding_t*)inst;
+
+	JX_FREE(allocator, pass);
+}
+
+static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
+{
+	jir_func_pass_const_folding_t* pass = (jir_func_pass_const_folding_t*)inst;
+
+	bool changed = true;
+	while (changed) {
+		changed = false;
+		
+		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
+		while (bb) {
+			jx_ir_instruction_t* instr = bb->m_InstrListHead;
+			while (instr) {
+				jx_ir_instruction_t* instrNext = instr->m_Next;
+
+				switch (instr->m_OpCode) {
+				case JIR_OP_BRANCH: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					const uint32_t numOperands = (uint32_t)jx_array_sizeu(instrUser->m_OperandArr);
+					if (numOperands == 1) {
+						// Unconditional branch. No op
+					} else if (numOperands == 3) {
+						// Conditional branch
+						jx_ir_constant_t* cond = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+						if (cond) {
+							JX_CHECK(jx_ir_constToValue(cond)->m_Type->m_Kind == JIR_TYPE_BOOL, "Expected boolean conditional as 1st branch operand.");
+							jx_ir_value_t* targetVal = cond->u.m_Bool
+								? instrUser->m_OperandArr[1]->m_Value
+								: instrUser->m_OperandArr[2]->m_Value
+								;
+							jx_ir_basic_block_t* targetBB = jx_ir_valueToBasicBlock(targetVal);
+							JX_CHECK(targetBB, "Expected basic block as branch targets");
+
+							jx_ir_instruction_t* uncondBranch = jx_ir_instrBranch(ctx, targetBB);
+							jx_ir_bbRemoveInstr(ctx, bb, instr);
+							jx_ir_bbAppendInstr(ctx, bb, uncondBranch);
+							jx_ir_instrFree(ctx, instr);
+						}
+					} else {
+						JX_CHECK(false, "Unknown branch instruction");
+					}
+				} break;
+				case JIR_OP_ADD: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* lhs = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					jx_ir_constant_t* rhs = jx_ir_valueToConst(instrUser->m_OperandArr[1]->m_Value);
+					if (lhs && rhs) {
+						jx_ir_constant_t* resConst = jir_constFold_addConst(ctx, lhs, rhs);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
+				case JIR_OP_SUB: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* lhs = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					jx_ir_constant_t* rhs = jx_ir_valueToConst(instrUser->m_OperandArr[1]->m_Value);
+					if (lhs && rhs) {
+						jx_ir_constant_t* resConst = jir_constFold_subConst(ctx, lhs, rhs);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
+				case JIR_OP_MUL: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* lhs = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					jx_ir_constant_t* rhs = jx_ir_valueToConst(instrUser->m_OperandArr[1]->m_Value);
+					if (lhs && rhs) {
+						jx_ir_constant_t* resConst = jir_constFold_mulConst(ctx, lhs, rhs);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
+				case JIR_OP_DIV: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* lhs = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					jx_ir_constant_t* rhs = jx_ir_valueToConst(instrUser->m_OperandArr[1]->m_Value);
+					if (lhs && rhs) {
+						jx_ir_constant_t* resConst = jir_constFold_divConst(ctx, lhs, rhs);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
+				case JIR_OP_REM: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* lhs = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					jx_ir_constant_t* rhs = jx_ir_valueToConst(instrUser->m_OperandArr[1]->m_Value);
+					if (lhs && rhs) {
+						jx_ir_constant_t* resConst = jir_constFold_remConst(ctx, lhs, rhs);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
+				case JIR_OP_AND: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* lhs = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					jx_ir_constant_t* rhs = jx_ir_valueToConst(instrUser->m_OperandArr[1]->m_Value);
+					if (lhs && rhs) {
+						jx_ir_constant_t* resConst = jir_constFold_andConst(ctx, lhs, rhs);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
+				case JIR_OP_OR: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* lhs = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					jx_ir_constant_t* rhs = jx_ir_valueToConst(instrUser->m_OperandArr[1]->m_Value);
+					if (lhs && rhs) {
+						jx_ir_constant_t* resConst = jir_constFold_orConst(ctx, lhs, rhs);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
+				case JIR_OP_XOR: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* lhs = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					jx_ir_constant_t* rhs = jx_ir_valueToConst(instrUser->m_OperandArr[1]->m_Value);
+					if (lhs && rhs) {
+						jx_ir_constant_t* resConst = jir_constFold_xorConst(ctx, lhs, rhs);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
+				case JIR_OP_SET_LE:
+				case JIR_OP_SET_GE:
+				case JIR_OP_SET_LT:
+				case JIR_OP_SET_GT:
+				case JIR_OP_SET_EQ:
+				case JIR_OP_SET_NE: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* lhs = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					jx_ir_constant_t* rhs = jx_ir_valueToConst(instrUser->m_OperandArr[1]->m_Value);
+					if (lhs && rhs) {
+						jx_ir_constant_t* resConst = jir_constFold_cmpConst(ctx, lhs, rhs, (jx_ir_condition_code)(instr->m_OpCode - JIR_OP_SET_CC_BASE));
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
+				case JIR_OP_GET_ELEMENT_PTR: {
+//					JX_NOT_IMPLEMENTED();
+				} break;
+				case JIR_OP_PHI: {
+					// TODO: If all phi values are the same constant replace phi with constant.
+//					JX_NOT_IMPLEMENTED();
+				} break;
+				case JIR_OP_CALL: {
+//					JX_NOT_IMPLEMENTED();
+				} break;
+				case JIR_OP_SHL: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* lhs = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					jx_ir_constant_t* rhs = jx_ir_valueToConst(instrUser->m_OperandArr[1]->m_Value);
+					if (lhs && rhs) {
+						jx_ir_constant_t* resConst = jir_constFold_shlConst(ctx, lhs, rhs);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
+				case JIR_OP_SHR: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* lhs = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					jx_ir_constant_t* rhs = jx_ir_valueToConst(instrUser->m_OperandArr[1]->m_Value);
+					if (lhs && rhs) {
+						jx_ir_constant_t* resConst = jir_constFold_shrConst(ctx, lhs, rhs);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
+				case JIR_OP_TRUNC: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* op = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					if (op) {
+						jx_ir_constant_t* resConst = jir_constFold_truncConst(ctx, op, jx_ir_instrToValue(instr)->m_Type);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
+				case JIR_OP_ZEXT: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* op = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					if (op) {
+						jx_ir_constant_t* resConst = jir_constFold_zextConst(ctx, op, jx_ir_instrToValue(instr)->m_Type);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
+				case JIR_OP_SEXT: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* op = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					if (op) {
+						jx_ir_constant_t* resConst = jir_constFold_sextConst(ctx, op, jx_ir_instrToValue(instr)->m_Type);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
+				case JIR_OP_RET:
+				case JIR_OP_ALLOCA:
+				case JIR_OP_LOAD:
+				case JIR_OP_STORE:
+				case JIR_OP_PTR_TO_INT:
+				case JIR_OP_INT_TO_PTR:
+				case JIR_OP_BITCAST: {
+					// No op
+				} break;
+				default:
+					JX_CHECK(false, "Unknown IR op");
+					break;
+				}
+
+				instr = instrNext;
+			}
+
+			bb = bb->m_Next;
+		}
+	}
+
+	return false;
+}
+
+static jx_ir_constant_t* jir_constFold_cmpConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs, jx_ir_condition_code cc)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(lhs)->m_Type;
+	bool res = false;
+
+	switch (cc) {
+	case JIR_CC_LE: {
+		switch (operandType->m_Kind) {
+		case JIR_TYPE_BOOL: { res = lhs->u.m_Bool          <= rhs->u.m_Bool;          } break;
+		case JIR_TYPE_U8:   { res = (uint8_t)lhs->u.m_U64  <= (uint8_t)rhs->u.m_U64;  } break;
+		case JIR_TYPE_I8:   { res = (int8_t)lhs->u.m_I64   <= (int8_t)rhs->u.m_I64;   } break;
+		case JIR_TYPE_U16:  { res = (uint16_t)lhs->u.m_U64 <= (uint16_t)rhs->u.m_U64; } break;
+		case JIR_TYPE_I16:  { res = (int16_t)lhs->u.m_I64  <= (int16_t)rhs->u.m_I64;  } break;
+		case JIR_TYPE_U32:  { res = (uint32_t)lhs->u.m_U64 <= (uint32_t)rhs->u.m_U64; } break;
+		case JIR_TYPE_I32:  { res = (int32_t)lhs->u.m_I64  <= (int32_t)rhs->u.m_I64;  } break;
+		case JIR_TYPE_U64:  { res = lhs->u.m_U64           <= rhs->u.m_U64;           } break;
+		case JIR_TYPE_I64:  { res = lhs->u.m_I64           <= rhs->u.m_I64;           } break;
+		case JIR_TYPE_F32:  { res = lhs->u.m_F32           <= rhs->u.m_F32;           } break;
+		case JIR_TYPE_F64:  { res = lhs->u.m_F64           <= rhs->u.m_F64;           } break;
+		default:
+			JX_CHECK(false, "Invalid comparison types?");
+			break;
+		}
+	} break;
+	case JIR_CC_GE: {
+		switch (operandType->m_Kind) {
+		case JIR_TYPE_BOOL: { res = lhs->u.m_Bool          >= rhs->u.m_Bool;          } break;
+		case JIR_TYPE_U8:   { res = (uint8_t)lhs->u.m_U64  >= (uint8_t)rhs->u.m_U64;  } break;
+		case JIR_TYPE_I8:   { res = (int8_t)lhs->u.m_I64   >= (int8_t)rhs->u.m_I64;   } break;
+		case JIR_TYPE_U16:  { res = (uint16_t)lhs->u.m_U64 >= (uint16_t)rhs->u.m_U64; } break;
+		case JIR_TYPE_I16:  { res = (int16_t)lhs->u.m_I64  >= (int16_t)rhs->u.m_I64;  } break;
+		case JIR_TYPE_U32:  { res = (uint32_t)lhs->u.m_U64 >= (uint32_t)rhs->u.m_U64; } break;
+		case JIR_TYPE_I32:  { res = (int32_t)lhs->u.m_I64  >= (int32_t)rhs->u.m_I64;  } break;
+		case JIR_TYPE_U64:  { res = lhs->u.m_U64           >= rhs->u.m_U64;           } break;
+		case JIR_TYPE_I64:  { res = lhs->u.m_I64           >= rhs->u.m_I64;           } break;
+		case JIR_TYPE_F32:  { res = lhs->u.m_F32           >= rhs->u.m_F32;           } break;
+		case JIR_TYPE_F64:  { res = lhs->u.m_F64           >= rhs->u.m_F64;           } break;
+		default:
+			JX_CHECK(false, "Invalid comparison types?");
+			break;
+		}
+	} break;
+	case JIR_CC_LT: {
+		switch (operandType->m_Kind) {
+		case JIR_TYPE_BOOL: { res = lhs->u.m_Bool          < rhs->u.m_Bool;          } break;
+		case JIR_TYPE_U8:   { res = (uint8_t)lhs->u.m_U64  < (uint8_t)rhs->u.m_U64;  } break;
+		case JIR_TYPE_I8:   { res = (int8_t)lhs->u.m_I64   < (int8_t)rhs->u.m_I64;   } break;
+		case JIR_TYPE_U16:  { res = (uint16_t)lhs->u.m_U64 < (uint16_t)rhs->u.m_U64; } break;
+		case JIR_TYPE_I16:  { res = (int16_t)lhs->u.m_I64  < (int16_t)rhs->u.m_I64;  } break;
+		case JIR_TYPE_U32:  { res = (uint32_t)lhs->u.m_U64 < (uint32_t)rhs->u.m_U64; } break;
+		case JIR_TYPE_I32:  { res = (int32_t)lhs->u.m_I64  < (int32_t)rhs->u.m_I64;  } break;
+		case JIR_TYPE_U64:  { res = lhs->u.m_U64           < rhs->u.m_U64;           } break;
+		case JIR_TYPE_I64:  { res = lhs->u.m_I64           < rhs->u.m_I64;           } break;
+		case JIR_TYPE_F32:  { res = lhs->u.m_F32           < rhs->u.m_F32;           } break;
+		case JIR_TYPE_F64:  { res = lhs->u.m_F64           < rhs->u.m_F64;           } break;
+		default:
+			JX_CHECK(false, "Invalid comparison types?");
+			break;
+		}
+	} break;
+	case JIR_CC_GT: {
+		switch (operandType->m_Kind) {
+		case JIR_TYPE_BOOL: { res = lhs->u.m_Bool          > rhs->u.m_Bool;          } break;
+		case JIR_TYPE_U8:   { res = (uint8_t)lhs->u.m_U64  > (uint8_t)rhs->u.m_U64;  } break;
+		case JIR_TYPE_I8:   { res = (int8_t)lhs->u.m_I64   > (int8_t)rhs->u.m_I64;   } break;
+		case JIR_TYPE_U16:  { res = (uint16_t)lhs->u.m_U64 > (uint16_t)rhs->u.m_U64; } break;
+		case JIR_TYPE_I16:  { res = (int16_t)lhs->u.m_I64  > (int16_t)rhs->u.m_I64;  } break;
+		case JIR_TYPE_U32:  { res = (uint32_t)lhs->u.m_U64 > (uint32_t)rhs->u.m_U64; } break;
+		case JIR_TYPE_I32:  { res = (int32_t)lhs->u.m_I64  > (int32_t)rhs->u.m_I64;  } break;
+		case JIR_TYPE_U64:  { res = lhs->u.m_U64           > rhs->u.m_U64;           } break;
+		case JIR_TYPE_I64:  { res = lhs->u.m_I64           > rhs->u.m_I64;           } break;
+		case JIR_TYPE_F32:  { res = lhs->u.m_F32           > rhs->u.m_F32;           } break;
+		case JIR_TYPE_F64:  { res = lhs->u.m_F64           > rhs->u.m_F64;           } break;
+		default:
+			JX_CHECK(false, "Invalid comparison types?");
+			break;
+		}
+	} break;
+	case JIR_CC_EQ: {
+		switch (operandType->m_Kind) {
+		case JIR_TYPE_BOOL: { res = lhs->u.m_Bool          == rhs->u.m_Bool;          } break;
+		case JIR_TYPE_U8:   { res = (uint8_t)lhs->u.m_U64  == (uint8_t)rhs->u.m_U64;  } break;
+		case JIR_TYPE_I8:   { res = (int8_t)lhs->u.m_I64   == (int8_t)rhs->u.m_I64;   } break;
+		case JIR_TYPE_U16:  { res = (uint16_t)lhs->u.m_U64 == (uint16_t)rhs->u.m_U64; } break;
+		case JIR_TYPE_I16:  { res = (int16_t)lhs->u.m_I64  == (int16_t)rhs->u.m_I64;  } break;
+		case JIR_TYPE_U32:  { res = (uint32_t)lhs->u.m_U64 == (uint32_t)rhs->u.m_U64; } break;
+		case JIR_TYPE_I32:  { res = (int32_t)lhs->u.m_I64  == (int32_t)rhs->u.m_I64;  } break;
+		case JIR_TYPE_U64:  { res = lhs->u.m_U64           == rhs->u.m_U64;           } break;
+		case JIR_TYPE_I64:  { res = lhs->u.m_I64           == rhs->u.m_I64;           } break;
+		case JIR_TYPE_F32:  { res = lhs->u.m_F32           == rhs->u.m_F32;           } break;
+		case JIR_TYPE_F64:  { res = lhs->u.m_F64           == rhs->u.m_F64;           } break;
+		default:
+			JX_CHECK(false, "Invalid comparison types?");
+			break;
+		}
+	} break;
+	case JIR_CC_NE: {
+		switch (operandType->m_Kind) {
+		case JIR_TYPE_BOOL: { res = lhs->u.m_Bool          != rhs->u.m_Bool;          } break;
+		case JIR_TYPE_U8:   { res = (uint8_t)lhs->u.m_U64  != (uint8_t)rhs->u.m_U64;  } break;
+		case JIR_TYPE_I8:   { res = (int8_t)lhs->u.m_I64   != (int8_t)rhs->u.m_I64;   } break;
+		case JIR_TYPE_U16:  { res = (uint16_t)lhs->u.m_U64 != (uint16_t)rhs->u.m_U64; } break;
+		case JIR_TYPE_I16:  { res = (int16_t)lhs->u.m_I64  != (int16_t)rhs->u.m_I64;  } break;
+		case JIR_TYPE_U32:  { res = (uint32_t)lhs->u.m_U64 != (uint32_t)rhs->u.m_U64; } break;
+		case JIR_TYPE_I32:  { res = (int32_t)lhs->u.m_I64  != (int32_t)rhs->u.m_I64;  } break;
+		case JIR_TYPE_U64:  { res = lhs->u.m_U64           != rhs->u.m_U64;           } break;
+		case JIR_TYPE_I64:  { res = lhs->u.m_I64           != rhs->u.m_I64;           } break;
+		case JIR_TYPE_F32:  { res = lhs->u.m_F32           != rhs->u.m_F32;           } break;
+		case JIR_TYPE_F64:  { res = lhs->u.m_F64           != rhs->u.m_F64;           } break;
+		default:
+			JX_CHECK(false, "Invalid comparison types?");
+			break;
+		}
+	} break;
+	default:
+		JX_CHECK(false, "Unknown IR condition code.");
+		break;
+	}
+
+	return jx_ir_constGetBool(ctx, res);
+}
+
+static jx_ir_constant_t* jir_constFold_addConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(lhs)->m_Type;
+
+	jx_ir_constant_t* res = NULL;
+	switch (operandType->m_Kind) {
+	case JIR_TYPE_U8:   { res = jx_ir_constGetU8(ctx, (uint8_t)(lhs->u.m_U64   + rhs->u.m_U64)); } break;
+	case JIR_TYPE_I8:   { res = jx_ir_constGetI8(ctx, (int8_t)(lhs->u.m_I64    + rhs->u.m_I64)); } break;
+	case JIR_TYPE_U16:  { res = jx_ir_constGetU16(ctx, (uint16_t)(lhs->u.m_U64 + rhs->u.m_U64)); } break;
+	case JIR_TYPE_I16:  { res = jx_ir_constGetI16(ctx, (int16_t)(lhs->u.m_I64  + rhs->u.m_I64)); } break;
+	case JIR_TYPE_U32:  { res = jx_ir_constGetU32(ctx, (uint32_t)(lhs->u.m_U64 + rhs->u.m_U64)); } break;
+	case JIR_TYPE_I32:  { res = jx_ir_constGetI32(ctx, (int32_t)(lhs->u.m_I64  + rhs->u.m_I64)); } break;
+	case JIR_TYPE_U64:  { res = jx_ir_constGetU64(ctx, lhs->u.m_U64            + rhs->u.m_U64);  } break;
+	case JIR_TYPE_I64:  { res = jx_ir_constGetI64(ctx, lhs->u.m_I64            + rhs->u.m_I64);  } break;
+	case JIR_TYPE_F32:  { res = jx_ir_constGetF32(ctx, lhs->u.m_F32            + rhs->u.m_F32);  } break;
+	case JIR_TYPE_F64:  { res = jx_ir_constGetF64(ctx, lhs->u.m_F64            + rhs->u.m_F64);  } break;
+	default:
+		JX_CHECK(false, "Invalid types?");
+		break;
+	}
+
+	return res;
+}
+
+static jx_ir_constant_t* jir_constFold_subConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(lhs)->m_Type;
+
+	jx_ir_constant_t* res = NULL;
+	switch (operandType->m_Kind) {
+	case JIR_TYPE_U8:   { res = jx_ir_constGetU8(ctx, (uint8_t)(lhs->u.m_U64   - rhs->u.m_U64)); } break;
+	case JIR_TYPE_I8:   { res = jx_ir_constGetI8(ctx, (int8_t)(lhs->u.m_I64    - rhs->u.m_I64)); } break;
+	case JIR_TYPE_U16:  { res = jx_ir_constGetU16(ctx, (uint16_t)(lhs->u.m_U64 - rhs->u.m_U64)); } break;
+	case JIR_TYPE_I16:  { res = jx_ir_constGetI16(ctx, (int16_t)(lhs->u.m_I64  - rhs->u.m_I64)); } break;
+	case JIR_TYPE_U32:  { res = jx_ir_constGetU32(ctx, (uint32_t)(lhs->u.m_U64 - rhs->u.m_U64)); } break;
+	case JIR_TYPE_I32:  { res = jx_ir_constGetI32(ctx, (int32_t)(lhs->u.m_I64  - rhs->u.m_I64)); } break;
+	case JIR_TYPE_U64:  { res = jx_ir_constGetU64(ctx, lhs->u.m_U64            - rhs->u.m_U64);  } break;
+	case JIR_TYPE_I64:  { res = jx_ir_constGetI64(ctx, lhs->u.m_I64            - rhs->u.m_I64);  } break;
+	case JIR_TYPE_F32:  { res = jx_ir_constGetF32(ctx, lhs->u.m_F32            - rhs->u.m_F32);  } break;
+	case JIR_TYPE_F64:  { res = jx_ir_constGetF64(ctx, lhs->u.m_F64            - rhs->u.m_F64);  } break;
+	default:
+		JX_CHECK(false, "Invalid types?");
+		break;
+	}
+
+	return res;
+}
+
+static jx_ir_constant_t* jir_constFold_mulConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(lhs)->m_Type;
+
+	jx_ir_constant_t* res = NULL;
+	switch (operandType->m_Kind) {
+	case JIR_TYPE_U8:   { res = jx_ir_constGetU8(ctx, (uint8_t)(lhs->u.m_U64   * rhs->u.m_U64)); } break;
+	case JIR_TYPE_I8:   { res = jx_ir_constGetI8(ctx, (int8_t)(lhs->u.m_I64    * rhs->u.m_I64)); } break;
+	case JIR_TYPE_U16:  { res = jx_ir_constGetU16(ctx, (uint16_t)(lhs->u.m_U64 * rhs->u.m_U64)); } break;
+	case JIR_TYPE_I16:  { res = jx_ir_constGetI16(ctx, (int16_t)(lhs->u.m_I64  * rhs->u.m_I64)); } break;
+	case JIR_TYPE_U32:  { res = jx_ir_constGetU32(ctx, (uint32_t)(lhs->u.m_U64 * rhs->u.m_U64)); } break;
+	case JIR_TYPE_I32:  { res = jx_ir_constGetI32(ctx, (int32_t)(lhs->u.m_I64  * rhs->u.m_I64)); } break;
+	case JIR_TYPE_U64:  { res = jx_ir_constGetU64(ctx, lhs->u.m_U64            * rhs->u.m_U64);  } break;
+	case JIR_TYPE_I64:  { res = jx_ir_constGetI64(ctx, lhs->u.m_I64            * rhs->u.m_I64);  } break;
+	case JIR_TYPE_F32:  { res = jx_ir_constGetF32(ctx, lhs->u.m_F32            * rhs->u.m_F32);  } break;
+	case JIR_TYPE_F64:  { res = jx_ir_constGetF64(ctx, lhs->u.m_F64            * rhs->u.m_F64);  } break;
+	default:
+		JX_CHECK(false, "Invalid types?");
+		break;
+	}
+
+	return res;
+}
+
+static jx_ir_constant_t* jir_constFold_divConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(lhs)->m_Type;
+
+	jx_ir_constant_t* res = NULL;
+	switch (operandType->m_Kind) {
+	case JIR_TYPE_U8:   { res = jx_ir_constGetU8(ctx, (uint8_t)(lhs->u.m_U64   / rhs->u.m_U64)); } break;
+	case JIR_TYPE_I8:   { res = jx_ir_constGetI8(ctx, (int8_t)(lhs->u.m_I64    / rhs->u.m_I64)); } break;
+	case JIR_TYPE_U16:  { res = jx_ir_constGetU16(ctx, (uint16_t)(lhs->u.m_U64 / rhs->u.m_U64)); } break;
+	case JIR_TYPE_I16:  { res = jx_ir_constGetI16(ctx, (int16_t)(lhs->u.m_I64  / rhs->u.m_I64)); } break;
+	case JIR_TYPE_U32:  { res = jx_ir_constGetU32(ctx, (uint32_t)(lhs->u.m_U64 / rhs->u.m_U64)); } break;
+	case JIR_TYPE_I32:  { res = jx_ir_constGetI32(ctx, (int32_t)(lhs->u.m_I64  / rhs->u.m_I64)); } break;
+	case JIR_TYPE_U64:  { res = jx_ir_constGetU64(ctx, lhs->u.m_U64            / rhs->u.m_U64);  } break;
+	case JIR_TYPE_I64:  { res = jx_ir_constGetI64(ctx, lhs->u.m_I64            / rhs->u.m_I64);  } break;
+	case JIR_TYPE_F32:  { res = jx_ir_constGetF32(ctx, lhs->u.m_F32            / rhs->u.m_F32);  } break;
+	case JIR_TYPE_F64:  { res = jx_ir_constGetF64(ctx, lhs->u.m_F64            / rhs->u.m_F64);  } break;
+	default:
+		JX_CHECK(false, "Invalid types?");
+		break;
+	}
+
+	return res;
+}
+
+static jx_ir_constant_t* jir_constFold_remConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(lhs)->m_Type;
+
+	jx_ir_constant_t* res = NULL;
+	switch (operandType->m_Kind) {
+	case JIR_TYPE_U8:   { res = jx_ir_constGetU8(ctx, (uint8_t)(lhs->u.m_U64   % rhs->u.m_U64)); } break;
+	case JIR_TYPE_I8:   { res = jx_ir_constGetI8(ctx, (int8_t)(lhs->u.m_I64    % rhs->u.m_I64)); } break;
+	case JIR_TYPE_U16:  { res = jx_ir_constGetU16(ctx, (uint16_t)(lhs->u.m_U64 % rhs->u.m_U64)); } break;
+	case JIR_TYPE_I16:  { res = jx_ir_constGetI16(ctx, (int16_t)(lhs->u.m_I64  % rhs->u.m_I64)); } break;
+	case JIR_TYPE_U32:  { res = jx_ir_constGetU32(ctx, (uint32_t)(lhs->u.m_U64 % rhs->u.m_U64)); } break;
+	case JIR_TYPE_I32:  { res = jx_ir_constGetI32(ctx, (int32_t)(lhs->u.m_I64  % rhs->u.m_I64)); } break;
+	case JIR_TYPE_U64:  { res = jx_ir_constGetU64(ctx, lhs->u.m_U64            % rhs->u.m_U64);  } break;
+	case JIR_TYPE_I64:  { res = jx_ir_constGetI64(ctx, lhs->u.m_I64            % rhs->u.m_I64);  } break;
+#if 0 // TODO: fmod?
+	case JIR_TYPE_F32:  { res = jx_ir_constGetF32(ctx, lhs->u.m_F32            % rhs->u.m_F32);  } break;
+	case JIR_TYPE_F64:  { res = jx_ir_constGetF64(ctx, lhs->u.m_F64            % rhs->u.m_F64);  } break;
+#endif
+	default:
+		JX_CHECK(false, "Invalid types?");
+		break;
+	}
+
+	return res;
+}
+
+static jx_ir_constant_t* jir_constFold_andConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(lhs)->m_Type;
+
+	jx_ir_constant_t* res = NULL;
+	switch (operandType->m_Kind) {
+	case JIR_TYPE_U8:   { res = jx_ir_constGetU8(ctx, (uint8_t)(lhs->u.m_U64   & rhs->u.m_U64)); } break;
+	case JIR_TYPE_I8:   { res = jx_ir_constGetI8(ctx, (int8_t)(lhs->u.m_I64    & rhs->u.m_I64)); } break;
+	case JIR_TYPE_U16:  { res = jx_ir_constGetU16(ctx, (uint16_t)(lhs->u.m_U64 & rhs->u.m_U64)); } break;
+	case JIR_TYPE_I16:  { res = jx_ir_constGetI16(ctx, (int16_t)(lhs->u.m_I64  & rhs->u.m_I64)); } break;
+	case JIR_TYPE_U32:  { res = jx_ir_constGetU32(ctx, (uint32_t)(lhs->u.m_U64 & rhs->u.m_U64)); } break;
+	case JIR_TYPE_I32:  { res = jx_ir_constGetI32(ctx, (int32_t)(lhs->u.m_I64  & rhs->u.m_I64)); } break;
+	case JIR_TYPE_U64:  { res = jx_ir_constGetU64(ctx, lhs->u.m_U64            & rhs->u.m_U64);  } break;
+	case JIR_TYPE_I64:  { res = jx_ir_constGetI64(ctx, lhs->u.m_I64            & rhs->u.m_I64);  } break;
+	default:
+		JX_CHECK(false, "Invalid types?");
+		break;
+	}
+
+	return res;
+}
+
+static jx_ir_constant_t* jir_constFold_orConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(lhs)->m_Type;
+
+	jx_ir_constant_t* res = NULL;
+	switch (operandType->m_Kind) {
+	case JIR_TYPE_U8:   { res = jx_ir_constGetU8(ctx, (uint8_t)(lhs->u.m_U64   | rhs->u.m_U64)); } break;
+	case JIR_TYPE_I8:   { res = jx_ir_constGetI8(ctx, (int8_t)(lhs->u.m_I64    | rhs->u.m_I64)); } break;
+	case JIR_TYPE_U16:  { res = jx_ir_constGetU16(ctx, (uint16_t)(lhs->u.m_U64 | rhs->u.m_U64)); } break;
+	case JIR_TYPE_I16:  { res = jx_ir_constGetI16(ctx, (int16_t)(lhs->u.m_I64  | rhs->u.m_I64)); } break;
+	case JIR_TYPE_U32:  { res = jx_ir_constGetU32(ctx, (uint32_t)(lhs->u.m_U64 | rhs->u.m_U64)); } break;
+	case JIR_TYPE_I32:  { res = jx_ir_constGetI32(ctx, (int32_t)(lhs->u.m_I64  | rhs->u.m_I64)); } break;
+	case JIR_TYPE_U64:  { res = jx_ir_constGetU64(ctx, lhs->u.m_U64            | rhs->u.m_U64);  } break;
+	case JIR_TYPE_I64:  { res = jx_ir_constGetI64(ctx, lhs->u.m_I64            | rhs->u.m_I64);  } break;
+	default:
+		JX_CHECK(false, "Invalid types?");
+		break;
+	}
+
+	return res;
+}
+
+static jx_ir_constant_t* jir_constFold_xorConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(lhs)->m_Type;
+
+	jx_ir_constant_t* res = NULL;
+	switch (operandType->m_Kind) {
+	case JIR_TYPE_U8:   { res = jx_ir_constGetU8(ctx, (uint8_t)(lhs->u.m_U64   ^ rhs->u.m_U64)); } break;
+	case JIR_TYPE_I8:   { res = jx_ir_constGetI8(ctx, (int8_t)(lhs->u.m_I64    ^ rhs->u.m_I64)); } break;
+	case JIR_TYPE_U16:  { res = jx_ir_constGetU16(ctx, (uint16_t)(lhs->u.m_U64 ^ rhs->u.m_U64)); } break;
+	case JIR_TYPE_I16:  { res = jx_ir_constGetI16(ctx, (int16_t)(lhs->u.m_I64  ^ rhs->u.m_I64)); } break;
+	case JIR_TYPE_U32:  { res = jx_ir_constGetU32(ctx, (uint32_t)(lhs->u.m_U64 ^ rhs->u.m_U64)); } break;
+	case JIR_TYPE_I32:  { res = jx_ir_constGetI32(ctx, (int32_t)(lhs->u.m_I64  ^ rhs->u.m_I64)); } break;
+	case JIR_TYPE_U64:  { res = jx_ir_constGetU64(ctx, lhs->u.m_U64            ^ rhs->u.m_U64);  } break;
+	case JIR_TYPE_I64:  { res = jx_ir_constGetI64(ctx, lhs->u.m_I64            ^ rhs->u.m_I64);  } break;
+	default:
+		JX_CHECK(false, "Invalid types?");
+		break;
+	}
+
+	return res;
+}
+
+static jx_ir_constant_t* jir_constFold_shlConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(lhs)->m_Type;
+
+	jx_ir_constant_t* res = NULL;
+	switch (operandType->m_Kind) {
+	case JIR_TYPE_U8:   { res = jx_ir_constGetU8(ctx, (uint8_t)(lhs->u.m_U64   << rhs->u.m_U64)); } break;
+	case JIR_TYPE_I8:   { res = jx_ir_constGetI8(ctx, (int8_t)(lhs->u.m_I64    << rhs->u.m_I64)); } break;
+	case JIR_TYPE_U16:  { res = jx_ir_constGetU16(ctx, (uint16_t)(lhs->u.m_U64 << rhs->u.m_U64)); } break;
+	case JIR_TYPE_I16:  { res = jx_ir_constGetI16(ctx, (int16_t)(lhs->u.m_I64  << rhs->u.m_I64)); } break;
+	case JIR_TYPE_U32:  { res = jx_ir_constGetU32(ctx, (uint32_t)(lhs->u.m_U64 << rhs->u.m_U64)); } break;
+	case JIR_TYPE_I32:  { res = jx_ir_constGetI32(ctx, (int32_t)(lhs->u.m_I64  << rhs->u.m_I64)); } break;
+	case JIR_TYPE_U64:  { res = jx_ir_constGetU64(ctx, lhs->u.m_U64            << rhs->u.m_U64);  } break;
+	case JIR_TYPE_I64:  { res = jx_ir_constGetI64(ctx, lhs->u.m_I64            << rhs->u.m_I64);  } break;
+	default:
+		JX_CHECK(false, "Invalid types?");
+		break;
+	}
+
+	return res;
+}
+
+static jx_ir_constant_t* jir_constFold_shrConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(lhs)->m_Type;
+
+	jx_ir_constant_t* res = NULL;
+	switch (operandType->m_Kind) {
+	case JIR_TYPE_U8:   { res = jx_ir_constGetU8(ctx, (uint8_t)(lhs->u.m_U64   >> rhs->u.m_U64)); } break;
+	case JIR_TYPE_I8:   { res = jx_ir_constGetI8(ctx, (int8_t)(lhs->u.m_I64    >> rhs->u.m_I64)); } break;
+	case JIR_TYPE_U16:  { res = jx_ir_constGetU16(ctx, (uint16_t)(lhs->u.m_U64 >> rhs->u.m_U64)); } break;
+	case JIR_TYPE_I16:  { res = jx_ir_constGetI16(ctx, (int16_t)(lhs->u.m_I64  >> rhs->u.m_I64)); } break;
+	case JIR_TYPE_U32:  { res = jx_ir_constGetU32(ctx, (uint32_t)(lhs->u.m_U64 >> rhs->u.m_U64)); } break;
+	case JIR_TYPE_I32:  { res = jx_ir_constGetI32(ctx, (int32_t)(lhs->u.m_I64  >> rhs->u.m_I64)); } break;
+	case JIR_TYPE_U64:  { res = jx_ir_constGetU64(ctx, lhs->u.m_U64            >> rhs->u.m_U64);  } break;
+	case JIR_TYPE_I64:  { res = jx_ir_constGetI64(ctx, lhs->u.m_I64            >> rhs->u.m_I64);  } break;
+	default:
+		JX_CHECK(false, "Invalid types?");
+		break;
+	}
+
+	return res;
+}
+
+static jx_ir_constant_t* jir_constFold_truncConst(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(op)->m_Type;
+
+	JX_CHECK(operandType->m_Kind > type->m_Kind, "Expected smaller type");
+
+	jx_ir_constant_t* res = NULL;
+	switch (operandType->m_Kind) {
+	case JIR_TYPE_U8: 
+	case JIR_TYPE_I8:
+	case JIR_TYPE_U16:
+	case JIR_TYPE_I16:
+	case JIR_TYPE_U32:
+	case JIR_TYPE_I32:
+	case JIR_TYPE_U64: 
+	case JIR_TYPE_I64: {
+		JX_CHECK(jx_ir_typeIsInteger(type), "Expected integer trunc type");
+		res = jx_ir_constGetInteger(ctx, type->m_Kind, op->u.m_I64); 
+	} break;
+	case JIR_TYPE_F32: {
+		JX_CHECK(false, "Don't know how to trunc f32.");
+	} break;
+	case JIR_TYPE_F64: {
+		JX_CHECK(type->m_Kind == JIR_TYPE_F32, "Can only trunc f64 to f32.");
+		res = jx_ir_constGetF32(ctx, (float)op->u.m_F64);
+	} break;
+	default:
+		JX_CHECK(false, "Invalid trunc type?");
+		break;
+	}
+
+	return res;
+}
+
+static jx_ir_constant_t* jir_constFold_zextConst(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(op)->m_Type;
+
+	JX_CHECK(operandType->m_Kind < type->m_Kind, "Expected larger type");
+
+	jx_ir_constant_t* res = NULL;
+	switch (operandType->m_Kind) {
+	case JIR_TYPE_U8: 
+	case JIR_TYPE_I8: {
+		res = jx_ir_constGetInteger(ctx, type->m_Kind, (int64_t)((uint8_t)op->u.m_U64));
+	} break;
+	case JIR_TYPE_U16:
+	case JIR_TYPE_I16: {
+		res = jx_ir_constGetInteger(ctx, type->m_Kind, (int64_t)((uint16_t)op->u.m_U64));
+	} break;
+	case JIR_TYPE_U32:
+	case JIR_TYPE_I32: {
+		res = jx_ir_constGetInteger(ctx, type->m_Kind, (int64_t)((uint32_t)op->u.m_U64));
+	} break;
+	case JIR_TYPE_U64: 
+	case JIR_TYPE_I64: {
+		JX_CHECK(false, "Don't how to zext 64-bit integers!");
+	} break;
+	default:
+		JX_CHECK(false, "Invalid trunc type?");
+		break;
+	}
+
+	return res;
+}
+
+static jx_ir_constant_t* jir_constFold_sextConst(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(op)->m_Type;
+
+	JX_CHECK(operandType->m_Kind < type->m_Kind, "Expected larger type");
+
+	jx_ir_constant_t* res = NULL;
+	switch (operandType->m_Kind) {
+	case JIR_TYPE_U8: 
+	case JIR_TYPE_I8: {
+		res = jx_ir_constGetInteger(ctx, type->m_Kind, (int64_t)((int8_t)op->u.m_I64));
+	} break;
+	case JIR_TYPE_U16:
+	case JIR_TYPE_I16: {
+		res = jx_ir_constGetInteger(ctx, type->m_Kind, (int64_t)((int16_t)op->u.m_I64));
+	} break;
+	case JIR_TYPE_U32:
+	case JIR_TYPE_I32: {
+		res = jx_ir_constGetInteger(ctx, type->m_Kind, (int64_t)((int32_t)op->u.m_I64));
+	} break;
+	case JIR_TYPE_U64: 
+	case JIR_TYPE_I64: {
+		JX_CHECK(false, "Don't how to sext 64-bit integers!");
+	} break;
+	default:
+		JX_CHECK(false, "Invalid trunc type?");
+		break;
+	}
+
+	return res;
+}

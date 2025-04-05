@@ -387,6 +387,7 @@ jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator)
 			}
 		}
 
+#if 0
 		// Simple SSA
 		{
 			jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));
@@ -404,6 +405,27 @@ jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator)
 				cur = cur->m_Next;
 			}
 		}
+#endif
+
+#if 1
+		// Constant folding
+		{
+			jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));
+			if (!pass) {
+				jx_ir_destroyContext(ctx);
+				return NULL;
+			}
+
+			jx_memset(pass, 0, sizeof(jx_ir_function_pass_t));
+			if (!jx_ir_funcPassCreate_constantFolding(pass, ctx->m_Allocator)) {
+				JX_CHECK(false, "Failed to initialize function pass!");
+				JX_FREE(ctx->m_Allocator, pass);
+			} else {
+				cur->m_Next = pass;
+				cur = cur->m_Next;
+			}
+		}
+#endif
 
 		ctx->m_OnFuncEndPasses = head.m_Next;
 	}
@@ -1516,7 +1538,7 @@ jx_ir_instruction_t* jx_ir_instrTrunc(jx_ir_context_t* ctx, jx_ir_value_t* val, 
 jx_ir_instruction_t* jx_ir_instrZeroExt(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType)
 {
 	jx_ir_type_t* valType = val->m_Type;
-	if (!jx_ir_typeIsInteger(valType) || !jx_ir_typeIsInteger(targetType) || jx_ir_typeGetSize(valType) >= jx_ir_typeGetSize(targetType)) {
+	if (!jx_ir_typeIsIntegral(valType) || !jx_ir_typeIsInteger(targetType) || jx_ir_typeGetSize(valType) >= jx_ir_typeGetSize(targetType)) {
 		JX_CHECK(false, "zext can only be applied from one integer type to another larger integer type.");
 		return NULL;
 	}
