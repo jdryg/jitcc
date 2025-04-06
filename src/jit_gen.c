@@ -170,12 +170,8 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 						JX_NOT_IMPLEMENTED();
 					} break;
 					case JMIR_OP_CALL: {
-						jx_mir_operand_t* targetOp = mirInstr->m_Operands[0];
-						JX_CHECK(targetOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL, "call reg not implemented yet. This will crash below!");
-						const char* funcName = targetOp->u.m_ExternalSymbolName;
-						jx_x64_label_t* funcLbl = jx64_funcGetLabelByName(jitCtx, funcName);
-						JX_CHECK(funcLbl, "Function not found!");
-						jx64_call(jitCtx, jx64_opLbl(JX64_SIZE_64, funcLbl));
+						jx_x64_operand_t op = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx64_call(jitCtx, op);
 					} break;
 					case JMIR_OP_PUSH: {
 						jx_x64_operand_t op = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
