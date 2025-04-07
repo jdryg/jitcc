@@ -757,7 +757,7 @@ int main(int argc, char** argv)
 	jx_allocator_i* allocator = allocator_api->createAllocator("jcc");
 
 #if 1
-	for (uint32_t iTest = 1; iTest <= 90; ++iTest) {
+	for (uint32_t iTest = 1; iTest <= 100; ++iTest) {
 		char sourceFile[256];
 		jx_snprintf(sourceFile, JX_COUNTOF(sourceFile), "test/c-testsuite/%05d.c", iTest);
 
@@ -787,6 +787,7 @@ int main(int argc, char** argv)
 			|| iTest == 84 // Missing; Requires preprocessor
 			|| iTest == 85 // Missing; Requires preprocessor
 			|| iTest == 89 // Global pointer to global variable (relocations)
+			|| iTest == 97 // Missing; Requires preprocessor
 			;
 		if (skipTest) {
 			JX_SYS_LOG_WARNING(NULL, "SKIPPED\n");
@@ -855,7 +856,7 @@ int main(int argc, char** argv)
 #else
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-	const char* sourceFile = "test/c-testsuite/00087.c";
+	const char* sourceFile = "test/c-testsuite/00034.c";
 //	const char* sourceFile = "test/pointer_arithmetic.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);

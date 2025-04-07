@@ -387,7 +387,7 @@ jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator)
 			}
 		}
 
-#if 0
+#if 1
 		// Simple SSA
 		{
 			jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));
@@ -1304,6 +1304,34 @@ void jx_ir_bbRemoveInstr(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_in
 			JX_CHECK(false, "Unknown branch instruction!");
 		}
 	}
+}
+
+// Given a constant conditional value, convert a conditional branch into 
+// an unconditional branch.
+// 
+// NOTE: Simply removing the old conditional branch and appending a new unconditional 
+// branch to the basic block does not work because all phi operands referencing this 
+// basic block are removed once the branch is removed from the basic block.
+bool jx_ir_bbConvertCondBranch(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, bool condVal)
+{
+	jx_ir_instruction_t* branchInstr = jx_ir_bbGetLastInstr(ctx, bb);
+	if (branchInstr->m_OpCode != JIR_OP_BRANCH || jx_array_sizeu(branchInstr->super.m_OperandArr) != 3) {
+		JX_CHECK(false, "Expected conditional branch as last basic block instruction!");
+		return false;
+	}
+
+	JX_CHECK(jx_array_sizeu(bb->m_SuccArr) == 2, "Basic block with conditional branch as terminator expected to have 2 successors!");
+
+	// Remove targetRemoveID successor
+	jx_ir_basic_block_t* succRemove = bb->m_SuccArr[condVal ? 1 : 0];
+	jir_bbRemovePred(ctx, succRemove, bb);
+	jir_bbRemoveSucc(ctx, bb, succRemove);
+
+	// Rewrite branch instruction into an unconditional branch.
+	jir_userRemoveOperand(ctx, jx_ir_instrToUser(branchInstr), condVal ? 2 : 1);
+	jir_userRemoveOperand(ctx, jx_ir_instrToUser(branchInstr), 0);
+
+	return true;
 }
 
 void jx_ir_bbPrint(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_string_buffer_t* sb)
@@ -3618,7 +3646,8 @@ static void jir_bbRemovePred(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_i
 		for (uint32_t iOperand = 0; iOperand < numOperands; iOperand += 2) {
 			jx_ir_value_t* phiBB = instr->super.m_OperandArr[iOperand + 1]->m_Value;
 			if (jx_ir_valueToBasicBlock(phiBB) == pred) {
-				jx_array_deln(instr->super.m_OperandArr, iOperand, 2);
+				jir_userRemoveOperand(ctx, jx_ir_instrToUser(instr), iOperand + 1);
+				jir_userRemoveOperand(ctx, jx_ir_instrToUser(instr), iOperand + 0);
 				break;
 			}
 		}
