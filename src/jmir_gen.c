@@ -997,7 +997,7 @@ static jx_mir_operand_t* jmirgen_instrBuild_call(jx_mirgen_context_t* ctx, jx_ir
 			if (jx_ir_typeIsFloatingPoint(argType)) {
 				JX_NOT_IMPLEMENTED();
 			} else {
-				if (srcArgOp->m_Kind == JMIR_OPERAND_STACK_OBJECT) {
+				if (srcArgOp->m_Kind == JMIR_OPERAND_STACK_OBJECT || srcArgOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
 					jx_mir_operand_t* dstArgReg = jx_mir_opHWReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, kMIRFuncArgIReg[argID]);
 					jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstArgReg, srcArgOp));
 				} else {
@@ -1100,7 +1100,7 @@ static jx_mir_operand_t* jmirgen_instrBuild_trunc(jx_mirgen_context_t* ctx, jx_i
 	jx_mir_operand_t* operand = jmirgen_getOperand(ctx, irInstr->super.m_OperandArr[0]->m_Value);
 
 	if (operand->m_Kind != JMIR_OPERAND_REGISTER) {
-		if (operand->m_Kind == JMIR_OPERAND_STACK_OBJECT) {
+		if (operand->m_Kind == JMIR_OPERAND_STACK_OBJECT || operand->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
 			jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmpReg, operand));
 			operand = tmpReg;
@@ -1188,7 +1188,7 @@ static jx_mir_operand_t* jmirgen_instrBuild_bitcast(jx_mirgen_context_t* ctx, jx
 	jx_ir_type_t* instrType = jx_ir_instrToValue(irInstr)->m_Type;
 	jx_mir_operand_t* operand = jmirgen_getOperand(ctx, irInstr->super.m_OperandArr[0]->m_Value);
 	if (operand->m_Kind != JMIR_OPERAND_REGISTER) {
-		if (operand->m_Kind == JMIR_OPERAND_STACK_OBJECT) {
+		if (operand->m_Kind == JMIR_OPERAND_STACK_OBJECT || operand->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
 			jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmpReg, operand));
 			operand = tmpReg;

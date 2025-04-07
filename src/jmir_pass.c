@@ -845,6 +845,7 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 		jmir_regAlloc_instrAddDef(pass, instrInfo, dst->u.m_RegID);
 	} break;
 	case JMIR_OP_CALL: {
+#if 0
 		jx_mir_operand_t* targetOp = instr->m_Operands[0];
 		JX_CHECK(targetOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL, "call reg not implemented yet. This will crash below!");
 		jx_mir_function_t* targetFunc = jx_mir_getFunctionByName(pass->m_Ctx, targetOp->u.m_ExternalSymbolName);
@@ -853,6 +854,13 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 		for (uint32_t iRegArg = 0; iRegArg < numRegArgs; ++iRegArg) {
 			jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgIReg[iRegArg]);
 		}
+#else
+		// TODO: Annotate call with the function signature so I can know which registers are actually used
+		// by the call. For now assume all registers are used.
+		for (uint32_t iRegArg = 0; iRegArg < JX_COUNTOF(kMIRFuncArgIReg); ++iRegArg) {
+			jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgIReg[iRegArg]);
+		}
+#endif
 
 		const uint32_t numCallerSavedRegs = JX_COUNTOF(kMIRFuncCallerSavedIReg);
 		for (uint32_t iReg = 0; iReg < numCallerSavedRegs; ++iReg) {

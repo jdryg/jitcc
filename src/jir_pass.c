@@ -948,17 +948,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_constant_t* cond = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
 						if (cond) {
 							JX_CHECK(jx_ir_constToValue(cond)->m_Type->m_Kind == JIR_TYPE_BOOL, "Expected boolean conditional as 1st branch operand.");
-							jx_ir_value_t* targetVal = cond->u.m_Bool
-								? instrUser->m_OperandArr[1]->m_Value
-								: instrUser->m_OperandArr[2]->m_Value
-								;
-							jx_ir_basic_block_t* targetBB = jx_ir_valueToBasicBlock(targetVal);
-							JX_CHECK(targetBB, "Expected basic block as branch targets");
-
-							jx_ir_instruction_t* uncondBranch = jx_ir_instrBranch(ctx, targetBB);
-							jx_ir_bbRemoveInstr(ctx, bb, instr);
-							jx_ir_bbAppendInstr(ctx, bb, uncondBranch);
-							jx_ir_instrFree(ctx, instr);
+							jx_ir_bbConvertCondBranch(ctx, bb, cond->u.m_Bool);
 						}
 					} else {
 						JX_CHECK(false, "Unknown branch instruction");
@@ -1448,6 +1438,7 @@ static jx_ir_constant_t* jir_constFold_xorConst(jx_ir_context_t* ctx, jx_ir_cons
 
 	jx_ir_constant_t* res = NULL;
 	switch (operandType->m_Kind) {
+	case JIR_TYPE_BOOL: { res = jx_ir_constGetBool(ctx, lhs->u.m_Bool          ^ rhs->u.m_Bool); } break;
 	case JIR_TYPE_U8:   { res = jx_ir_constGetU8(ctx, (uint8_t)(lhs->u.m_U64   ^ rhs->u.m_U64)); } break;
 	case JIR_TYPE_I8:   { res = jx_ir_constGetI8(ctx, (int8_t)(lhs->u.m_I64    ^ rhs->u.m_I64)); } break;
 	case JIR_TYPE_U16:  { res = jx_ir_constGetU16(ctx, (uint16_t)(lhs->u.m_U64 ^ rhs->u.m_U64)); } break;
@@ -1550,6 +1541,9 @@ static jx_ir_constant_t* jir_constFold_zextConst(jx_ir_context_t* ctx, jx_ir_con
 
 	jx_ir_constant_t* res = NULL;
 	switch (operandType->m_Kind) {
+	case JIR_TYPE_BOOL: {
+		res = jx_ir_constGetInteger(ctx, type->m_Kind, (int64_t)op->u.m_Bool);
+	} break;
 	case JIR_TYPE_U8: 
 	case JIR_TYPE_I8: {
 		res = jx_ir_constGetInteger(ctx, type->m_Kind, (int64_t)((uint8_t)op->u.m_U64));
