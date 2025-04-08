@@ -960,6 +960,10 @@ static jx_mir_operand_t* jmirgen_instrBuild_call(jx_mirgen_context_t* ctx, jx_ir
 {
 	const uint32_t numOperands = (uint32_t)jx_array_sizeu(irInstr->super.m_OperandArr);
 	jx_ir_value_t* funcPtrVal = irInstr->super.m_OperandArr[0]->m_Value;
+
+	// TODO: If funcPtrVal->m_Name is a build-in/intrinsic function, handle it here before generating
+	// any code for the actual call. E.g. replace memset/memcpy with movs, etc.
+
 	jx_ir_type_pointer_t* funcPtrType = jx_ir_typeToPointer(funcPtrVal->m_Type);
 	JX_CHECK(funcPtrType, "Expected pointer to function");
 	jx_ir_type_function_t* funcType = jx_ir_typeToFunction(funcPtrType->m_BaseType);
@@ -1179,8 +1183,7 @@ static jx_mir_operand_t* jmirgen_instrBuild_ptrToInt(jx_mirgen_context_t* ctx, j
 
 static jx_mir_operand_t* jmirgen_instrBuild_intToPtr(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr)
 {
-	JX_NOT_IMPLEMENTED();
-	return NULL;
+	return jmirgen_instrBuild_bitcast(ctx, irInstr);
 }
 
 static jx_mir_operand_t* jmirgen_instrBuild_bitcast(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr)
