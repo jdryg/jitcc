@@ -387,7 +387,7 @@ jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator)
 			}
 		}
 
-#if 1
+#if 0
 		// Simple SSA
 		{
 			jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));
@@ -3051,6 +3051,79 @@ size_t jx_ir_typeGetSize(jx_ir_type_t* type)
 	return sz;
 }
 
+uint32_t jx_ir_typeGetIntegerConversionRank(jx_ir_type_t* type)
+{
+	switch (type->m_Kind) {
+	case JIR_TYPE_BOOL: {
+		return 1;
+	} break;
+	case JIR_TYPE_U8:
+	case JIR_TYPE_I8: {
+		return 2;
+	} break;
+	case JIR_TYPE_U16:
+	case JIR_TYPE_I16: {
+		return 3;
+	} break;
+	case JIR_TYPE_U32:
+	case JIR_TYPE_I32: {
+		return 4;
+	} break;
+	case JIR_TYPE_U64:
+	case JIR_TYPE_I64: {
+		return 5;
+	} break;
+	default:
+		JX_CHECK(false, "Invalid type!");
+		break;
+	}
+
+	return UINT32_MAX;
+}
+
+bool jx_ir_typeCanRepresent(jx_ir_type_t* type, jx_ir_type_t* other)
+{
+	JX_CHECK(jx_ir_typeIsIntegral(type) && jx_ir_typeIsIntegral(other), "Expected integral types");
+	const uint32_t thisRank = jx_ir_typeGetIntegerConversionRank(type);
+	const uint32_t otherRank = jx_ir_typeGetIntegerConversionRank(other);
+
+	if (thisRank > otherRank) {
+		return true;
+	} else if (thisRank < otherRank) {
+		return false;
+	}
+
+	return jx_ir_typeIsUnsigned(type) == jx_ir_typeIsUnsigned(other);
+}
+
+jx_ir_type_kind jx_ir_typeToUnsigned(jx_ir_type_kind type)
+{
+	switch (type) {
+	case JIR_TYPE_BOOL:
+	case JIR_TYPE_U8:
+	case JIR_TYPE_I8: {
+		return JIR_TYPE_U8;
+	} break;
+	case JIR_TYPE_U16:
+	case JIR_TYPE_I16: {
+		return JIR_TYPE_U16;
+	} break;
+	case JIR_TYPE_U32:
+	case JIR_TYPE_I32: {
+		return JIR_TYPE_U32;
+	} break;
+	case JIR_TYPE_U64:
+	case JIR_TYPE_I64: {
+		return JIR_TYPE_U64;
+	} break;
+	default:
+		JX_CHECK(false, "Invalid type!");
+		break;
+	}
+
+	return JIR_TYPE_U64;
+}
+
 size_t jx_ir_typeStructGetMemberOffset(jx_ir_type_struct_t* structType, uint32_t memberID)
 {
 	JX_CHECK(memberID < structType->m_NumMembers, "Invalid struct member index");
@@ -4283,9 +4356,22 @@ static jx_ir_instruction_t* jir_instrBinaryOp(jx_ir_context_t* ctx, uint32_t opc
 	return jir_instrBinaryOpTyped(ctx, opcode, operand1, operand2, operand1->m_Type);
 }
 
+static bool jir_checkBinaryOpOperands(jx_ir_value_t* operand1, jx_ir_value_t* operand2)
+{
+	if (!operand1 || !operand2 || !jx_ir_typeIsFirstClass(operand1->m_Type) || !jx_ir_typeIsFirstClass(operand2->m_Type)) {
+		return false;
+	}
+
+	if (operand1->m_Type == operand2->m_Type) {
+		return true;
+	}
+
+	return operand1->m_Type->m_Kind == JIR_TYPE_POINTER && operand2->m_Type->m_Kind == JIR_TYPE_POINTER;
+}
+
 static jx_ir_instruction_t* jir_instrBinaryOpTyped(jx_ir_context_t* ctx, uint32_t opcode, jx_ir_value_t* operand1, jx_ir_value_t* operand2, jx_ir_type_t* type)
 {
-	JX_CHECK(operand1 && operand2 && operand1->m_Type == operand2->m_Type, "Binary op operands must be of the same type");
+	JX_CHECK(jir_checkBinaryOpOperands(operand1, operand2), "Binary op operands must be of the same type");
 
 	// Sanity checks
 	switch (opcode) {

@@ -494,6 +494,420 @@
     <ClCompile Include="src\jit_gen.c">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00061.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00062.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00063.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00064.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00065.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00066.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00067.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00068.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00069.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00070.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00071.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00074.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00075.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00079.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00083.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00084.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00085.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00097.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00101.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00102.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00103.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00104.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00105.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00106.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00107.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00108.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00109.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00110.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00111.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00112.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00113.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00114.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00115.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00116.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00117.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00118.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00119.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00120.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00121.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00122.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00123.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00124.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00125.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00126.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00127.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00128.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00129.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00130.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00131.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00132.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00133.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00134.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00135.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00136.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00137.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00138.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00139.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00140.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00141.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00142.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00143.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00144.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00145.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00146.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00147.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00148.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00149.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00150.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00151.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00152.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00153.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00154.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00155.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00156.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00157.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00158.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00159.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00160.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00161.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00162.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00163.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00164.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00165.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00166.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00167.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00168.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00169.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00170.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00171.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00172.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00173.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00174.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00175.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00176.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00177.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00178.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00179.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00180.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00181.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00182.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00183.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00184.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00185.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00186.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00187.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00188.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00189.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00190.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00191.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00192.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00193.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00194.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00195.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00196.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00197.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00198.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00199.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00200.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00201.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00202.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00203.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00204.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00205.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00206.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00207.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00208.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00209.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00210.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00211.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00212.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00213.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00214.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00215.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00216.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00217.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00218.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00219.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\c-testsuite\00220.c">
+      <Filter>bin\test\c-testsuite</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="3rdparty\jlib\include\jlib\inline\atomic_win32.inl">

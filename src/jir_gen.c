@@ -73,6 +73,9 @@ static void jirgenGenStore(jx_irgen_context_t* ctx, jx_ir_value_t* ptr, jx_ir_va
 static void jirgenGemMemZero(jx_irgen_context_t* ctx, jx_ir_value_t* addr);
 static void jirgenGenMemCopy(jx_irgen_context_t* ctx, jx_ir_value_t* dstVal, jx_ir_value_t* srcVal);
 static jx_ir_value_t* jirgenConvertToBool(jx_irgen_context_t* ctx, jx_ir_value_t* val);
+static jx_ir_type_t* jirgenIntegerPromotion(jx_irgen_context_t* ctx, jx_ir_type_t* type);
+static jx_ir_type_t* jirgenUsualArithmeticConversions(jx_irgen_context_t* ctx, jx_ir_type_t* lhsType, jx_ir_type_t* rhsType);
+static jx_ir_value_t* jirgenConvertType(jx_irgen_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* type);
 
 static jx_ir_type_t* jccTypeToIRType(jx_irgen_context_t* ctx, jx_cc_type_t* ccType);
 static jx_ir_type_t* jccFuncArgGetType(jx_irgen_context_t* ctx, jx_cc_type_t* ccType);
@@ -1059,15 +1062,45 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 		jx_array_free(argValsArr);
 	} break;
 	case JCC_NODE_EXPR_COMPOUND_ASSIGN: {
+		// Compound assignments (e.g. +=, -=, etc.) might end up producing operations between
+		// different types because the frontend does not currently perform the "usual arithmetic conversions" 
+		// for these nodes. Handle this here.
 		jx_cc_ast_expr_compound_assign_t* assignExpr = (jx_cc_ast_expr_compound_assign_t*)expr;
 		jx_ir_value_t* rhs = jirgenGenExpression(ctx, assignExpr->m_ExprRHS);
 		jx_ir_value_t* lhsAddr = jirgenGenAddress(ctx, assignExpr->m_ExprLHS);
-		jx_ir_instruction_t* loadInstr = jx_ir_instrLoad(irctx, jx_ir_typeToPointer(lhsAddr->m_Type)->m_BaseType, lhsAddr);
+		jx_ir_type_t* lhsType = jx_ir_typeToPointer(lhsAddr->m_Type)->m_BaseType;
+		jx_ir_instruction_t* loadInstr = jx_ir_instrLoad(irctx, lhsType, lhsAddr);
 		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, loadInstr);
-		jx_ir_instruction_t* binInstr = kIRBinaryOps[assignExpr->m_Op](irctx, jx_ir_instrToValue(loadInstr), rhs);
+
+		jx_ir_value_t* lhs = jx_ir_instrToValue(loadInstr);
+
+		if (assignExpr->m_Op != JCC_NODE_EXPR_LSHIFT && assignExpr->m_Op != JCC_NODE_EXPR_RSHIFT) {
+			jx_ir_type_t* commonType = jirgenUsualArithmeticConversions(ctx, lhs->m_Type, rhs->m_Type);
+			if (commonType) {
+				if (commonType != lhs->m_Type) {
+					lhs = jirgenConvertType(ctx, lhs, commonType);
+				}
+				if (commonType != rhs->m_Type) {
+					rhs = jirgenConvertType(ctx, rhs, commonType);
+				}
+			}
+		} else {
+			JX_NOT_IMPLEMENTED();
+//			lhs = jirgenIntegerPromotion(ctx, lhs);
+//			rhs = jirgenIntegerPromotion(ctx, rhs);
+		}
+
+		jx_ir_instruction_t* binInstr = kIRBinaryOps[assignExpr->m_Op](irctx, lhs, rhs);
 		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, binInstr);
-		jx_ir_instruction_t* storeInstr = jx_ir_instrStore(irctx, lhsAddr, jx_ir_instrToValue(binInstr));
+
+		jx_ir_value_t* resVal = jx_ir_instrToValue(binInstr);
+		if (resVal->m_Type != lhsType) {
+			resVal = jirgenConvertType(ctx, resVal, lhsType);
+		}
+
+		jx_ir_instruction_t* storeInstr = jx_ir_instrStore(irctx, lhsAddr, resVal);
 		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, storeInstr);
+
 		val = jx_ir_instrToValue(binInstr);
 	} break;
 	case JCC_NODE_VARIABLE: {
@@ -1320,6 +1353,141 @@ static jx_ir_value_t* jirgenConvertToBool(jx_irgen_context_t* ctx, jx_ir_value_t
 	jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, cmpInstr);
 
 	return jx_ir_instrToValue(cmpInstr);
+}
+
+static jx_ir_type_t* jirgenIntegerPromotion(jx_irgen_context_t* ctx, jx_ir_type_t* type)
+{
+	switch (type->m_Kind) {
+	case JIR_TYPE_BOOL:
+	case JIR_TYPE_U8:
+	case JIR_TYPE_U16:
+	case JIR_TYPE_I8:
+	case JIR_TYPE_I16: {
+		type = jx_ir_typeGetPrimitive(ctx->m_IRCtx, JIR_TYPE_I32);
+	} break;
+	case JIR_TYPE_U32:
+	case JIR_TYPE_I32:
+	case JIR_TYPE_U64:
+	case JIR_TYPE_I64: 
+	case JIR_TYPE_POINTER: {
+		// No integer promotions for large integer types
+	} break;
+	default:
+		JX_CHECK(false, "Invalid operand type?");
+		break;
+	}
+
+	return type;
+}
+
+static jx_ir_type_t* jirgenUsualArithmeticConversions(jx_irgen_context_t* ctx, jx_ir_type_t* lhsType, jx_ir_type_t* rhsType)
+{
+	// ... if the corresponding real type of either operand is double, the other
+	// operand is converted, without change of type domain, to a type whose
+	// corresponding real type is double.
+	if (lhsType->m_Kind == JIR_TYPE_F64) {
+		return lhsType;
+	} else if (rhsType->m_Kind == JIR_TYPE_F64) {
+		return rhsType;
+	}
+
+	// Otherwise, if the corresponding real type of either operand is float, the other
+	// operand is converted, without change of type domain, to a type whose
+	// corresponding real type is float.
+	if (lhsType->m_Kind == JIR_TYPE_F32) {
+		return lhsType;
+	} else if (rhsType->m_Kind == JIR_TYPE_F32) {
+		return rhsType;
+	}
+
+	// Otherwise, the integer promotions are performed on both operands.
+	lhsType = jirgenIntegerPromotion(ctx, lhsType);
+	rhsType = jirgenIntegerPromotion(ctx, rhsType);
+
+	// Then the following rules are applied to the promoted operands:
+	// If both operands have the same type, then no further conversion is needed
+	if (lhsType == rhsType) {
+		return lhsType;
+	}
+
+	JX_CHECK(jx_ir_typeIsInteger(lhsType) && jx_ir_typeIsInteger(rhsType), "Both operands expected to have integer types at this point!");
+
+	const bool lhsIsUnsigned = jx_ir_typeIsUnsigned(lhsType);
+	const bool rhsIsUnsigned = jx_ir_typeIsUnsigned(rhsType);
+	const uint32_t lhsRank = jx_ir_typeGetIntegerConversionRank(lhsType);
+	const uint32_t rhsRank = jx_ir_typeGetIntegerConversionRank(rhsType);
+
+	// Otherwise, if both operands have signed integer types or both have unsigned
+	// integer types, the operand with the type of lesser integer conversion rank is
+	// converted to the type of the operand with greater rank.
+	if (lhsIsUnsigned == rhsIsUnsigned) {
+		return lhsRank < rhsRank
+			? rhsType
+			: lhsType
+			;
+	} 
+	
+	// Otherwise, if the operand that has unsigned integer type has rank greater or
+	// equal to the rank of the type of the other operand, then the operand with
+	// signed integer type is converted to the type of the operand with unsigned
+	// integer type.
+	if (lhsIsUnsigned && lhsRank >= rhsRank) {
+		return lhsType;
+	} else if (rhsIsUnsigned && rhsRank >= lhsRank) {
+		return rhsType;
+	}
+
+	// Otherwise, if the type of the operand with signed integer type can represent
+	// all of the values of the type of the operand with unsigned integer type, then
+	// the operand with unsigned integer type is converted to the type of the
+	// operand with signed integer type.
+	if (!lhsIsUnsigned && jx_ir_typeCanRepresent(lhsType, rhsType)) {
+		return lhsType;
+	} else if (!rhsIsUnsigned && jx_ir_typeCanRepresent(rhsType, lhsType)) {
+		return rhsType;
+	}
+
+	// Otherwise, both operands are converted to the unsigned integer type
+	// corresponding to the type of the operand with signed integer type.
+	if (!lhsIsUnsigned) {
+		return jx_ir_typeGetPrimitive(ctx->m_IRCtx, jx_ir_typeToUnsigned(lhsType->m_Kind));
+	}
+
+	return jx_ir_typeGetPrimitive(ctx->m_IRCtx, jx_ir_typeToUnsigned(rhsType->m_Kind));
+}
+
+static jx_ir_value_t* jirgenConvertType(jx_irgen_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* type)
+{
+	JX_CHECK(jx_ir_typeIsIntegral(val->m_Type), "Can only convert integral values.");
+	JX_CHECK(jx_ir_typeIsIntegral(type), "Can only convert to integral types.");
+
+	const uint32_t valSz = (uint32_t)jx_ir_typeGetSize(val->m_Type);
+	const uint32_t typeSz = (uint32_t)jx_ir_typeGetSize(type);
+
+	if (typeSz > valSz) {
+		// Extension
+		if (jx_ir_typeIsUnsigned(val->m_Type)) {
+			jx_ir_instruction_t* zextInstr = jx_ir_instrZeroExt(ctx->m_IRCtx, val, type);
+			jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, zextInstr);
+			val = jx_ir_instrToValue(zextInstr);
+		} else {
+			jx_ir_instruction_t* sextInstr = jx_ir_instrSignExt(ctx->m_IRCtx, val, type);
+			jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, sextInstr);
+			val = jx_ir_instrToValue(sextInstr);
+		}
+	} else if (typeSz < valSz) {
+		// Truncation
+		jx_ir_instruction_t* truncInstr = jx_ir_instrTrunc(ctx->m_IRCtx, val, type);
+		jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, truncInstr);
+		val = jx_ir_instrToValue(truncInstr);
+	} else {
+		// Bitcast
+		jx_ir_instruction_t* bitcastInstr = jx_ir_instrBitcast(ctx->m_IRCtx, val, type);
+		jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, bitcastInstr);
+		val = jx_ir_instrToValue(bitcastInstr);
+	}
+
+	return val;
 }
 
 static jx_ir_type_t* jccTypeToIRType(jx_irgen_context_t* ctx, jx_cc_type_t* ccType)
