@@ -161,13 +161,19 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 						jx64_or(jitCtx, dst, src);
 					} break;
 					case JMIR_OP_SAR: {
-						JX_NOT_IMPLEMENTED();
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_sar(jitCtx, dst, src);
 					} break;
 					case JMIR_OP_SHR: {
-						JX_NOT_IMPLEMENTED();
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_shr(jitCtx, dst, src);
 					} break;
 					case JMIR_OP_SHL: {
-						JX_NOT_IMPLEMENTED();
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_shl(jitCtx, dst, src);
 					} break;
 					case JMIR_OP_CALL: {
 						jx_x64_operand_t op = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
@@ -305,17 +311,17 @@ static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64_context_t* jitCtx, co
 			JX_CHECK(false, "Unexpected void constant!");
 		} break;
 		case JMIR_TYPE_I8: {
-			op = jx64_opImm8((uint8_t)mirOp->u.m_ConstI64);
+			op = jx64_opImmI8((int8_t)mirOp->u.m_ConstI64);
 		} break;
 		case JMIR_TYPE_I16: {
-			op = jx64_opImm16((uint16_t)mirOp->u.m_ConstI64);
+			op = jx64_opImmI16((int16_t)mirOp->u.m_ConstI64);
 		} break;
 		case JMIR_TYPE_I32: {
-			op = jx64_opImm32((uint32_t)mirOp->u.m_ConstI64);
+			op = jx64_opImmI32((int32_t)mirOp->u.m_ConstI64);
 		} break;
 		case JMIR_TYPE_I64:
 		case JMIR_TYPE_PTR: {
-			op = jx64_opImm64((uint64_t)mirOp->u.m_ConstI64);
+			op = jx64_opImmI64(mirOp->u.m_ConstI64);
 		} break;
 		case JMIR_TYPE_F32: {
 			JX_NOT_IMPLEMENTED();

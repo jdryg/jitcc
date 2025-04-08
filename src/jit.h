@@ -194,7 +194,7 @@ typedef struct jx_x64_operand_t
 	union
 	{
 		jx_x64_reg m_Reg;
-		uint64_t m_Imm;
+		int64_t m_ImmI64;
 		jx_x64_mem_t m_Mem;
 		jx_x64_label_t* m_Lbl;
 	} u;
@@ -286,24 +286,24 @@ static inline jx_x64_operand_t jx64_opReg(jx_x64_reg reg)
 	return (jx_x64_operand_t){ .m_Type = JX64_OPERAND_REG, .m_Size = JX64_REG_GET_SIZE(reg), .u.m_Reg = reg };
 }
 
-static inline jx_x64_operand_t jx64_opImm8(uint8_t val)
+static inline jx_x64_operand_t jx64_opImmI8(int8_t val)
 {
-	return (jx_x64_operand_t){ .m_Type = JX64_OPERAND_IMM, .m_Size = JX64_SIZE_8, .u.m_Imm = (uint64_t)val };
+	return (jx_x64_operand_t){ .m_Type = JX64_OPERAND_IMM, .m_Size = JX64_SIZE_8, .u.m_ImmI64 = (int64_t)val };
 }
 
-static inline jx_x64_operand_t jx64_opImm16(uint16_t val)
+static inline jx_x64_operand_t jx64_opImmI16(int16_t val)
 {
-	return (jx_x64_operand_t){ .m_Type = JX64_OPERAND_IMM, .m_Size = JX64_SIZE_16, .u.m_Imm = (uint64_t)val };
+	return (jx_x64_operand_t){ .m_Type = JX64_OPERAND_IMM, .m_Size = JX64_SIZE_16, .u.m_ImmI64 = (int64_t)val };
 }
 
-static inline jx_x64_operand_t jx64_opImm32(uint32_t val)
+static inline jx_x64_operand_t jx64_opImmI32(int32_t val)
 {
-	return (jx_x64_operand_t){ .m_Type = JX64_OPERAND_IMM, .m_Size = JX64_SIZE_32, .u.m_Imm = (uint64_t)val };
+	return (jx_x64_operand_t){ .m_Type = JX64_OPERAND_IMM, .m_Size = JX64_SIZE_32, .u.m_ImmI64 = (int64_t)val };
 }
 
-static inline jx_x64_operand_t jx64_opImm64(uint64_t val)
+static inline jx_x64_operand_t jx64_opImmI64(int64_t val)
 {
-	return (jx_x64_operand_t){ .m_Type = JX64_OPERAND_IMM, .m_Size = JX64_SIZE_64, .u.m_Imm = val };
+	return (jx_x64_operand_t){ .m_Type = JX64_OPERAND_IMM, .m_Size = JX64_SIZE_64, .u.m_ImmI64 = val };
 }
 
 static inline jx_x64_operand_t jx64_opMem(jx_x64_size size, jx_x64_reg base, jx_x64_reg index, jx_x64_scale scale, int32_t disp)

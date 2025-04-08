@@ -80,7 +80,7 @@ typedef struct jx_x64_instr_encoding_t
 	uint32_t m_Disp;
 	JX_PAD(4);
 
-	uint64_t m_Imm;
+	int64_t m_ImmI64;
 } jx_x64_instr_encoding_t;
 
 typedef struct jx_x64_instr_buffer_t
@@ -138,16 +138,16 @@ static bool jx64_jmp_call_op(jx_x64_context_t* ctx, uint8_t opcode_lbl, uint8_t 
 static bool jx64_shift_rotate_op(jx_x64_context_t* ctx, uint8_t modrm_reg, jx_x64_operand_t op, jx_x64_operand_t shift);
 static bool jx64_math_unary_op_reg(jx_x64_instr_encoding_t* enc, uint8_t baseOpcode, uint8_t modrm_reg, jx_x64_reg reg);
 static bool jx64_math_unary_op_mem(jx_x64_instr_encoding_t* enc, uint8_t baseOpcode, uint8_t modrm_reg, const jx_x64_mem_t* mem, jx_x64_size sz);
-static bool jx64_math_binary_op_reg_imm(jx_x64_instr_encoding_t* enc, uint8_t baseOpcode, uint8_t modrm_reg, jx_x64_reg reg, uint64_t imm, jx_x64_size imm_sz);
+static bool jx64_math_binary_op_reg_imm(jx_x64_instr_encoding_t* enc, uint8_t baseOpcode, uint8_t modrm_reg, jx_x64_reg reg, int64_t imm, jx_x64_size imm_sz);
 static bool jx64_math_binary_op_reg_reg(jx_x64_instr_encoding_t* enc, uint8_t baseOpcode, jx_x64_reg dst, jx_x64_reg src);
 static bool jx64_math_binary_op_reg_mem(jx_x64_instr_encoding_t* enc, uint8_t baseOpcode, uint8_t isRegDst, jx_x64_reg reg, const jx_x64_mem_t* mem);
-static bool jx64_math_binary_op_mem_imm(jx_x64_instr_encoding_t* enc, uint8_t baseOpcode, uint8_t modrm_reg, const jx_x64_mem_t* dst_m, jx_x64_size dst_m_sz, uint64_t src_imm, jx_x64_size src_imm_sz);
-static bool jx64_binary_op_reg_imm(jx_x64_instr_encoding_t* enc, const uint8_t* opcode, uint32_t opcodeSize, uint8_t modrm_reg, jx_x64_reg reg, uint64_t imm, jx_x64_size imm_sz);
-static bool jx64_binary_op_mem_imm(jx_x64_instr_encoding_t* enc, const uint8_t* opcode, uint32_t opcodeSize, uint8_t modrm_reg, const jx_x64_mem_t* dst_m, jx_x64_size dst_m_sz, uint64_t src_imm, jx_x64_size src_imm_sz);
+static bool jx64_math_binary_op_mem_imm(jx_x64_instr_encoding_t* enc, uint8_t baseOpcode, uint8_t modrm_reg, const jx_x64_mem_t* dst_m, jx_x64_size dst_m_sz, int64_t src_imm, jx_x64_size src_imm_sz);
+static bool jx64_binary_op_reg_imm(jx_x64_instr_encoding_t* enc, const uint8_t* opcode, uint32_t opcodeSize, uint8_t modrm_reg, jx_x64_reg reg, int64_t imm, jx_x64_size imm_sz);
+static bool jx64_binary_op_mem_imm(jx_x64_instr_encoding_t* enc, const uint8_t* opcode, uint32_t opcodeSize, uint8_t modrm_reg, const jx_x64_mem_t* dst_m, jx_x64_size dst_m_sz, int64_t src_imm, jx_x64_size src_imm_sz);
 static bool jx64_binary_op_reg_reg(jx_x64_instr_encoding_t* enc, const uint8_t* opcode, uint32_t opcodeSize, jx_x64_reg dst, jx_x64_reg src);
 static bool jx64_binary_op_reg_mem(jx_x64_instr_encoding_t* enc, const uint8_t* opcode, uint32_t opcodeSize, jx_x64_reg reg, const jx_x64_mem_t* mem);
-static bool jx64_mov_reg_imm(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, uint64_t src_imm, jx_x64_size src_imm_sz);
-static bool jx64_mov_mem_imm(jx_x64_instr_encoding_t* enc, const jx_x64_mem_t* dst_m, uint64_t src_imm, jx_x64_size src_imm_sz);
+static bool jx64_mov_reg_imm(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, int64_t src_imm, jx_x64_size src_imm_sz);
+static bool jx64_mov_mem_imm(jx_x64_instr_encoding_t* enc, const jx_x64_mem_t* dst_m, int64_t src_imm, jx_x64_size src_imm_sz);
 static bool jx64_movsx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, jx_x64_reg src_r);
 static bool jx64_movzx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, jx_x64_reg src_r);
 static bool jx64_instrBuf_push8(jx_x64_instr_buffer_t* ib, uint8_t b);
@@ -163,7 +163,7 @@ static void jx64_instrEnc_modrm(jx_x64_instr_encoding_t* enc, uint8_t mod, uint8
 static void jx64_instrEnc_sib(jx_x64_instr_encoding_t* enc, bool hasSIB, uint8_t scale, uint8_t index, uint8_t base);
 static void jx64_instrEnc_rex(jx_x64_instr_encoding_t* enc, bool hasREX, uint8_t w, uint8_t r, uint8_t x, uint8_t b);
 static void jx64_instrEnc_disp(jx_x64_instr_encoding_t* enc, bool hasDisp, jx_x64_size dispSize, uint32_t disp);
-static void jx64_instrEnc_imm(jx_x64_instr_encoding_t* enc, bool hasImm, jx_x64_size immSize, uint64_t imm);
+static void jx64_instrEnc_imm(jx_x64_instr_encoding_t* enc, bool hasImm, jx_x64_size immSize, int64_t imm);
 static void jx64_instrEnc_segment(jx_x64_instr_encoding_t* enc, jx_x64_segment_prefix seg);
 static void jx64_instrEnc_lock_rep(jx_x64_instr_encoding_t* enc, jx_x64_lock_repeat_prefix lockRepeat);
 static void jx64_instrEnc_addrSize(jx_x64_instr_encoding_t* enc, bool override);
@@ -487,7 +487,7 @@ bool jx64_mov(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 	jx_x64_instr_encoding_t* enc = &(jx_x64_instr_encoding_t) { 0 };
 
 	if (dst.m_Type == JX64_OPERAND_REG && src.m_Type == JX64_OPERAND_IMM) {
-		if (!jx64_mov_reg_imm(enc, dst.u.m_Reg, src.u.m_Imm, src.m_Size)) {
+		if (!jx64_mov_reg_imm(enc, dst.u.m_Reg, src.u.m_ImmI64, src.m_Size)) {
 			return false;
 		}
 	} else if (dst.m_Type == JX64_OPERAND_REG && src.m_Type == JX64_OPERAND_REG) {
@@ -499,7 +499,7 @@ bool jx64_mov(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 			return false;
 		}
 	} else if (dst.m_Type == JX64_OPERAND_MEM && src.m_Type == JX64_OPERAND_IMM) {
-		if (!jx64_mov_mem_imm(enc, &dst.u.m_Mem, src.u.m_Imm, src.m_Size)) {
+		if (!jx64_mov_mem_imm(enc, &dst.u.m_Mem, src.u.m_ImmI64, src.m_Size)) {
 			return false;
 		}
 	} else if (dst.m_Type == JX64_OPERAND_MEM && src.m_Type == JX64_OPERAND_REG) {
@@ -713,7 +713,7 @@ bool jx64_push(jx_x64_context_t* ctx, jx_x64_operand_t op)
 		}
 
 		jx64_instrEnc_opcode1(enc, 0x68 | (op.m_Size == JX64_SIZE_8 ? 0b10 : 0));
-		jx64_instrEnc_imm(enc, true, (op.m_Size == JX64_SIZE_8) ? JX64_SIZE_8 : JX64_SIZE_32, op.u.m_Imm);
+		jx64_instrEnc_imm(enc, true, (op.m_Size == JX64_SIZE_8) ? JX64_SIZE_8 : JX64_SIZE_32, op.u.m_ImmI64);
 	} else if (op.m_Type == JX64_OPERAND_REG) {
 		// 0x50+ r
 		if (!jx64_stack_op_reg(enc, 0x50, op.u.m_Reg)) {
@@ -973,7 +973,7 @@ bool jx64_test(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src
 		;
 
 	if (dst.m_Type == JX64_OPERAND_REG && src.m_Type == JX64_OPERAND_IMM) {
-		if (!jx64_binary_op_reg_imm(enc, &opcode, 1, 0b000, dst.u.m_Reg, src.u.m_Imm, src.m_Size)) {
+		if (!jx64_binary_op_reg_imm(enc, &opcode, 1, 0b000, dst.u.m_Reg, src.u.m_ImmI64, src.m_Size)) {
 			return false;
 		}
 	} else if (dst.m_Type == JX64_OPERAND_REG && src.m_Type == JX64_OPERAND_REG) {
@@ -981,7 +981,7 @@ bool jx64_test(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src
 			return false;
 		}
 	} else if (dst.m_Type == JX64_OPERAND_MEM && src.m_Type == JX64_OPERAND_IMM) {
-		if (!jx64_binary_op_mem_imm(enc, &opcode, 1, 0b000, &dst.u.m_Mem, dst.m_Size, src.u.m_Imm, src.m_Size)) {
+		if (!jx64_binary_op_mem_imm(enc, &opcode, 1, 0b000, &dst.u.m_Mem, dst.m_Size, src.u.m_ImmI64, src.m_Size)) {
 			return false;
 		}
 	} else if (dst.m_Type == JX64_OPERAND_MEM && src.m_Type == JX64_OPERAND_REG) {
@@ -1457,7 +1457,7 @@ static bool jx64_math_binary_op(jx_x64_context_t* ctx, uint8_t opcode_imm, uint8
 	if (dst.m_Type == JX64_OPERAND_REG && src.m_Type == JX64_OPERAND_IMM) {
 		jx_x64_size immSize = src.m_Size;
 		if (immSize == JX64_SIZE_64) {
-			if (src.u.m_Imm > UINT32_MAX) {
+			if (src.u.m_ImmI64 > INT32_MAX || src.u.m_ImmI64 < INT32_MIN) {
 				JX_CHECK(false, "Immediate cannot be a 64-bit value!");
 				return false;
 			} else {
@@ -1465,7 +1465,7 @@ static bool jx64_math_binary_op(jx_x64_context_t* ctx, uint8_t opcode_imm, uint8
 			}
 		}
 
-		if (!jx64_math_binary_op_reg_imm(enc, opcode_imm, modrm_reg, dst.u.m_Reg, src.u.m_Imm, immSize)) {
+		if (!jx64_math_binary_op_reg_imm(enc, opcode_imm, modrm_reg, dst.u.m_Reg, src.u.m_ImmI64, immSize)) {
 			return false;
 		}
 	} else if (dst.m_Type == JX64_OPERAND_REG && src.m_Type == JX64_OPERAND_REG) {
@@ -1479,7 +1479,7 @@ static bool jx64_math_binary_op(jx_x64_context_t* ctx, uint8_t opcode_imm, uint8
 	} else if (dst.m_Type == JX64_OPERAND_MEM && src.m_Type == JX64_OPERAND_IMM) {
 		jx_x64_size immSize = src.m_Size;
 		if (immSize == JX64_SIZE_64) {
-			if (src.u.m_Imm > UINT32_MAX) {
+			if (src.u.m_ImmI64 > INT32_MAX || src.u.m_ImmI64 < INT32_MIN) {
 				JX_CHECK(false, "Immediate cannot be a 64-bit value!");
 				return false;
 			} else {
@@ -1487,7 +1487,7 @@ static bool jx64_math_binary_op(jx_x64_context_t* ctx, uint8_t opcode_imm, uint8
 			}
 		}
 
-		if (!jx64_math_binary_op_mem_imm(enc, opcode_imm, modrm_reg, &dst.u.m_Mem, dst.m_Size, src.u.m_Imm, immSize)) {
+		if (!jx64_math_binary_op_mem_imm(enc, opcode_imm, modrm_reg, &dst.u.m_Mem, dst.m_Size, src.u.m_ImmI64, immSize)) {
 			return false;
 		}
 	} else if (dst.m_Type == JX64_OPERAND_MEM && src.m_Type == JX64_OPERAND_REG) {
@@ -1683,15 +1683,15 @@ static bool jx64_shift_rotate_op(jx_x64_context_t* ctx, uint8_t modrm_reg, jx_x6
 	}
 
 	if (op.m_Type == JX64_OPERAND_REG) {
-		if (shift.m_Type == JX64_OPERAND_IMM && shift.m_Size == JX64_SIZE_8) {
-			const bool isImm_1 = shift.u.m_Imm == 1;
+		if (shift.m_Type == JX64_OPERAND_IMM) {
+			const bool isImm_1 = shift.u.m_ImmI64 == 1;
 			if (isImm_1) {
 				if (!jx64_math_unary_op_reg(enc, 0xD0, modrm_reg, op.u.m_Reg)) {
 					return false;
 				}
 			} else {
 				const uint8_t opcode = 0xC0 | (op.m_Size != JX64_SIZE_8 ? 0x01 : 0x00);
-				if (!jx64_binary_op_reg_imm(enc, &opcode, 1, modrm_reg, op.u.m_Reg, shift.u.m_Imm, JX64_SIZE_8)) {
+				if (!jx64_binary_op_reg_imm(enc, &opcode, 1, modrm_reg, op.u.m_Reg, shift.u.m_ImmI64 & 0xFF, JX64_SIZE_8)) {
 					return false;
 				}
 			}
@@ -1703,15 +1703,15 @@ static bool jx64_shift_rotate_op(jx_x64_context_t* ctx, uint8_t modrm_reg, jx_x6
 			return false;
 		}
 	} else if (op.m_Type == JX64_OPERAND_MEM) {
-		if (shift.m_Type == JX64_OPERAND_IMM && shift.m_Size == JX64_SIZE_8) {
-			const bool isImm_1 = shift.u.m_Imm == 1;
+		if (shift.m_Type == JX64_OPERAND_IMM) {
+			const bool isImm_1 = shift.u.m_ImmI64 == 1;
 			if (isImm_1) {
 				if (!jx64_math_unary_op_mem(enc, 0xD0, modrm_reg, &op.u.m_Mem, op.m_Size)) {
 					return false;
 				}
 			} else {
 				const uint8_t opcode = 0xC0 | (op.m_Size != JX64_SIZE_8 ? 0x01 : 0x00);
-				if (!jx64_binary_op_mem_imm(enc, &opcode, 1, modrm_reg, &op.u.m_Mem, op.m_Size, shift.u.m_Imm, JX64_SIZE_8)) {
+				if (!jx64_binary_op_mem_imm(enc, &opcode, 1, modrm_reg, &op.u.m_Mem, op.m_Size, shift.u.m_ImmI64 & 0xFF, JX64_SIZE_8)) {
 					return false;
 				}
 			}
@@ -1911,7 +1911,7 @@ static bool jx64_math_unary_op_mem(jx_x64_instr_encoding_t* enc, uint8_t baseOpc
 	return true;
 }
 
-static bool jx64_math_binary_op_reg_imm(jx_x64_instr_encoding_t* enc, uint8_t baseOpcode, uint8_t modrm_reg, jx_x64_reg reg, uint64_t imm, jx_x64_size imm_sz)
+static bool jx64_math_binary_op_reg_imm(jx_x64_instr_encoding_t* enc, uint8_t baseOpcode, uint8_t modrm_reg, jx_x64_reg reg, int64_t imm, jx_x64_size imm_sz)
 {
 	JX_CHECK((baseOpcode & 0b00000011) == 0, "Lowest 2 opcode bits are set by the code below!");
 
@@ -1948,7 +1948,7 @@ static bool jx64_math_binary_op_reg_mem(jx_x64_instr_encoding_t* enc, uint8_t ba
 	return jx64_binary_op_reg_mem(enc, &opcode, 1, reg, mem);
 }
 
-static bool jx64_math_binary_op_mem_imm(jx_x64_instr_encoding_t* enc, uint8_t baseOpcode, uint8_t modrm_reg, const jx_x64_mem_t* dst_m, jx_x64_size dst_m_sz, uint64_t src_imm, jx_x64_size src_imm_sz)
+static bool jx64_math_binary_op_mem_imm(jx_x64_instr_encoding_t* enc, uint8_t baseOpcode, uint8_t modrm_reg, const jx_x64_mem_t* dst_m, jx_x64_size dst_m_sz, int64_t src_imm, jx_x64_size src_imm_sz)
 {
 	JX_CHECK((baseOpcode & 0b00000011) == 0, "Lowest 2 opcode bits are set by the code below!");
 
@@ -1960,7 +1960,7 @@ static bool jx64_math_binary_op_mem_imm(jx_x64_instr_encoding_t* enc, uint8_t ba
 	return jx64_binary_op_mem_imm(enc, &opcode, 1, modrm_reg, dst_m, dst_m_sz, src_imm, src_imm_sz);
 }
 
-static bool jx64_binary_op_reg_imm(jx_x64_instr_encoding_t* enc, const uint8_t* opcode, uint32_t opcodeSize, uint8_t modrm_reg, jx_x64_reg reg, uint64_t imm, jx_x64_size imm_sz)
+static bool jx64_binary_op_reg_imm(jx_x64_instr_encoding_t* enc, const uint8_t* opcode, uint32_t opcodeSize, uint8_t modrm_reg, jx_x64_reg reg, int64_t imm, jx_x64_size imm_sz)
 {
 	const jx_x64_size reg_sz = JX64_REG_GET_SIZE(reg);
 
@@ -1990,7 +1990,7 @@ static bool jx64_binary_op_reg_imm(jx_x64_instr_encoding_t* enc, const uint8_t* 
 	return true;
 }
 
-static bool jx64_binary_op_mem_imm(jx_x64_instr_encoding_t* enc, const uint8_t* opcode, uint32_t opcodeSize, uint8_t modrm_reg, const jx_x64_mem_t* dst_m, jx_x64_size dst_m_sz, uint64_t src_imm, jx_x64_size src_imm_sz)
+static bool jx64_binary_op_mem_imm(jx_x64_instr_encoding_t* enc, const uint8_t* opcode, uint32_t opcodeSize, uint8_t modrm_reg, const jx_x64_mem_t* dst_m, jx_x64_size dst_m_sz, int64_t src_imm, jx_x64_size src_imm_sz)
 {
 	const jx_x64_reg base_r = dst_m->m_Base;
 	const jx_x64_reg index_r = dst_m->m_Index;
@@ -2315,7 +2315,7 @@ static bool jx64_binary_op_reg_mem(jx_x64_instr_encoding_t* enc, const uint8_t* 
 	return true;
 }
 
-static bool jx64_mov_reg_imm(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, uint64_t src_imm, jx_x64_size src_imm_sz)
+static bool jx64_mov_reg_imm(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, int64_t src_imm, jx_x64_size src_imm_sz)
 {
 	const jx_x64_size dst_r_sz = JX64_REG_GET_SIZE(dst_r);
 
@@ -2352,7 +2352,7 @@ static bool jx64_mov_reg_imm(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, uin
 	return true;
 }
 
-static bool jx64_mov_mem_imm(jx_x64_instr_encoding_t* enc, const jx_x64_mem_t* dst_m, uint64_t src_imm, jx_x64_size src_imm_sz)
+static bool jx64_mov_mem_imm(jx_x64_instr_encoding_t* enc, const jx_x64_mem_t* dst_m, int64_t src_imm, jx_x64_size src_imm_sz)
 {
 	const jx_x64_reg base_r = dst_m->m_Base;
 	const jx_x64_reg index_r = dst_m->m_Index;
@@ -2720,11 +2720,11 @@ static inline void jx64_instrEnc_disp(jx_x64_instr_encoding_t* enc, bool hasDisp
 	enc->m_Disp = disp;
 }
 
-static inline void jx64_instrEnc_imm(jx_x64_instr_encoding_t* enc, bool hasImm, jx_x64_size immSize, uint64_t imm)
+static inline void jx64_instrEnc_imm(jx_x64_instr_encoding_t* enc, bool hasImm, jx_x64_size immSize, int64_t imm)
 {
 	enc->m_HasImm = hasImm ? 1 : 0;
 	enc->m_ImmSize = immSize;
-	enc->m_Imm = imm;
+	enc->m_ImmI64 = imm;
 }
 
 static inline void jx64_instrEnc_segment(jx_x64_instr_encoding_t* enc, jx_x64_segment_prefix seg)
@@ -2840,7 +2840,7 @@ static bool jx64_encodeInstr(jx_x64_instr_buffer_t* instr, const jx_x64_instr_en
 	
 	if (encoding->m_HasImm) {
 		const uint32_t sz = 1u << encoding->m_ImmSize;
-		jx64_instrBuf_push_n(instr, (const uint8_t*)&encoding->m_Imm, sz);
+		jx64_instrBuf_push_n(instr, (const uint8_t*)&encoding->m_ImmI64, sz);
 	}
 
 	return instr->m_Size != 0;
