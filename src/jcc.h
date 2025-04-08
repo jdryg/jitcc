@@ -7,6 +7,7 @@
 
 #if JX_PLATFORM_WINDOWS
 #define JCC_CONFIG_MAX_RETVAL_SIZE 8 // 1 reg
+#define JCC_CONFIG_LLP64           1 // long = int32_t, long long = int64_t
 #else
 #error "Platform not supported yet"
 #endif

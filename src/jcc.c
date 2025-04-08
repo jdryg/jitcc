@@ -1743,6 +1743,27 @@ static jx_cc_type_t* jcc_parseDeclarationSpecifiers(jx_cc_context_t* ctx, jcc_tr
 		case UNSIGNED + INT:
 			ty = kType_uint;
 			break;
+#if JCC_CONFIG_LLP64
+		case LONG:
+		case LONG + INT:
+		case SIGNED + LONG + INT:
+			ty = kType_int;
+			break;
+		case LONG + LONG:
+		case LONG + LONG + INT:
+		case SIGNED + LONG + LONG:
+		case SIGNED + LONG + LONG + INT:
+			ty = kType_long;
+			break;
+		case UNSIGNED + LONG:
+		case UNSIGNED + LONG + INT:
+			ty = kType_uint;
+			break;
+		case UNSIGNED + LONG + LONG:
+		case UNSIGNED + LONG + LONG + INT:
+			ty = kType_ulong;
+			break;
+#else
 		case LONG:
 		case LONG + INT:
 		case LONG + LONG:
@@ -1759,6 +1780,7 @@ static jx_cc_type_t* jcc_parseDeclarationSpecifiers(jx_cc_context_t* ctx, jcc_tr
 		case UNSIGNED + LONG + LONG + INT:
 			ty = kType_ulong;
 			break;
+#endif
 		case FLOAT:
 			ty = kType_float;
 			break;
@@ -8262,5 +8284,5 @@ static void jcc_logError(jx_cc_context_t* ctx, const jx_cc_source_loc_t* loc, co
 	jx_vsnprintf(str, JX_COUNTOF(str), fmt, argList);
 	va_end(argList);
 
-	JX_LOG_ERROR(ctx->m_Logger, "jcc", "%s(%u): %s", loc->m_Filename, loc->m_LineNum, str);
+	JX_LOG_ERROR(ctx->m_Logger, "jcc", "%s(%u): %s\n", loc->m_Filename, loc->m_LineNum, str);
 }
