@@ -267,9 +267,16 @@ static bool jmirgen_globalVarInitializer(jx_mirgen_context_t* ctx, jx_mir_global
 		jx_mir_globalVarAppendData(mirctx, gv, (const uint8_t*)&init->u.m_I64, sizeof(uint32_t));
 	} break;
 	case JIR_TYPE_U64:
-	case JIR_TYPE_I64:
-	case JIR_TYPE_POINTER: {
+	case JIR_TYPE_I64: {
 		jx_mir_globalVarAppendData(mirctx, gv, (const uint8_t*)&init->u.m_I64, sizeof(uint64_t));
+	} break;
+	case JIR_TYPE_POINTER: {
+		if ((init->super.super.m_Flags & JIR_VALUE_FLAGS_CONST_GLOBAL_VAL_PTR_Msk) != 0) {
+			// TODO: Relocations
+			JX_NOT_IMPLEMENTED();
+		} else {
+			jx_mir_globalVarAppendData(mirctx, gv, (const uint8_t*)&init->u.m_I64, sizeof(uint64_t));
+		}
 	} break;
 	case JIR_TYPE_F32: {
 		jx_mir_globalVarAppendData(mirctx, gv, (const uint8_t*)&init->u.m_F32, sizeof(float));

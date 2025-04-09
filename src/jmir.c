@@ -305,6 +305,19 @@ jx_mir_global_variable_t* jx_mir_getGlobalVarByID(jx_mir_context_t* ctx, uint32_
 	return ctx->m_GlobalVarArr[id];
 }
 
+jx_mir_global_variable_t* jx_mir_getGlobalVarByName(jx_mir_context_t* ctx, const char* name)
+{
+	const uint32_t numGlobalVariables = (uint32_t)jx_array_sizeu(ctx->m_GlobalVarArr);
+	for (uint32_t iGV = 0; iGV < numGlobalVariables; ++iGV) {
+		jx_mir_global_variable_t* gv = ctx->m_GlobalVarArr[iGV];
+		if (!jx_strcmp(gv->m_Name, name)) {
+			return gv;
+		}
+	}
+
+	return NULL;
+}
+
 uint32_t jx_mir_getNumFunctions(jx_mir_context_t* ctx)
 {
 	return (uint32_t)jx_array_sizeu(ctx->m_FuncArr);

@@ -287,6 +287,7 @@ void jx_mir_destroyContext(jx_mir_context_t* ctx);
 void jx_mir_print(jx_mir_context_t* ctx, jx_string_buffer_t* sb);
 uint32_t jx_mir_getNumGlobalVars(jx_mir_context_t* ctx);
 jx_mir_global_variable_t* jx_mir_getGlobalVarByID(jx_mir_context_t* ctx, uint32_t id);
+jx_mir_global_variable_t* jx_mir_getGlobalVarByName(jx_mir_context_t* ctx, const char* name);
 uint32_t jx_mir_getNumFunctions(jx_mir_context_t* ctx);
 jx_mir_function_t* jx_mir_getFunctionByID(jx_mir_context_t* ctx, uint32_t id);
 jx_mir_function_t* jx_mir_getFunctionByName(jx_mir_context_t* ctx, const char* name);
