@@ -16,12 +16,12 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 {
 	// Declare global variables.
 	const uint32_t numGlobalVars = jx_mir_getNumGlobalVars(mirCtx);
-	jx_x64_global_var_t** jitGVs = (jx_x64_global_var_t**)JX_ALLOC(allocator, sizeof(jx_x64_global_var_t*) * numGlobalVars);
+	jx_x64_symbol_t** jitGVs = (jx_x64_symbol_t**)JX_ALLOC(allocator, sizeof(jx_x64_symbol_t*) * numGlobalVars);
 	if (!jitGVs) {
 		return false;
 	}
 
-	jx_memset(jitGVs, 0, sizeof(jx_x64_global_var_t*) * numGlobalVars);
+	jx_memset(jitGVs, 0, sizeof(jx_x64_symbol_t*) * numGlobalVars);
 	for (uint32_t iGV = 0; iGV < numGlobalVars; ++iGV) {
 		jx_mir_global_variable_t* mirGV = jx_mir_getGlobalVarByID(mirCtx, iGV);
 
@@ -37,12 +37,12 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 
 	// Declare functions
 	const uint32_t numFunctions = jx_mir_getNumFunctions(mirCtx);
-	jx_x64_func_t** jitFuncs = (jx_x64_func_t**)JX_ALLOC(allocator, sizeof(jx_x64_func_t*) * numFunctions);
+	jx_x64_symbol_t** jitFuncs = (jx_x64_symbol_t**)JX_ALLOC(allocator, sizeof(jx_x64_symbol_t*) * numFunctions);
 	if (!jitFuncs) {
 		return false;
 	}
 
-	jx_memset(jitFuncs, 0, sizeof(jx_x64_func_t*) * numFunctions);
+	jx_memset(jitFuncs, 0, sizeof(jx_x64_symbol_t*) * numFunctions);
 	for (uint32_t iFunc = 0; iFunc < numFunctions; ++iFunc) {
 		jx_mir_function_t* mirFunc = jx_mir_getFunctionByID(mirCtx, iFunc);
 
@@ -347,11 +347,10 @@ static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64_context_t* jitCtx, co
 	} break;
 	case JMIR_OPERAND_EXTERNAL_SYMBOL: {
 		const char* name = mirOp->u.m_ExternalSymbolName;
-		jx_x64_label_t* lbl = jx64_globalVarGetLabelByName(jitCtx, name);
-		if (!lbl) {
-			lbl = jx64_funcGetLabelByName(jitCtx, name);
-		}
-		JX_CHECK(lbl, "External symbol not found!");
+		jx_x64_symbol_t* symbol = jx64_symbolGetByName(jitCtx, name);
+		JX_CHECK(symbol, "Symbol not found!");
+
+		jx_x64_label_t* lbl = symbol->m_Label;
 		op = jx64_opLbl(JX64_SIZE_64, lbl);
 	} break;
 	case JMIR_OPERAND_MEMORY_REF: {

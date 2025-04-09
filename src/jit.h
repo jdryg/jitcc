@@ -8,8 +8,6 @@
 typedef struct jx_allocator_i jx_allocator_i;
 
 typedef struct jx_x64_label_t jx_x64_label_t;
-typedef struct jx_x64_func_t jx_x64_func_t;
-typedef struct jx_x64_global_var_t jx_x64_global_var_t;
 
 typedef enum jx_x64_size
 {
@@ -200,6 +198,20 @@ typedef struct jx_x64_operand_t
 	} u;
 } jx_x64_operand_t;
 
+typedef enum jx_x64_symbol_kind
+{
+	JX64_SYMBOL_GLOBAL_VARIABLE,
+	JX64_SYMOBL_FUNCTION
+} jx_x64_symbol_kind;
+
+typedef struct jx_x64_symbol_t
+{
+	jx_x64_symbol_kind m_Kind;
+	uint32_t m_Size;
+	jx_x64_label_t* m_Label;
+	char* m_Name;
+} jx_x64_symbol_t;
+
 typedef struct jx_x64_context_t jx_x64_context_t;
 
 jx_x64_context_t* jx_x64_createContext(jx_allocator_i* allocator);
@@ -213,16 +225,14 @@ void jx64_labelFree(jx_x64_context_t* ctx, jx_x64_label_t* lbl);
 void jx64_labelBind(jx_x64_context_t* ctx, jx_x64_label_t* lbl);
 uint32_t jx64_labelGetOffset(jx_x64_context_t* ctx, jx_x64_label_t* lbl);
 
-jx_x64_global_var_t* jx64_globalVarDeclare(jx_x64_context_t* ctx, const char* name);
-bool jx64_globalVarDefine(jx_x64_context_t* ctx, jx_x64_global_var_t* gv, const uint8_t* data, uint32_t sz);
-jx_x64_label_t* jx64_globalVarGetLabelByName(jx_x64_context_t* ctx, const char* name);
+jx_x64_symbol_t* jx64_globalVarDeclare(jx_x64_context_t* ctx, const char* name);
+bool jx64_globalVarDefine(jx_x64_context_t* ctx, jx_x64_symbol_t* gv, const uint8_t* data, uint32_t sz);
 
-jx_x64_func_t* jx64_funcDeclare(jx_x64_context_t* ctx, const char* name);
-bool jx64_funcBegin(jx_x64_context_t* ctx, jx_x64_func_t* func);
+jx_x64_symbol_t* jx64_funcDeclare(jx_x64_context_t* ctx, const char* name);
+bool jx64_funcBegin(jx_x64_context_t* ctx, jx_x64_symbol_t* func);
 void jx64_funcEnd(jx_x64_context_t* ctx);
-jx_x64_label_t* jx64_funcGetLabelByName(jx_x64_context_t* ctx, const char* name);
-jx_x64_label_t* jx64_funcGetLabel(jx_x64_context_t* ctx, jx_x64_func_t* func);
-uint32_t jx64_funcGetOffset(jx_x64_context_t* ctx, jx_x64_func_t* func);
+
+jx_x64_symbol_t* jx64_symbolGetByName(jx_x64_context_t* ctx, const char* name);
 
 bool jx64_emitBytes(jx_x64_context_t* ctx, const uint8_t* bytes, uint32_t n);
 bool jx64_nop(jx_x64_context_t* ctx, uint32_t n);

@@ -101,33 +101,15 @@ typedef struct jx_x64_label_t
 	jx_x64_label_ref_t* m_RefsArr;
 } jx_x64_label_t;
 
-typedef struct jx_x64_func_t
-{
-	jx_x64_label_t* m_Label;
-	char* m_Name;
-	uint32_t m_Size;
-	JX_PAD(4);
-} jx_x64_func_t;
-
-typedef struct jx_x64_global_var_t
-{
-	jx_x64_label_t* m_Label;
-	char* m_Name;
-	uint32_t m_Size;
-	JX_PAD(4);
-} jx_x64_global_var_t;
-
 typedef struct jx_x64_context_t
 {
 	jx_allocator_i* m_Allocator;
-	jx_x64_func_t** m_FuncArr;
-	jx_x64_global_var_t** m_GlobalVarArr;
+	jx_x64_symbol_t** m_SymbolArr;
+	jx_x64_symbol_t* m_CurFunc;
 	uint32_t* m_CurFuncJccArr;
 	uint8_t* m_Buffer;
 	uint32_t m_Size;
 	uint32_t m_Capacity;
-	bool m_InsideFunc;
-	JX_PAD(7);
 } jx_x64_context_t;
 
 static bool jx64_stack_op_mem(jx_x64_instr_encoding_t* enc, uint8_t opcode, uint8_t modrm_reg, const jx_x64_mem_t* mem, jx_x64_size sz);
@@ -182,14 +164,8 @@ jx_x64_context_t* jx_x64_createContext(jx_allocator_i* allocator)
 	jx_memset(ctx, 0, sizeof(jx_x64_context_t));
 	ctx->m_Allocator = allocator;
 
-	ctx->m_FuncArr = (jx_x64_func_t**)jx_array_create(allocator);
-	if (!ctx->m_FuncArr) {
-		jx_x64_destroyContext(ctx);
-		return NULL;
-	}
-
-	ctx->m_GlobalVarArr = (jx_x64_global_var_t**)jx_array_create(allocator);
-	if (!ctx->m_GlobalVarArr) {
+	ctx->m_SymbolArr = (jx_x64_symbol_t**)jx_array_create(allocator);
+	if (!ctx->m_SymbolArr) {
 		jx_x64_destroyContext(ctx);
 		return NULL;
 	}
@@ -207,23 +183,14 @@ void jx_x64_destroyContext(jx_x64_context_t* ctx)
 {
 	jx_allocator_i* allocator = ctx->m_Allocator;
 
-	const uint32_t numGlobalVars = (uint32_t)jx_array_sizeu(ctx->m_GlobalVarArr);
-	for (uint32_t iGV = 0; iGV < numGlobalVars; ++iGV) {
-		jx_x64_global_var_t* gv = ctx->m_GlobalVarArr[iGV];
-		JX_FREE(ctx->m_Allocator, gv->m_Name);
-		jx64_labelFree(ctx, gv->m_Label);
-		JX_FREE(ctx->m_Allocator, gv);
+	const uint32_t numSymbols = (uint32_t)jx_array_sizeu(ctx->m_SymbolArr);
+	for (uint32_t iSym = 0; iSym < numSymbols; ++iSym) {
+		jx_x64_symbol_t* sym = ctx->m_SymbolArr[iSym];
+		JX_FREE(ctx->m_Allocator, sym->m_Name);
+		jx64_labelFree(ctx, sym->m_Label);
+		JX_FREE(ctx->m_Allocator, sym);
 	}
-	jx_array_free(ctx->m_GlobalVarArr);
-
-	const uint32_t numFuncs = (uint32_t)jx_array_sizeu(ctx->m_FuncArr);
-	for (uint32_t iFunc = 0; iFunc < numFuncs; ++iFunc) {
-		jx_x64_func_t* func = ctx->m_FuncArr[iFunc];
-		JX_FREE(ctx->m_Allocator, func->m_Name);
-		jx64_labelFree(ctx, func->m_Label);
-		JX_FREE(ctx->m_Allocator, func);
-	}
-	jx_array_free(ctx->m_FuncArr);
+	jx_array_free(ctx->m_SymbolArr);
 
 	jx_array_free(ctx->m_CurFuncJccArr);
 	JX_FREE(allocator, ctx->m_Buffer);
@@ -282,24 +249,32 @@ uint32_t jx64_labelGetOffset(jx_x64_context_t* ctx, jx_x64_label_t* lbl)
 	return lbl->m_Offset;
 }
 
-jx_x64_global_var_t* jx64_globalVarDeclare(jx_x64_context_t* ctx, const char* name)
+jx_x64_symbol_t* jx64_globalVarDeclare(jx_x64_context_t* ctx, const char* name)
 {
-	jx_x64_global_var_t* gv = (jx_x64_global_var_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_x64_global_var_t));
+	jx_x64_symbol_t* gv = (jx_x64_symbol_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_x64_symbol_t));
 	if (!gv) {
 		return NULL;
 	}
 
-	jx_memset(gv, 0, sizeof(jx_x64_global_var_t));
+	jx_memset(gv, 0, sizeof(jx_x64_symbol_t));
+	gv->m_Kind = JX64_SYMBOL_GLOBAL_VARIABLE;
 	gv->m_Name = jx_strdup(name, ctx->m_Allocator);
 	gv->m_Label = jx64_labelAlloc(ctx);
 
-	jx_array_push_back(ctx->m_GlobalVarArr, gv);
+	jx_array_push_back(ctx->m_SymbolArr, gv);
 
 	return gv;
 }
 
-bool jx64_globalVarDefine(jx_x64_context_t* ctx, jx_x64_global_var_t* gv, const uint8_t* data, uint32_t sz)
+// TODO: Pass required alignment as function argument.
+// Requires keeping alignment into jx_mir_global_variable_t
+bool jx64_globalVarDefine(jx_x64_context_t* ctx, jx_x64_symbol_t* gv, const uint8_t* data, uint32_t sz)
 {
+	if (gv->m_Kind != JX64_SYMBOL_GLOBAL_VARIABLE) {
+		JX_CHECK(false, "Expected global variable symbol.");
+		return false;
+	}
+
 	const uint32_t curPos = ctx->m_Size;
 	const uint32_t alignedPos = ((curPos + 15) / 16) * 16;
 	const uint32_t alignmentSize = alignedPos - curPos;
@@ -313,60 +288,52 @@ bool jx64_globalVarDefine(jx_x64_context_t* ctx, jx_x64_global_var_t* gv, const 
 	return jx64_emitBytes(ctx, data, sz);
 }
 
-jx_x64_label_t* jx64_globalVarGetLabelByName(jx_x64_context_t* ctx, const char* name)
+jx_x64_symbol_t* jx64_funcDeclare(jx_x64_context_t* ctx, const char* name)
 {
-	const uint32_t numGlobalVars = (uint32_t)jx_array_sizeu(ctx->m_GlobalVarArr);
-	for (uint32_t iGV = 0; iGV < numGlobalVars; ++iGV) {
-		jx_x64_global_var_t* gv = ctx->m_GlobalVarArr[iGV];
-		if (!jx_strcmp(gv->m_Name, name)) {
-			return gv->m_Label;
-		}
-	}
-
-	return NULL;
-}
-
-jx_x64_func_t* jx64_funcDeclare(jx_x64_context_t* ctx, const char* name)
-{
-	jx_x64_func_t* func = (jx_x64_func_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_x64_func_t));
+	jx_x64_symbol_t* func = (jx_x64_symbol_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_x64_symbol_t));
 	if (!func) {
 		return NULL;
 	}
 
-	jx_memset(func, 0, sizeof(jx_x64_func_t));
+	jx_memset(func, 0, sizeof(jx_x64_symbol_t));
+	func->m_Kind = JX64_SYMOBL_FUNCTION;
 	func->m_Name = jx_strdup(name, ctx->m_Allocator);
 	func->m_Label = jx64_labelAlloc(ctx);
 	
-	jx_array_push_back(ctx->m_FuncArr, func);
+	jx_array_push_back(ctx->m_SymbolArr, func);
 
 	return func;
 }
 
-bool jx64_funcBegin(jx_x64_context_t* ctx, jx_x64_func_t* func)
+bool jx64_funcBegin(jx_x64_context_t* ctx, jx_x64_symbol_t* func)
 {
-	if (ctx->m_InsideFunc) {
+	if (func->m_Kind != JX64_SYMOBL_FUNCTION) {
+		JX_CHECK(false, "Expected function symbol");
+		return false;
+	}
+
+	if (ctx->m_CurFunc) {
 		return false;
 	}
 
 	jx64_labelBind(ctx, func->m_Label);
 	jx_array_resize(ctx->m_CurFuncJccArr, 0);
 
-	ctx->m_InsideFunc = true;
+	ctx->m_CurFunc = func;
 
 	return true;
 }
 
 void jx64_funcEnd(jx_x64_context_t* ctx)
 {
-	if (!ctx->m_InsideFunc) {
+	if (!ctx->m_CurFunc) {
 		return;
 	}
 
-	const uint32_t numFuncs = (uint32_t)jx_array_sizeu(ctx->m_FuncArr);
-	jx_x64_func_t* func = ctx->m_FuncArr[numFuncs - 1];
+	jx_x64_symbol_t* func = ctx->m_CurFunc;
 	func->m_Size = ctx->m_Size - func->m_Label->m_Offset;
 
-	ctx->m_InsideFunc = false;
+	ctx->m_CurFunc = NULL;
 
 	// TODO: Patch all jumps inside the function body in order to turn them into 1-byte rel jumps
 	// and pad the rest of the function with nops in order to keep the other function addresses 
@@ -398,27 +365,17 @@ void jx64_funcEnd(jx_x64_context_t* ctx)
 #endif
 }
 
-jx_x64_label_t* jx64_funcGetLabelByName(jx_x64_context_t* ctx, const char* name)
+jx_x64_symbol_t* jx64_symbolGetByName(jx_x64_context_t* ctx, const char* name)
 {
-	const uint32_t numFuncs = (uint32_t)jx_array_sizeu(ctx->m_FuncArr);
-	for (uint32_t iFunc = 0; iFunc < numFuncs; ++iFunc) {
-		jx_x64_func_t* func = ctx->m_FuncArr[iFunc];
-		if (!jx_strcmp(func->m_Name, name)) {
-			return func->m_Label;
+	const uint32_t numSymbols = (uint32_t)jx_array_sizeu(ctx->m_SymbolArr);
+	for (uint32_t iSym = 0; iSym < numSymbols; ++iSym) {
+		jx_x64_symbol_t* sym = ctx->m_SymbolArr[iSym];
+		if (!jx_strcmp(sym->m_Name, name)) {
+			return sym;
 		}
 	}
 
 	return NULL;
-}
-
-jx_x64_label_t* jx64_funcGetLabel(jx_x64_context_t* ctx, jx_x64_func_t* func)
-{
-	return func->m_Label;
-}
-
-uint32_t jx64_funcGetOffset(jx_x64_context_t* ctx, jx_x64_func_t* func)
-{
-	return func->m_Label->m_Offset;
 }
 
 bool jx64_emitBytes(jx_x64_context_t* ctx, const uint8_t* bytes, uint32_t n)

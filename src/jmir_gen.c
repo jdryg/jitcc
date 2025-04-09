@@ -272,6 +272,14 @@ static bool jmirgen_globalVarInitializer(jx_mirgen_context_t* ctx, jx_mir_global
 	} break;
 	case JIR_TYPE_POINTER: {
 		if ((init->super.super.m_Flags & JIR_VALUE_FLAGS_CONST_GLOBAL_VAL_PTR_Msk) != 0) {
+#if 0
+			jx_ir_global_value_t* irGV = (jx_ir_global_value_t*)init->u.m_I64;
+			const char* symbolName = irGV->super.super.m_Name;
+			jx_mir_global_variable_t* mirGV = jx_mir_getGlobalVarByName(mirctx, symbolName);
+			if (mirGV) {
+				jx_mir_function_t* mirFunc = jx_mir_getFunctionByName(mirctx, symbolName);
+			}
+#endif
 			// TODO: Relocations
 			JX_NOT_IMPLEMENTED();
 		} else {

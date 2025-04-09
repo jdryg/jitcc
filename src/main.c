@@ -834,9 +834,9 @@ int main(int argc, char** argv)
 					VirtualProtect(execBuf, bufferSize, PAGE_EXECUTE_READWRITE, &oldProtect);
 
 					typedef int32_t(*pfnMain)(void);
-					jx_x64_label_t* lblMain = jx64_funcGetLabelByName(jitCtx, "main");
-					if (lblMain) {
-						pfnMain mainFunc = (pfnMain)((uint8_t*)execBuf + jx64_labelGetOffset(jitCtx, lblMain));
+					jx_x64_symbol_t* symMain = jx64_symbolGetByName(jitCtx, "main");
+					if (symMain) {
+						pfnMain mainFunc = (pfnMain)((uint8_t*)execBuf + jx64_labelGetOffset(jitCtx, symMain->m_Label));
 						int32_t ret = mainFunc();
 						if (ret == 0) {
 							JX_SYS_LOG_DEBUG(NULL, "PASS\n", sourceFile);
@@ -862,7 +862,7 @@ int main(int argc, char** argv)
 #else
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-	const char* sourceFile = "test/c-testsuite/00117.c";
+	const char* sourceFile = "test/c-testsuite/00045.c";
 //	const char* sourceFile = "test/pointer_arithmetic.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
@@ -960,9 +960,9 @@ int main(int argc, char** argv)
 					VirtualProtect(execBuf, bufferSize, PAGE_EXECUTE_READWRITE, &oldProtect);
 
 					typedef int32_t (*pfnMain)(void);
-					jx_x64_label_t* lblMain = jx64_funcGetLabelByName(jitCtx, "main");
-					if (lblMain) {
-						pfnMain mainFunc = (pfnMain)((uint8_t*)execBuf + jx64_labelGetOffset(jitCtx, lblMain));
+					jx_x64_symbol_t* symMain = jx64_symbolGetByName(jitCtx, "main");
+					if (symMain) {
+						pfnMain mainFunc = (pfnMain)((uint8_t*)execBuf + jx64_labelGetOffset(jitCtx, symMain->m_Label));
 						int32_t ret = mainFunc();
 						JX_SYS_LOG_DEBUG(NULL, "main() returned %d\n", ret);
 					} else {
