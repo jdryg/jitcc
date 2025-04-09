@@ -228,13 +228,16 @@ bool jx_mirgen_moduleGen(jx_mirgen_context_t* ctx, jx_ir_module_t* mod)
 
 static bool jmirgen_globalVarBuild(jx_mirgen_context_t* ctx, const char* namePrefix, jx_ir_global_variable_t* irGV)
 {
-	jx_mir_global_variable_t* gv = jx_mir_globalVarBegin(ctx->m_MIRCtx, jx_ir_globalVarToValue(irGV)->m_Name);
+	jx_ir_constant_t* gvInit = jx_ir_valueToConst(irGV->super.super.m_OperandArr[0]->m_Value);
+	JX_CHECK(gvInit, "Expected constant value operand.");
+
+	const size_t alignment = jx_ir_typeGetAlignment(gvInit->super.super.m_Type);
+
+	jx_mir_global_variable_t* gv = jx_mir_globalVarBegin(ctx->m_MIRCtx, jx_ir_globalVarToValue(irGV)->m_Name, (uint32_t)alignment);
 	if (!gv) {
 		return false;
 	}
 
-	jx_ir_constant_t* gvInit = jx_ir_valueToConst(irGV->super.super.m_OperandArr[0]->m_Value);
-	JX_CHECK(gvInit, "Expected constant value operand.");
 	jmirgen_globalVarInitializer(ctx, gv, gvInit);
 
 	jx_mir_globalVarEnd(ctx->m_MIRCtx, gv);

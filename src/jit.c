@@ -5,6 +5,7 @@
 #include <jlib/allocator.h>
 #include <jlib/array.h>
 #include <jlib/dbg.h>
+#include <jlib/math.h>
 #include <jlib/memory.h>
 #include <jlib/string.h>
 
@@ -266,17 +267,17 @@ jx_x64_symbol_t* jx64_globalVarDeclare(jx_x64_context_t* ctx, const char* name)
 	return gv;
 }
 
-// TODO: Pass required alignment as function argument.
-// Requires keeping alignment into jx_mir_global_variable_t
-bool jx64_globalVarDefine(jx_x64_context_t* ctx, jx_x64_symbol_t* gv, const uint8_t* data, uint32_t sz)
+bool jx64_globalVarDefine(jx_x64_context_t* ctx, jx_x64_symbol_t* gv, const uint8_t* data, uint32_t sz, uint32_t alignment)
 {
 	if (gv->m_Kind != JX64_SYMBOL_GLOBAL_VARIABLE) {
 		JX_CHECK(false, "Expected global variable symbol.");
 		return false;
 	}
 
+	JX_CHECK(jx_isPow2_u32(alignment), "Alignment expected to be a power of 2.");
+
 	const uint32_t curPos = ctx->m_Size;
-	const uint32_t alignedPos = ((curPos + 15) / 16) * 16;
+	const uint32_t alignedPos = ((curPos + (alignment - 1)) / alignment) * alignment;
 	const uint32_t alignmentSize = alignedPos - curPos;
 
 	if (alignmentSize && !jx64_nop(ctx, alignmentSize)) {

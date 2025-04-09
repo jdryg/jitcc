@@ -341,7 +341,7 @@ jx_mir_function_t* jx_mir_getFunctionByName(jx_mir_context_t* ctx, const char* n
 	return NULL;
 }
 
-jx_mir_global_variable_t* jx_mir_globalVarBegin(jx_mir_context_t* ctx, const char* name)
+jx_mir_global_variable_t* jx_mir_globalVarBegin(jx_mir_context_t* ctx, const char* name, uint32_t alignment)
 {
 	jx_mir_global_variable_t* gv = (jx_mir_global_variable_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_global_variable_t));
 	if (!gv) {
@@ -349,6 +349,7 @@ jx_mir_global_variable_t* jx_mir_globalVarBegin(jx_mir_context_t* ctx, const cha
 	}
 
 	jx_memset(gv, 0, sizeof(jx_mir_global_variable_t));
+	gv->m_Alignment = alignment;
 	gv->m_Name = jx_strdup(name, ctx->m_Allocator);
 	if (!gv->m_Name) {
 		jmir_globalVarFree(ctx, gv);

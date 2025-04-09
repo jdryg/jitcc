@@ -226,7 +226,7 @@ void jx64_labelBind(jx_x64_context_t* ctx, jx_x64_label_t* lbl);
 uint32_t jx64_labelGetOffset(jx_x64_context_t* ctx, jx_x64_label_t* lbl);
 
 jx_x64_symbol_t* jx64_globalVarDeclare(jx_x64_context_t* ctx, const char* name);
-bool jx64_globalVarDefine(jx_x64_context_t* ctx, jx_x64_symbol_t* gv, const uint8_t* data, uint32_t sz);
+bool jx64_globalVarDefine(jx_x64_context_t* ctx, jx_x64_symbol_t* gv, const uint8_t* data, uint32_t sz, uint32_t alignment);
 
 jx_x64_symbol_t* jx64_funcDeclare(jx_x64_context_t* ctx, const char* name);
 bool jx64_funcBegin(jx_x64_context_t* ctx, jx_x64_symbol_t* func);
