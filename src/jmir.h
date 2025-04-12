@@ -264,10 +264,18 @@ typedef struct jx_mir_function_t
 	JX_PAD(4);
 } jx_mir_function_t;
 
+typedef struct jx_mir_relocation_t
+{
+	char* m_SymbolName;
+	uint32_t m_Offset;
+	JX_PAD(4);
+} jx_mir_relocation_t;
+
 typedef struct jx_mir_global_variable_t
 {
 	char* m_Name;
 	uint8_t* m_DataArr;
+	jx_mir_relocation_t* m_Relocations;
 	uint32_t m_Alignment;
 	JX_PAD(4);
 } jx_mir_global_variable_t;
@@ -296,7 +304,8 @@ jx_mir_function_t* jx_mir_getFunctionByName(jx_mir_context_t* ctx, const char* n
 
 jx_mir_global_variable_t* jx_mir_globalVarBegin(jx_mir_context_t* ctx, const char* name, uint32_t alignment);
 void jx_mir_globalVarEnd(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv);
-bool jx_mir_globalVarAppendData(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv, const uint8_t* data, uint32_t sz);
+uint32_t jx_mir_globalVarAppendData(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv, const uint8_t* data, uint32_t sz);
+void jx_mir_globalVarAddRelocation(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv, uint32_t dataOffset, const char* symbolName);
 
 jx_mir_function_t* jx_mir_funcBegin(jx_mir_context_t* ctx, jx_mir_type_kind retType, uint32_t numArgs, jx_mir_type_kind* args, uint32_t flags, const char* name);
 void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func);

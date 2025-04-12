@@ -764,10 +764,10 @@ int main(int argc, char** argv)
 		JX_SYS_LOG_INFO(NULL, "%s: ", sourceFile);
 
 		const bool skipTest = false
-			|| iTest == 25  // Uses external functions (strlen)
+//			|| iTest == 25  // Uses external functions (strlen)
 			|| iTest == 40  // Uses external functions (calloc)
-			|| iTest == 45  // Global pointer to global variable (relocations)
-			|| iTest == 49  // Global pointer to global variable (relocations)
+//			|| iTest == 45  // Global pointer to global variable (relocations)
+//			|| iTest == 49  // Global pointer to global variable (relocations)
 			|| iTest == 56  // Uses external functions (printf)
 			|| iTest == 61  // Missing; Requires preprocessor
 			|| iTest == 62  // Missing; Requires preprocessor
@@ -786,7 +786,7 @@ int main(int argc, char** argv)
 			|| iTest == 83  // Missing; Requires preprocessor
 			|| iTest == 84  // Missing; Requires preprocessor
 			|| iTest == 85  // Missing; Requires preprocessor
-			|| iTest == 89  // Global pointer to global variable (relocations)
+//			|| iTest == 89  // Global pointer to global variable (relocations)
 			|| iTest == 97  // Missing; Requires preprocessor
 			|| iTest == 108 // Missing; Requires preprocessor
 			|| iTest == 113 // Floating point
@@ -862,7 +862,7 @@ int main(int argc, char** argv)
 #else
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-	const char* sourceFile = "test/c-testsuite/00045.c";
+	const char* sourceFile = "test/c-testsuite/00025.c";
 //	const char* sourceFile = "test/pointer_arithmetic.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);

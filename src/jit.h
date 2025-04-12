@@ -8,6 +8,7 @@
 typedef struct jx_allocator_i jx_allocator_i;
 
 typedef struct jx_x64_label_t jx_x64_label_t;
+typedef struct jx_x64_symbol_t jx_x64_symbol_t;
 
 typedef enum jx_x64_size
 {
@@ -31,6 +32,7 @@ typedef enum jx_x64_operand_type
 	JX64_OPERAND_IMM,
 	JX64_OPERAND_MEM,
 	JX64_OPERAND_LBL,
+	JX64_OPERAND_SYM,
 } jx_x64_operand_type;
 
 typedef enum jx_x64_reg_id
@@ -195,13 +197,33 @@ typedef struct jx_x64_operand_t
 		int64_t m_ImmI64;
 		jx_x64_mem_t m_Mem;
 		jx_x64_label_t* m_Lbl;
+		jx_x64_symbol_t* m_Sym;
 	} u;
 } jx_x64_operand_t;
+
+typedef enum jx_x64_relocation_kind
+{
+	JX64_RELOC_ABSOLUTE = 0,
+	JX64_RELOC_ADDR64 = 1,
+	JX64_RELOC_REL32 = 4,
+	JX64_RELOC_REL32_1 = 5,
+	JX64_RELOC_REL32_2 = 6,
+	JX64_RELOC_REL32_3 = 7,
+	JX64_RELOC_REL32_4 = 8,
+	JX64_RELOC_REL32_5 = 9,
+} jx_x64_relocation_kind;
+
+typedef struct jx_x64_relocation_t
+{
+	jx_x64_relocation_kind m_Kind;
+	uint32_t m_Offset;
+	char* m_SymbolName;
+} jx_x64_relocation_t;
 
 typedef enum jx_x64_symbol_kind
 {
 	JX64_SYMBOL_GLOBAL_VARIABLE,
-	JX64_SYMOBL_FUNCTION
+	JX64_SYMBOL_FUNCTION
 } jx_x64_symbol_kind;
 
 typedef struct jx_x64_symbol_t
@@ -210,6 +232,7 @@ typedef struct jx_x64_symbol_t
 	uint32_t m_Size;
 	jx_x64_label_t* m_Label;
 	char* m_Name;
+	jx_x64_relocation_t* m_RelocArr;
 } jx_x64_symbol_t;
 
 typedef struct jx_x64_context_t jx_x64_context_t;
@@ -219,6 +242,7 @@ void jx_x64_destroyContext(jx_x64_context_t* ctx);
 
 void jx64_resetBuffer(jx_x64_context_t* ctx);
 const uint8_t* jx64_getBuffer(jx_x64_context_t* ctx, uint32_t* sz);
+bool jx64_finalize(jx_x64_context_t* ctx);
 
 jx_x64_label_t* jx64_labelAlloc(jx_x64_context_t* ctx);
 void jx64_labelFree(jx_x64_context_t* ctx, jx_x64_label_t* lbl);
@@ -233,6 +257,8 @@ bool jx64_funcBegin(jx_x64_context_t* ctx, jx_x64_symbol_t* func);
 void jx64_funcEnd(jx_x64_context_t* ctx);
 
 jx_x64_symbol_t* jx64_symbolGetByName(jx_x64_context_t* ctx, const char* name);
+void jx64_symbolAddRelocation(jx_x64_context_t* ctx, jx_x64_symbol_t* sym, jx_x64_relocation_kind kind, uint32_t offset, const char* symbolName);
+bool jx64_symbolSetExternalAddress(jx_x64_context_t* ctx, jx_x64_symbol_t* sym, void* ptr);
 
 bool jx64_emitBytes(jx_x64_context_t* ctx, const uint8_t* bytes, uint32_t n);
 bool jx64_nop(jx_x64_context_t* ctx, uint32_t n);
@@ -324,6 +350,11 @@ static inline jx_x64_operand_t jx64_opMem(jx_x64_size size, jx_x64_reg base, jx_
 static inline jx_x64_operand_t jx64_opLbl(jx_x64_size size, jx_x64_label_t* lbl)
 {
 	return (jx_x64_operand_t){ .m_Type = JX64_OPERAND_LBL, .m_Size = size, .u.m_Lbl = lbl };
+}
+
+static inline jx_x64_operand_t jx64_opSymbol(jx_x64_size size, jx_x64_symbol_t* sym)
+{
+	return (jx_x64_operand_t){ .m_Type = JX64_OPERAND_SYM, .m_Size = size, .u.m_Sym = sym };
 }
 
 #endif // JIT_H

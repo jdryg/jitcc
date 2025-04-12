@@ -24,7 +24,7 @@
 #define JX64_OPERAND_SIZE_PREFIX 0x66
 #define JX64_ADDRESS_SIZE_PREFIX 0x67
 
-#define JX64_LABEL_OFFSET_UNBOUND 0x7FFFFFFF
+#define JX64_LABEL_OFFSET_UNBOUND 0x7FFFFFFFFFFFFFFF
 
 typedef enum jx_x64_segment_prefix
 {
@@ -98,7 +98,7 @@ typedef struct jx_x64_label_ref_t
 
 typedef struct jx_x64_label_t
 {
-	uint32_t m_Offset;
+	uint64_t m_Offset;
 	jx_x64_label_ref_t* m_RefsArr;
 } jx_x64_label_t;
 
@@ -112,6 +112,9 @@ typedef struct jx_x64_context_t
 	uint32_t m_Size;
 	uint32_t m_Capacity;
 } jx_x64_context_t;
+
+static jx_x64_symbol_t* jx64_symbolAlloc(jx_x64_context_t* ctx, jx_x64_symbol_kind kind, const char* name);
+static void jx64_symbolFree(jx_x64_context_t* ctx, jx_x64_symbol_t* sym);
 
 static bool jx64_stack_op_mem(jx_x64_instr_encoding_t* enc, uint8_t opcode, uint8_t modrm_reg, const jx_x64_mem_t* mem, jx_x64_size sz);
 static bool jx64_stack_op_reg(jx_x64_instr_encoding_t* enc, uint8_t baseOpcode, jx_x64_reg reg);
@@ -187,9 +190,7 @@ void jx_x64_destroyContext(jx_x64_context_t* ctx)
 	const uint32_t numSymbols = (uint32_t)jx_array_sizeu(ctx->m_SymbolArr);
 	for (uint32_t iSym = 0; iSym < numSymbols; ++iSym) {
 		jx_x64_symbol_t* sym = ctx->m_SymbolArr[iSym];
-		JX_FREE(ctx->m_Allocator, sym->m_Name);
-		jx64_labelFree(ctx, sym->m_Label);
-		JX_FREE(ctx->m_Allocator, sym);
+		jx64_symbolFree(ctx, sym);
 	}
 	jx_array_free(ctx->m_SymbolArr);
 
@@ -207,6 +208,83 @@ const uint8_t* jx64_getBuffer(jx_x64_context_t* ctx, uint32_t* sz)
 {
 	*sz = ctx->m_Size;
 	return ctx->m_Buffer;
+}
+
+bool jx64_finalize(jx_x64_context_t* ctx)
+{
+	// Emit stubs for all external functions
+	const uint32_t numSymbols = (uint32_t)jx_array_sizeu(ctx->m_SymbolArr);
+	for (uint32_t iSym = 0; iSym < numSymbols; ++iSym) {
+		jx_x64_symbol_t* sym = ctx->m_SymbolArr[iSym];
+		if (sym->m_Kind == JX64_SYMBOL_FUNCTION && sym->m_Size == 0) {
+			jx_x64_label_t* iatEntry = jx64_labelAlloc(ctx);
+			jx64_labelBind(ctx, iatEntry);
+			jx64_emitBytes(ctx, (uint8_t*)&sym->m_Label->m_Offset, sizeof(uint64_t));
+			
+			sym->m_Label->m_Offset = JX64_LABEL_OFFSET_UNBOUND;
+
+			jx64_funcBegin(ctx, sym);
+			const int32_t diff = (int32_t)iatEntry->m_Offset - (int32_t)ctx->m_Size;
+			jx64_jmp(ctx, jx64_opMem(JX64_SIZE_64, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, diff));
+			jx64_funcEnd(ctx);
+		}
+	}
+
+	for (uint32_t iSym = 0; iSym < numSymbols; ++iSym) {
+		jx_x64_symbol_t* sym = ctx->m_SymbolArr[iSym];
+		const uint32_t numRelocs = (uint32_t)jx_array_sizeu(sym->m_RelocArr);
+		if (sym->m_Kind == JX64_SYMBOL_GLOBAL_VARIABLE || sym->m_Kind == JX64_SYMBOL_FUNCTION) {
+			for (uint32_t iReloc = 0; iReloc < numRelocs; ++iReloc) {
+				jx_x64_relocation_t* reloc = &sym->m_RelocArr[iReloc];
+				jx_x64_symbol_t* refSym = jx64_symbolGetByName(ctx, reloc->m_SymbolName);
+				if (!refSym || refSym->m_Label->m_Offset == JX64_LABEL_OFFSET_UNBOUND) {
+					// Unresolved external symbol
+					return false;
+				}
+
+				const uint32_t refSymOffset = (uint32_t)refSym->m_Label->m_Offset;
+
+				// TODO: Once I split code and data into separate buffers, get the correct buffer using the
+				// symbol kind.
+				const uint32_t patchOffset = (uint32_t)sym->m_Label->m_Offset + reloc->m_Offset;
+				uint8_t* patchAddr = &ctx->m_Buffer[patchOffset];
+
+				switch (reloc->m_Kind) {
+				case JX64_RELOC_ABSOLUTE: {
+					JX_NOT_IMPLEMENTED();
+				} break;
+				case JX64_RELOC_ADDR64: {
+					*(uintptr_t*)patchAddr = (uintptr_t)&ctx->m_Buffer[refSymOffset];
+				} break;
+				case JX64_RELOC_REL32: {
+					*(int32_t*)patchAddr = (int32_t)refSymOffset - (int32_t)(patchOffset + 4);
+				} break;
+				case JX64_RELOC_REL32_1: {
+					*(int32_t*)patchAddr = (int32_t)refSymOffset - (int32_t)(patchOffset + 5);
+				} break;
+				case JX64_RELOC_REL32_2: {
+					*(int32_t*)patchAddr = (int32_t)refSymOffset - (int32_t)(patchOffset + 6);
+				} break;
+				case JX64_RELOC_REL32_3: {
+					*(int32_t*)patchAddr = (int32_t)refSymOffset - (int32_t)(patchOffset + 7);
+				} break;
+				case JX64_RELOC_REL32_4: {
+					*(int32_t*)patchAddr = (int32_t)refSymOffset - (int32_t)(patchOffset + 8);
+				} break;
+				case JX64_RELOC_REL32_5: {
+					*(int32_t*)patchAddr = (int32_t)refSymOffset - (int32_t)(patchOffset + 9);
+				} break;
+				default:
+					JX_CHECK(false, "Unknown relocation kind.");
+					break;
+				}
+			}
+		} else {
+			JX_CHECK(false, "Unknown symbol kind.");
+		}
+	}
+
+	return false;
 }
 
 jx_x64_label_t* jx64_labelAlloc(jx_x64_context_t* ctx)
@@ -247,20 +325,15 @@ void jx64_labelBind(jx_x64_context_t* ctx, jx_x64_label_t* lbl)
 
 uint32_t jx64_labelGetOffset(jx_x64_context_t* ctx, jx_x64_label_t* lbl)
 {
-	return lbl->m_Offset;
+	return (uint32_t)lbl->m_Offset;
 }
 
 jx_x64_symbol_t* jx64_globalVarDeclare(jx_x64_context_t* ctx, const char* name)
 {
-	jx_x64_symbol_t* gv = (jx_x64_symbol_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_x64_symbol_t));
+	jx_x64_symbol_t* gv = jx64_symbolAlloc(ctx, JX64_SYMBOL_GLOBAL_VARIABLE, name);
 	if (!gv) {
 		return NULL;
 	}
-
-	jx_memset(gv, 0, sizeof(jx_x64_symbol_t));
-	gv->m_Kind = JX64_SYMBOL_GLOBAL_VARIABLE;
-	gv->m_Name = jx_strdup(name, ctx->m_Allocator);
-	gv->m_Label = jx64_labelAlloc(ctx);
 
 	jx_array_push_back(ctx->m_SymbolArr, gv);
 
@@ -291,16 +364,11 @@ bool jx64_globalVarDefine(jx_x64_context_t* ctx, jx_x64_symbol_t* gv, const uint
 
 jx_x64_symbol_t* jx64_funcDeclare(jx_x64_context_t* ctx, const char* name)
 {
-	jx_x64_symbol_t* func = (jx_x64_symbol_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_x64_symbol_t));
+	jx_x64_symbol_t* func = jx64_symbolAlloc(ctx, JX64_SYMBOL_FUNCTION, name);
 	if (!func) {
 		return NULL;
 	}
 
-	jx_memset(func, 0, sizeof(jx_x64_symbol_t));
-	func->m_Kind = JX64_SYMOBL_FUNCTION;
-	func->m_Name = jx_strdup(name, ctx->m_Allocator);
-	func->m_Label = jx64_labelAlloc(ctx);
-	
 	jx_array_push_back(ctx->m_SymbolArr, func);
 
 	return func;
@@ -308,7 +376,7 @@ jx_x64_symbol_t* jx64_funcDeclare(jx_x64_context_t* ctx, const char* name)
 
 bool jx64_funcBegin(jx_x64_context_t* ctx, jx_x64_symbol_t* func)
 {
-	if (func->m_Kind != JX64_SYMOBL_FUNCTION) {
+	if (func->m_Kind != JX64_SYMBOL_FUNCTION) {
 		JX_CHECK(false, "Expected function symbol");
 		return false;
 	}
@@ -332,7 +400,7 @@ void jx64_funcEnd(jx_x64_context_t* ctx)
 	}
 
 	jx_x64_symbol_t* func = ctx->m_CurFunc;
-	func->m_Size = ctx->m_Size - func->m_Label->m_Offset;
+	func->m_Size = ctx->m_Size - (uint32_t)func->m_Label->m_Offset;
 
 	ctx->m_CurFunc = NULL;
 
@@ -379,6 +447,21 @@ jx_x64_symbol_t* jx64_symbolGetByName(jx_x64_context_t* ctx, const char* name)
 	return NULL;
 }
 
+void jx64_symbolAddRelocation(jx_x64_context_t* ctx, jx_x64_symbol_t* sym, jx_x64_relocation_kind kind, uint32_t offset, const char* symbolName)
+{
+	jx_array_push_back(sym->m_RelocArr, (jx_x64_relocation_t){
+		.m_Kind = kind,
+		.m_Offset = offset,
+		.m_SymbolName = jx_strdup(symbolName, ctx->m_Allocator)
+	});
+}
+
+bool jx64_symbolSetExternalAddress(jx_x64_context_t* ctx, jx_x64_symbol_t* sym, void* ptr)
+{
+	sym->m_Label->m_Offset = (uint64_t)ptr;
+	return true;
+}
+
 bool jx64_emitBytes(jx_x64_context_t* ctx, const uint8_t* bytes, uint32_t n)
 {
 	if (ctx->m_Size + n > ctx->m_Capacity) {
@@ -415,6 +498,7 @@ bool jx64_retn(jx_x64_context_t* ctx)
 
 bool jx64_mov(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
+	JX_CHECK(dst.m_Type != JX64_OPERAND_SYM && src.m_Type != JX64_OPERAND_SYM, "TODO");
 	if (dst.m_Type == JX64_OPERAND_LBL && src.m_Type == JX64_OPERAND_LBL) {
 		return false;
 	}
@@ -485,6 +569,7 @@ bool jx64_mov(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 
 bool jx64_movsx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
+	JX_CHECK(dst.m_Type != JX64_OPERAND_SYM && src.m_Type != JX64_OPERAND_SYM, "TODO");
 	const bool invalidOperands = false
 		|| dst.m_Type != JX64_OPERAND_REG // Destination operand should always be a register
 		|| dst.m_Size <= src.m_Size
@@ -553,6 +638,7 @@ bool jx64_movsx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 
 bool jx64_movzx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
+	JX_CHECK(dst.m_Type != JX64_OPERAND_SYM && src.m_Type != JX64_OPERAND_SYM, "TODO");
 	const bool invalidOperands = false
 		|| dst.m_Type != JX64_OPERAND_REG // Destination operand should always be a register
 		|| dst.m_Size < src.m_Size
@@ -650,6 +736,7 @@ bool jx64_nop(jx_x64_context_t* ctx, uint32_t n)
 
 bool jx64_push(jx_x64_context_t* ctx, jx_x64_operand_t op)
 {
+	JX_CHECK(op.m_Type != JX64_OPERAND_SYM, "TODO");
 	jx_x64_instr_encoding_t* enc = &(jx_x64_instr_encoding_t){ 0 };
 	
 	jx_x64_label_t* lbl = NULL;
@@ -700,6 +787,7 @@ bool jx64_push(jx_x64_context_t* ctx, jx_x64_operand_t op)
 
 bool jx64_pop(jx_x64_context_t* ctx, jx_x64_operand_t op)
 {
+	JX_CHECK(op.m_Type != JX64_OPERAND_SYM, "TODO");
 	jx_x64_instr_encoding_t* enc = &(jx_x64_instr_encoding_t){ 0 };
 
 	jx_x64_label_t* lbl = NULL;
@@ -818,6 +906,7 @@ bool jx64_dec(jx_x64_context_t* ctx, jx_x64_operand_t op)
 
 bool jx64_imul(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
+	JX_CHECK(dst.m_Type != JX64_OPERAND_SYM && src.m_Type != JX64_OPERAND_SYM, "TODO");
 	const bool invalidOperands = false
 		|| dst.m_Type != JX64_OPERAND_REG // Destination operand should always be a register
 		;
@@ -863,13 +952,14 @@ bool jx64_lea(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 
 	const bool invalidOperands = false
 		|| dst.m_Type != JX64_OPERAND_REG
-		|| (src.m_Type != JX64_OPERAND_MEM && src.m_Type != JX64_OPERAND_LBL)
+		|| (src.m_Type != JX64_OPERAND_MEM && src.m_Type != JX64_OPERAND_LBL && src.m_Type != JX64_OPERAND_SYM)
 		;
 	if (invalidOperands) {
 		return false;
 	}
 
 	jx_x64_label_t* lbl = NULL;
+	jx_x64_symbol_t* sym = NULL;
 	if (src.m_Type == JX64_OPERAND_LBL) {
 		// RIP-relative addressing. Calculate offset to the specified label 
 		// and turn src operand into mem operand. 
@@ -883,6 +973,9 @@ bool jx64_lea(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 			: (int32_t)lbl->m_Offset - (int32_t)ctx->m_Size
 			;
 		src = jx64_opMem(JX64_SIZE_64, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, diff);
+	} else if (src.m_Type == JX64_OPERAND_SYM) {
+		sym = src.u.m_Sym;
+		src = jx64_opMem(JX64_SIZE_64, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, 0);
 	}
 
 	const uint8_t opcode = 0x8D;
@@ -894,6 +987,15 @@ bool jx64_lea(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 		const uint32_t dispOffset = jx64_instrEnc_calcDispOffset(enc);
 		const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
 		jx_array_push_back(lbl->m_RefsArr, (jx_x64_label_ref_t) { .m_DispOffset = ctx->m_Size + dispOffset, .m_NextInstrOffset = ctx->m_Size + instrSize });
+	} else if (sym) {
+		const uint32_t dispOffset = jx64_instrEnc_calcDispOffset(enc);
+		const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
+
+		const uint32_t relocDelta = (instrSize - dispOffset) - sizeof(int32_t);
+		JX_CHECK(relocDelta <= 5, "Invalid relocation type");
+		const uint32_t curFuncOffset = (uint32_t)ctx->m_CurFunc->m_Label->m_Offset;
+		const uint32_t relocOffset = ctx->m_Size - curFuncOffset + dispOffset;
+		jx64_symbolAddRelocation(ctx, ctx->m_CurFunc, JX64_RELOC_REL32 + relocDelta, relocOffset, sym->m_Name);
 	}
 
 	jx_x64_instr_buffer_t* instr = &(jx_x64_instr_buffer_t) { 0 };
@@ -906,6 +1008,7 @@ bool jx64_lea(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 
 bool jx64_test(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
+	JX_CHECK(dst.m_Type != JX64_OPERAND_SYM && src.m_Type != JX64_OPERAND_SYM, "TODO");
 	// RIP relative addressing
 	jx_x64_label_t* lbl = NULL;
 	if (dst.m_Type == JX64_OPERAND_LBL) {
@@ -997,6 +1100,7 @@ bool jx64_clc(jx_x64_context_t* ctx)
 
 bool jx64_setcc(jx_x64_context_t* ctx, jx_x64_condition_code cc, jx_x64_operand_t dst)
 {
+	JX_CHECK(dst.m_Type != JX64_OPERAND_SYM, "TODO");
 	jx_x64_label_t* lbl = NULL;
 	if (dst.m_Type == JX64_OPERAND_LBL) {
 		// RIP-relative addressing. Calculate offset to the specified label 
@@ -1205,6 +1309,37 @@ bool jx64_cdqe(jx_x64_context_t* ctx)
 {
 	const uint8_t instr[] = { JX64_REX(1, 0, 0, 0), 0x98 };
 	return jx64_emitBytes(ctx, instr, JX_COUNTOF(instr));
+}
+
+static jx_x64_symbol_t* jx64_symbolAlloc(jx_x64_context_t* ctx, jx_x64_symbol_kind kind, const char* name)
+{
+	jx_x64_symbol_t* sym = (jx_x64_symbol_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_x64_symbol_t));
+	if (!sym) {
+		return NULL;
+	}
+
+	jx_memset(sym, 0, sizeof(jx_x64_symbol_t));
+	sym->m_Kind = kind;
+	sym->m_Label = jx64_labelAlloc(ctx);
+	sym->m_Name = jx_strdup(name, ctx->m_Allocator);
+	sym->m_RelocArr = (jx_x64_relocation_t*)jx_array_create(ctx->m_Allocator);
+	if (!sym->m_Label || !sym->m_Name || !sym->m_RelocArr) {
+		jx64_symbolFree(ctx, sym);
+		return NULL;
+	}
+
+	return sym;
+}
+
+static void jx64_symbolFree(jx_x64_context_t* ctx, jx_x64_symbol_t* sym)
+{
+	jx_array_free(sym->m_RelocArr);
+	JX_FREE(ctx->m_Allocator, sym->m_Name);
+	if (sym->m_Label) {
+		jx64_labelFree(ctx, sym->m_Label);
+		sym->m_Label = NULL;
+	}
+	JX_FREE(ctx->m_Allocator, sym);
 }
 
 // push, pop
@@ -1495,6 +1630,19 @@ static bool jx64_jmp_call_op(jx_x64_context_t* ctx, uint8_t opcode_lbl, uint8_t 
 			const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
 			jx_array_push_back(lbl->m_RefsArr, (jx_x64_label_ref_t) { .m_DispOffset = ctx->m_Size + dispOffset, .m_NextInstrOffset = ctx->m_Size + instrSize });
 		}
+	} else if (op.m_Type == JX64_OPERAND_SYM) {
+		jx_x64_symbol_t* sym = op.u.m_Sym;
+
+		jx64_instrEnc_opcode1(enc, opcode_lbl);
+		jx64_instrEnc_disp(enc, true, JX64_SIZE_32, 0);
+
+		const uint32_t dispOffset = jx64_instrEnc_calcDispOffset(enc);
+		const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
+		const uint32_t relocDelta = (instrSize - dispOffset) - sizeof(int32_t);
+		JX_CHECK(relocDelta <= 5, "Invalid relocation type");
+		const uint32_t curFuncOffset = (uint32_t)ctx->m_CurFunc->m_Label->m_Offset;
+		const uint32_t relocOffset = ctx->m_Size - curFuncOffset + dispOffset;
+		jx64_symbolAddRelocation(ctx, ctx->m_CurFunc, JX64_RELOC_REL32 + relocDelta, relocOffset, sym->m_Name);
 	} else if (op.m_Type == JX64_OPERAND_REG) {
 		const jx_x64_reg reg = op.u.m_Reg;
 
@@ -1510,6 +1658,7 @@ static bool jx64_jmp_call_op(jx_x64_context_t* ctx, uint8_t opcode_lbl, uint8_t 
 		jx64_instrEnc_opcode1(enc, opcode_rm);
 		jx64_instrEnc_modrm(enc, 0b11, modrm_reg, JX64_REG_LO(reg));
 	} else {
+		JX_CHECK(op.m_Type == JX64_OPERAND_MEM, "Expected memory operand.");
 		const jx_x64_mem_t* mem = &op.u.m_Mem;
 
 		const jx_x64_reg base_r = mem->m_Base;

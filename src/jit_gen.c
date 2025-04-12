@@ -262,7 +262,23 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 
 		const uint32_t dataSize = (uint32_t)jx_array_sizeu(mirGV->m_DataArr);
 		jx64_globalVarDefine(jitCtx, jitGVs[iGV], mirGV->m_DataArr, dataSize, mirGV->m_Alignment);
+
+		const uint32_t numRelocations = (uint32_t)jx_array_sizeu(mirGV->m_Relocations);
+		for (uint32_t iReloc = 0; iReloc < numRelocations; ++iReloc) {
+			jx_mir_relocation_t* mirReloc = &mirGV->m_Relocations[iReloc];
+			jx64_symbolAddRelocation(jitCtx, jitGVs[iGV], JX64_RELOC_ADDR64, mirReloc->m_Offset, mirReloc->m_SymbolName);
+		}
 	}
+
+	// DEBUG/TEST
+	{
+		jx_x64_symbol_t* strlenSymbol = jx64_symbolGetByName(jitCtx, "strlen");
+		if (strlenSymbol) {
+			jx64_symbolSetExternalAddress(jitCtx, strlenSymbol, (void*)jx_strlen);
+		}
+	}
+
+	jx64_finalize(jitCtx);
 
 	JX_FREE(allocator, jitFuncs);
 	JX_FREE(allocator, jitGVs);
@@ -350,8 +366,12 @@ static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64_context_t* jitCtx, co
 		jx_x64_symbol_t* symbol = jx64_symbolGetByName(jitCtx, name);
 		JX_CHECK(symbol, "Symbol not found!");
 
+#if 1
+		op = jx64_opSymbol(JX64_SIZE_64, symbol);
+#else
 		jx_x64_label_t* lbl = symbol->m_Label;
 		op = jx64_opLbl(JX64_SIZE_64, lbl);
+#endif
 	} break;
 	case JMIR_OPERAND_MEMORY_REF: {
 		jx_x64_size size = jx_x64gen_convertMIRTypeToSize(mirOp->m_Type);
