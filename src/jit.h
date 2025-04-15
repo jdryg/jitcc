@@ -33,6 +33,7 @@ typedef enum jx_x64_operand_type
 	JX64_OPERAND_MEM,
 	JX64_OPERAND_LBL,
 	JX64_OPERAND_SYM,
+	JX64_OPERAND_MEM_SYM,
 } jx_x64_operand_type;
 
 typedef enum jx_x64_reg_id
@@ -187,6 +188,13 @@ typedef struct jx_x64_mem_t
 	int32_t m_Displacement;
 } jx_x64_mem_t;
 
+typedef struct jx_x64_mem_symbol_t
+{
+	jx_x64_symbol_t* m_Symbol;
+	int32_t m_Displacement;
+	JX_PAD(4);
+} jx_x64_mem_symbol_t;
+
 typedef struct jx_x64_operand_t
 {
 	jx_x64_operand_type m_Type;
@@ -196,6 +204,7 @@ typedef struct jx_x64_operand_t
 		jx_x64_reg m_Reg;
 		int64_t m_ImmI64;
 		jx_x64_mem_t m_Mem;
+		jx_x64_mem_symbol_t m_MemSym;
 		jx_x64_label_t* m_Lbl;
 		jx_x64_symbol_t* m_Sym;
 	} u;
@@ -364,6 +373,11 @@ static inline jx_x64_operand_t jx64_opLbl(jx_x64_size size, jx_x64_label_t* lbl)
 static inline jx_x64_operand_t jx64_opSymbol(jx_x64_size size, jx_x64_symbol_t* sym)
 {
 	return (jx_x64_operand_t){ .m_Type = JX64_OPERAND_SYM, .m_Size = size, .u.m_Sym = sym };
+}
+
+static inline jx_x64_operand_t jx64_opMemSymbol(jx_x64_size size, jx_x64_symbol_t* sym, int32_t disp)
+{
+	return (jx_x64_operand_t){ .m_Type = JX64_OPERAND_MEM_SYM, .m_Size = size, .u.m_MemSym = { .m_Symbol = sym, .m_Displacement = disp } };
 }
 
 #endif // JIT_H

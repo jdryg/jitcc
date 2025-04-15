@@ -770,11 +770,11 @@ int main(int argc, char** argv)
 		JX_SYS_LOG_INFO(NULL, "%s: ", sourceFile);
 
 		const bool skipTest = false
-			|| iTest == 25  // Uses external functions (strlen)
-			|| iTest == 40  // Uses external functions (calloc)
+//			|| iTest == 25  // Uses external functions (strlen)
+//			|| iTest == 40  // Uses external functions (calloc)
 //			|| iTest == 45  // Global pointer to global variable (relocations)
 //			|| iTest == 49  // Global pointer to global variable (relocations)
-			|| iTest == 56  // Uses external functions (printf)
+//			|| iTest == 56  // Uses external functions (printf)
 			|| iTest == 61  // Missing; Requires preprocessor
 			|| iTest == 62  // Missing; Requires preprocessor
 			|| iTest == 63  // Missing; Requires preprocessor
@@ -797,8 +797,8 @@ int main(int argc, char** argv)
 			|| iTest == 108 // Missing; Requires preprocessor
 			|| iTest == 113 // Floating point
 			|| iTest == 115 // Missing; Requires preprocessor
-			|| iTest == 117 // Implicitly uses external functions (memset)
-			|| iTest == 118 // Implicitly uses external functions (memset)
+//			|| iTest == 117 // Implicitly uses external functions (memset)
+//			|| iTest == 118 // Implicitly uses external functions (memset)
 			|| iTest == 119 // Floating point
 			;
 		if (skipTest) {
@@ -957,25 +957,15 @@ int main(int argc, char** argv)
 				JX_SYS_LOG_INFO(NULL, "\n%s\n\n", jx_strbuf_getString(sb, NULL));
 				jx_strbuf_destroy(sb);
 
-//				void* execBuf = VirtualAlloc(NULL, bufferSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-//				if (execBuf) {
-//					jx_memcpy(execBuf, buffer, bufferSize);
-//
-//					DWORD oldProtect = 0;
-//					VirtualProtect(execBuf, bufferSize, PAGE_EXECUTE_READWRITE, &oldProtect);
-
-					typedef int32_t (*pfnMain)(void);
-					jx_x64_symbol_t* symMain = jx64_symbolGetByName(jitCtx, "main");
-					if (symMain) {
-						pfnMain mainFunc = (pfnMain)((uint8_t*)buffer + jx64_labelGetOffset(jitCtx, symMain->m_Label));
-						int32_t ret = mainFunc();
-						JX_SYS_LOG_DEBUG(NULL, "main() returned %d\n", ret);
-					} else {
-						JX_SYS_LOG_ERROR(NULL, "main() not found!\n");
-					}
-
-//					VirtualFree(execBuf, 0, MEM_RELEASE);
-//				}
+				typedef int32_t (*pfnMain)(void);
+				jx_x64_symbol_t* symMain = jx64_symbolGetByName(jitCtx, "main");
+				if (symMain) {
+					pfnMain mainFunc = (pfnMain)((uint8_t*)buffer + jx64_labelGetOffset(jitCtx, symMain->m_Label));
+					int32_t ret = mainFunc();
+					JX_SYS_LOG_DEBUG(NULL, "main() returned %d\n", ret);
+				} else {
+					JX_SYS_LOG_ERROR(NULL, "main() not found!\n");
+				}
 			}
 
 			jx_x64_destroyContext(jitCtx);

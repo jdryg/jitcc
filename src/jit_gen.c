@@ -7,6 +7,10 @@
 #include <jlib/memory.h>
 #include <jlib/string.h>
 
+#include <stdlib.h> // calloc
+#include <stdio.h> // printf
+#include <memory.h> // memset/memcpy
+
 static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64_context_t* jitCtx, const jx_mir_operand_t* mirOp);
 static jx_x64_size jx_x64gen_convertMIRTypeToSize(jx_mir_type_kind type);
 static jx_x64_reg jx_x64gen_convertMIRReg(uint32_t mirRegID, jx_x64_size sz);
@@ -276,6 +280,26 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 		if (strlenSymbol) {
 			jx64_symbolSetExternalAddress(jitCtx, strlenSymbol, (void*)jx_strlen);
 		}
+
+		jx_x64_symbol_t* callocSymbol = jx64_symbolGetByName(jitCtx, "calloc");
+		if (callocSymbol) {
+			jx64_symbolSetExternalAddress(jitCtx, callocSymbol, (void*)calloc);
+		}
+
+		jx_x64_symbol_t* printfSymbol = jx64_symbolGetByName(jitCtx, "printf");
+		if (printfSymbol) {
+			jx64_symbolSetExternalAddress(jitCtx, printfSymbol, (void*)printf);
+		}
+
+		jx_x64_symbol_t* memsetSymbol = jx64_symbolGetByName(jitCtx, "memset");
+		if (memsetSymbol) {
+			jx64_symbolSetExternalAddress(jitCtx, memsetSymbol, (void*)memset);
+		}
+
+		jx_x64_symbol_t* memcpySymbol = jx64_symbolGetByName(jitCtx, "memcpy");
+		if (memcpySymbol) {
+			jx64_symbolSetExternalAddress(jitCtx, memcpySymbol, (void*)memcpy);
+		}
 	}
 
 	jx64_finalize(jitCtx);
@@ -364,14 +388,18 @@ static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64_context_t* jitCtx, co
 	case JMIR_OPERAND_EXTERNAL_SYMBOL: {
 		const char* name = mirOp->u.m_ExternalSymbolName;
 		jx_x64_symbol_t* symbol = jx64_symbolGetByName(jitCtx, name);
+		if (!symbol) {
+			// Check if this is an intrinsic function and add a new symbol now.
+			const bool isIntrinsic = false
+				|| !jx_strcmp(name, "memset")
+				|| !jx_strcmp(name, "memcpy")
+				;
+			if (isIntrinsic) {
+				symbol = jx64_funcDeclare(jitCtx, name);
+			}
+		}
 		JX_CHECK(symbol, "Symbol not found!");
-
-#if 1
 		op = jx64_opSymbol(JX64_SIZE_64, symbol);
-#else
-		jx_x64_label_t* lbl = symbol->m_Label;
-		op = jx64_opLbl(JX64_SIZE_64, lbl);
-#endif
 	} break;
 	case JMIR_OPERAND_MEMORY_REF: {
 		jx_x64_size size = jx_x64gen_convertMIRTypeToSize(mirOp->m_Type);
