@@ -125,9 +125,6 @@ typedef struct jx_x64_context_t
 	jx_allocator_i* m_Allocator;
 	jx_x64_symbol_t** m_SymbolArr;
 	jx_x64_symbol_t* m_CurFunc;
-#if 0
-	uint32_t* m_CurFuncJccArr;
-#endif
 	jx_x64_section_t m_Section[JX64_SECTION_COUNT];
 	jx_x64_code_buffer_t m_CodeBuffer;
 } jx_x64_context_t;
@@ -193,14 +190,6 @@ jx_x64_context_t* jx_x64_createContext(jx_allocator_i* allocator)
 		return NULL;
 	}
 
-#if 0
-	ctx->m_CurFuncJccArr = (uint32_t*)jx_array_create(allocator);
-	if (!ctx->m_CurFuncJccArr) {
-		jx_x64_destroyContext(ctx);
-		return NULL;
-	}
-#endif
-
 	return ctx;
 }
 
@@ -214,10 +203,6 @@ void jx_x64_destroyContext(jx_x64_context_t* ctx)
 		jx64_symbolFree(ctx, sym);
 	}
 	jx_array_free(ctx->m_SymbolArr);
-
-#if 0
-	jx_array_free(ctx->m_CurFuncJccArr);
-#endif
 #if 0
 	JX_FREE(allocator, ctx->m_Buffer);
 #endif
@@ -456,9 +441,6 @@ bool jx64_funcBegin(jx_x64_context_t* ctx, jx_x64_symbol_t* func)
 	}
 
 	jx64_labelBind(ctx, func->m_Label);
-#if 0
-	jx_array_resize(ctx->m_CurFuncJccArr, 0);
-#endif
 
 	ctx->m_CurFunc = func;
 
@@ -481,29 +463,6 @@ void jx64_funcEnd(jx_x64_context_t* ctx)
 	// intact.
 	// NOTE: I have to keep all jumps and not only conditional jumps in order to replace 
 	// their displacements if at least 1 of them changes
-#if 0
-	const uint32_t numJumps = (uint32_t)jx_array_sizeu(ctx->m_CurFuncJccArr);
-	for (uint32_t iJmp = numJumps; iJmp > 0; --iJmp) {
-		const uint32_t codeOffset = ctx->m_CurFuncJccArr[iJmp - 1];
-
-		uint8_t* code = &ctx->m_Buffer[codeOffset];
-		if (code[0] == 0x0F && (code[1] & 0xF0) == 0x80) {
-			// Conditional jump with 32-bit displacement
-			// Check if displacement can fit into an 8-bit signed integer
-			// and convert instruction.
-			int32_t disp32 = *(int32_t*)&code[2];
-			if (JX64_DISP_IS_8BIT(disp32)) {
-				const uint8_t cc = (code[1] & 0x0F);
-				code[0] = 0x90; // nop
-				code[1] = 0x90;
-				code[2] = 0x90;
-				code[3] = 0x90;
-				code[4] = 0x70 | cc;
-				code[5] = (uint8_t)disp32;
-			}
-		}
-	}
-#endif
 }
 
 jx_x64_symbol_t* jx64_symbolGetByName(jx_x64_context_t* ctx, const char* name)
@@ -1332,10 +1291,6 @@ bool jx64_jcc(jx_x64_context_t* ctx, jx_x64_condition_code cc, jx_x64_label_t* l
 		const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
 		jx_array_push_back(lbl->m_RefsArr, (jx_x64_label_ref_t){ .m_DispOffset = sec->m_Size + dispOffset, .m_NextInstrOffset = sec->m_Size + instrSize });
 	}
-
-#if 0
-	jx_array_push_back(ctx->m_CurFuncJccArr, sec->m_Size);
-#endif
 
 	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr->m_Buffer, instr->m_Size);
 }
