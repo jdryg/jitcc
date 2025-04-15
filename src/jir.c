@@ -11,6 +11,7 @@
 #include <jlib/hashmap.h>
 #include <jlib/math.h>
 #include <jlib/memory.h>
+#include <jlib/os.h>
 #include <jlib/string.h>
 
 #define JX_IR_CONFIG_PRINT_ABSTRACT_POINTERS 0
@@ -5394,8 +5395,6 @@ static void jir_vmPopStackAndReturn(jx_ir_context_t* ctx, jx_ir_vm_t* vm, jx_ir_
 	}
 }
 
-int32_t printf(const char* fmt, ...);
-
 static jx_ir_generic_value_t jir_vmCallExternalFunc(jx_ir_context_t* ctx, jx_ir_vm_t* vm, jx_ir_function_t* func, uint32_t numArgs, jx_ir_generic_value_t* args)
 {
 	// HACK: Code taken more or less verbose from LLVM 1.1
@@ -5498,7 +5497,7 @@ static jx_ir_generic_value_t jir_vmCallExternalFunc(jx_ir_context_t* ctx, jx_ir_
 			}
 		}
 
-		printf("%s", strBuffer);
+		jx_os_consolePuts(strBuffer, UINT32_MAX);
 	} else {
 		JX_CHECK(false, "Unknown external function!");
 	}
