@@ -432,7 +432,12 @@ static jx_mir_operand_t* jmirgen_instrBuild_ret(jx_mirgen_context_t* ctx, jx_ir_
 		jx_mir_operand_t* mirRetVal = jmirgen_getOperand(ctx, retVal);
 		jx_mir_type_kind mirType = jmirgen_convertType(retVal->m_Type);
 		retReg = jx_mir_opHWReg(ctx->m_MIRCtx, ctx->m_Func, mirType, JMIR_HWREG_RET);
-		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, retReg, mirRetVal));
+
+		if (mirRetVal->m_Kind == JMIR_OPERAND_STACK_OBJECT || mirRetVal->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, retReg, mirRetVal));
+		} else {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, retReg, mirRetVal));
+		}
 	}
 
 	jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_ret(ctx->m_MIRCtx, NULL));
