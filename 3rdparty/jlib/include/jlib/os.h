@@ -297,6 +297,13 @@ typedef struct jx_os_file_time_t
 	uint16_t m_Millisecond;
 } jx_os_file_time_t;
 
+#define JX_VMEM_PROTECT_READ_Pos    0
+#define JX_VMEM_PROTECT_READ_Msk    (1u << JX_VMEM_PROTECT_READ_Pos)
+#define JX_VMEM_PROTECT_WRITE_Pos   1
+#define JX_VMEM_PROTECT_WRITE_Msk   (1u << JX_VMEM_PROTECT_WRITE_Pos)
+#define JX_VMEM_PROTECT_EXEC_Pos    2
+#define JX_VMEM_PROTECT_EXEC_Msk    (1u << JX_VMEM_PROTECT_EXEC_Pos)
+
 typedef void (*josEnumFilesAndFoldersCallback)(const char* relPath, bool isFile, void* userData);
 
 typedef struct jx_os_api
@@ -385,6 +392,11 @@ typedef struct jx_os_api
 	int32_t         (*fsCreateDirectory)(jx_file_base_dir baseDir, const char* relPath);
 	int32_t         (*fsRemoveEmptyDirectory)(jx_file_base_dir baseDir, const char* relPath);
 	int32_t         (*fsEnumFilesAndFolders)(jx_file_base_dir baseDir, const char* pattern, josEnumFilesAndFoldersCallback callback, void* userData);
+
+	uint32_t        (*vmemGetPageSize)(void);
+	void*           (*vmemAlloc)(void* desiredAddr, size_t sz, uint32_t protectFlags);
+	void            (*vmemFree)(void* addr, size_t sz);
+	bool            (*vmemProtect)(void* addr, size_t sz, uint32_t protectFlags);
 } jx_os_api;
 
 extern jx_os_api* os_api;
@@ -469,6 +481,11 @@ static int32_t jx_os_fsCreateDirectory(jx_file_base_dir baseDir, const char* rel
 static int32_t jx_os_fsRemoveEmptyDirectory(jx_file_base_dir baseDir, const char* relPath);
 static int32_t jx_os_fsEnumFilesAndFolders(jx_file_base_dir baseDir, const char* pattern, josEnumFilesAndFoldersCallback callback, void* userData);
 static void* jx_os_fsReadFile(jx_file_base_dir baseDir, const char* relPath, jx_allocator_i* allocator, bool nullTerminate, uint64_t* sz);
+
+static uint32_t jx_os_vmemGetPageSize(void);
+static void* jx_os_vmemAlloc(void* desiredAddr, size_t sz, uint32_t protectFlags);
+static void jx_os_vmemFree(void* addr, size_t sz);
+static bool jx_os_vmemProtect(void* addr, size_t sz, uint32_t protectFlags);
 
 #ifdef __cplusplus
 }
