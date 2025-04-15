@@ -69,7 +69,7 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 
 			jx_memset(bbLabels, 0, sizeof(jx_x64_label_t*) * numBasicBlocks);
 			for (uint32_t iBB = 0; iBB < numBasicBlocks; ++iBB) {
-				bbLabels[iBB] = jx64_labelAlloc(jitCtx);
+				bbLabels[iBB] = jx64_labelAlloc(jitCtx, JX64_SECTION_TEXT);
 			}
 
 			jx64_funcBegin(jitCtx, jitFuncs[iFunc]);

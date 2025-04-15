@@ -757,14 +757,20 @@ int main(int argc, char** argv)
 	jx_allocator_i* allocator = allocator_api->createAllocator("jcc");
 
 #if 1
+	uint32_t totalTests = 0;
+	uint32_t numSkipped = 0;
+	uint32_t numPass = 0;
+	uint32_t numFailed = 0;
 	for (uint32_t iTest = 1; iTest <= 120; ++iTest) {
+		++totalTests;
+
 		char sourceFile[256];
 		jx_snprintf(sourceFile, JX_COUNTOF(sourceFile), "test/c-testsuite/%05d.c", iTest);
 
 		JX_SYS_LOG_INFO(NULL, "%s: ", sourceFile);
 
 		const bool skipTest = false
-//			|| iTest == 25  // Uses external functions (strlen)
+			|| iTest == 25  // Uses external functions (strlen)
 			|| iTest == 40  // Uses external functions (calloc)
 //			|| iTest == 45  // Global pointer to global variable (relocations)
 //			|| iTest == 49  // Global pointer to global variable (relocations)
@@ -796,6 +802,7 @@ int main(int argc, char** argv)
 			|| iTest == 119 // Floating point
 			;
 		if (skipTest) {
+			++numSkipped;
 			JX_SYS_LOG_WARNING(NULL, "SKIPPED\n");
 			continue;
 		}
@@ -823,31 +830,23 @@ int main(int argc, char** argv)
 			jx_x64_context_t* jitCtx = jx_x64_createContext(allocator);
 
 			if (jx_x64_emitCode(jitCtx, mirCtx, allocator)) {
-				uint32_t bufferSize = 0;
-				const uint8_t* buffer = jx64_getBuffer(jitCtx, &bufferSize);
+				uint32_t execBufSize = 0;
+				const uint8_t* execBuf = jx64_getBuffer(jitCtx, &execBufSize);
 
-				void* execBuf = VirtualAlloc(NULL, bufferSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-				if (execBuf) {
-					jx_memcpy(execBuf, buffer, bufferSize);
-
-					DWORD oldProtect = 0;
-					VirtualProtect(execBuf, bufferSize, PAGE_EXECUTE_READWRITE, &oldProtect);
-
-					typedef int32_t(*pfnMain)(void);
-					jx_x64_symbol_t* symMain = jx64_symbolGetByName(jitCtx, "main");
-					if (symMain) {
-						pfnMain mainFunc = (pfnMain)((uint8_t*)execBuf + jx64_labelGetOffset(jitCtx, symMain->m_Label));
-						int32_t ret = mainFunc();
-						if (ret == 0) {
-							JX_SYS_LOG_DEBUG(NULL, "PASS\n", sourceFile);
-						} else {
-							JX_SYS_LOG_ERROR(NULL, "FAIL\n", sourceFile);
-						}
+				typedef int32_t(*pfnMain)(void);
+				jx_x64_symbol_t* symMain = jx64_symbolGetByName(jitCtx, "main");
+				if (symMain) {
+					pfnMain mainFunc = (pfnMain)((uint8_t*)execBuf + jx64_labelGetOffset(jitCtx, symMain->m_Label));
+					int32_t ret = mainFunc();
+					if (ret == 0) {
+						++numPass;
+						JX_SYS_LOG_DEBUG(NULL, "PASS\n", sourceFile);
 					} else {
-						JX_SYS_LOG_ERROR(NULL, "main() not found!\n", sourceFile);
+						++numFailed;
+						JX_SYS_LOG_ERROR(NULL, "FAIL\n", sourceFile);
 					}
-
-					VirtualFree(execBuf, 0, MEM_RELEASE);
+				} else {
+					JX_SYS_LOG_ERROR(NULL, "main() not found!\n", sourceFile);
 				}
 			}
 
@@ -855,14 +854,20 @@ int main(int argc, char** argv)
 			jx_mir_destroyContext(mirCtx);
 			jx_ir_destroyContext(irCtx);
 		} else {
+			++numFailed;
 			JX_SYS_LOG_ERROR(NULL, "Compilation failed.\n", sourceFile);
 		}
 		jx_cc_destroyContext(ctx);
 	}
+
+	JX_SYS_LOG_INFO(NULL, "Total: %u\n", totalTests);
+	JX_SYS_LOG_INFO(NULL, "Pass : %u\n", numPass);
+	JX_SYS_LOG_INFO(NULL, "Fail : %u\n", numFailed);
+	JX_SYS_LOG_INFO(NULL, "Skip : %u\n", numSkipped);
 #else
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-	const char* sourceFile = "test/c-testsuite/00025.c";
+	const char* sourceFile = "test/c-testsuite/00089.c";
 //	const char* sourceFile = "test/pointer_arithmetic.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
@@ -952,25 +957,25 @@ int main(int argc, char** argv)
 				JX_SYS_LOG_INFO(NULL, "\n%s\n\n", jx_strbuf_getString(sb, NULL));
 				jx_strbuf_destroy(sb);
 
-				void* execBuf = VirtualAlloc(NULL, bufferSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-				if (execBuf) {
-					jx_memcpy(execBuf, buffer, bufferSize);
-
-					DWORD oldProtect = 0;
-					VirtualProtect(execBuf, bufferSize, PAGE_EXECUTE_READWRITE, &oldProtect);
+//				void* execBuf = VirtualAlloc(NULL, bufferSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+//				if (execBuf) {
+//					jx_memcpy(execBuf, buffer, bufferSize);
+//
+//					DWORD oldProtect = 0;
+//					VirtualProtect(execBuf, bufferSize, PAGE_EXECUTE_READWRITE, &oldProtect);
 
 					typedef int32_t (*pfnMain)(void);
 					jx_x64_symbol_t* symMain = jx64_symbolGetByName(jitCtx, "main");
 					if (symMain) {
-						pfnMain mainFunc = (pfnMain)((uint8_t*)execBuf + jx64_labelGetOffset(jitCtx, symMain->m_Label));
+						pfnMain mainFunc = (pfnMain)((uint8_t*)buffer + jx64_labelGetOffset(jitCtx, symMain->m_Label));
 						int32_t ret = mainFunc();
 						JX_SYS_LOG_DEBUG(NULL, "main() returned %d\n", ret);
 					} else {
 						JX_SYS_LOG_ERROR(NULL, "main() not found!\n");
 					}
 
-					VirtualFree(execBuf, 0, MEM_RELEASE);
-				}
+//					VirtualFree(execBuf, 0, MEM_RELEASE);
+//				}
 			}
 
 			jx_x64_destroyContext(jitCtx);
