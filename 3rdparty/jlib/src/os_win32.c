@@ -94,6 +94,10 @@ static int32_t _jx_os_fsMoveFile(jx_file_base_dir srcBaseDir, const char* srcRel
 static int32_t _jx_os_fsCreateDirectory(jx_file_base_dir baseDir, const char* relPath);
 static int32_t _jx_os_fsRemoveEmptyDirectory(jx_file_base_dir baseDir, const char* relPath);
 static int32_t _jx_os_fsEnumFilesAndFolders(jx_file_base_dir baseDir, const char* pattern, josEnumFilesAndFoldersCallback callback, void* userData);
+static uint32_t _jx_os_vmemGetPageSize(void);
+static void* _jx_os_vmemAlloc(void* desiredAddr, size_t sz, uint32_t protectFlags);
+static void _jx_os_vmemFree(void* addr, size_t sz);
+static bool _jx_os_vmemProtect(void* addr, size_t sz, uint32_t protectFlags);
 
 jx_os_api* os_api = &(jx_os_api){
 	.moduleOpen = _jx_os_moduleOpen,
@@ -165,6 +169,10 @@ jx_os_api* os_api = &(jx_os_api){
 	.fsCreateDirectory = _jx_os_fsCreateDirectory,
 	.fsRemoveEmptyDirectory = _jx_os_fsRemoveEmptyDirectory,
 	.fsEnumFilesAndFolders = _jx_os_fsEnumFilesAndFolders,
+	.vmemGetPageSize = _jx_os_vmemGetPageSize,
+	.vmemAlloc = _jx_os_vmemAlloc,
+	.vmemFree = _jx_os_vmemFree,
+	.vmemProtect = _jx_os_vmemProtect,
 };
 
 typedef void (*pfnGetSystemTimePreciseAsFileTime)(LPFILETIME lpSystemTimeAsFileTime);
@@ -2232,6 +2240,56 @@ static int32_t _jx_os_fsEnumFilesAndFolders(jx_file_base_dir baseDir, const char
 		? JX_ERROR_NONE
 		: JX_ERROR_OPERATION_FAILED
 		;
+}
+
+static uint32_t _vmemProtectToWin32(uint32_t protectFlags)
+{
+	uint32_t win32Protect = 0;
+	if ((protectFlags & JX_VMEM_PROTECT_EXEC_Msk) != 0) {
+		if ((protectFlags & JX_VMEM_PROTECT_WRITE_Msk) != 0) {
+			win32Protect = PAGE_EXECUTE_READWRITE;
+		} else if ((protectFlags & JX_VMEM_PROTECT_READ_Msk) != 0) {
+			win32Protect = PAGE_EXECUTE_READ;
+		} else {
+			win32Protect = PAGE_EXECUTE;
+		}
+	} else {
+		if ((protectFlags & JX_VMEM_PROTECT_WRITE_Msk) != 0) {
+			win32Protect = PAGE_READWRITE;
+		} else if ((protectFlags & JX_VMEM_PROTECT_READ_Msk) != 0) {
+			win32Protect = PAGE_READONLY;
+		} else {
+			win32Protect = PAGE_NOACCESS;
+		}
+	}
+
+	return win32Protect;
+}
+
+static uint32_t _jx_os_vmemGetPageSize(void)
+{
+	SYSTEM_INFO sysInf;
+	GetSystemInfo(&sysInf);
+	return sysInf.dwPageSize;
+}
+
+static void* _jx_os_vmemAlloc(void* desiredAddr, size_t sz, uint32_t protectFlags)
+{
+	const uint32_t win32Protect = _vmemProtectToWin32(protectFlags);
+	return VirtualAlloc(desiredAddr, sz, MEM_RESERVE | MEM_COMMIT, win32Protect);
+}
+
+static void _jx_os_vmemFree(void* addr, size_t sz)
+{
+	JX_UNUSED(sz);
+	VirtualFree(addr, 0, MEM_RELEASE);
+}
+
+static bool _jx_os_vmemProtect(void* addr, size_t sz, uint32_t protectFlags)
+{
+	const uint32_t win32Protect = _vmemProtectToWin32(protectFlags);
+	uint32_t oldProtect = 0;
+	return VirtualProtect(addr, sz, win32Protect, &oldProtect) != 0;
 }
 
 #endif // JX_PLATFORM_WINDOWS

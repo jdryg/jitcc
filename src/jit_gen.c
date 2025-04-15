@@ -7,6 +7,10 @@
 #include <jlib/memory.h>
 #include <jlib/string.h>
 
+#include <stdlib.h> // calloc
+#include <stdio.h> // printf
+#include <memory.h> // memset/memcpy
+
 static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64_context_t* jitCtx, const jx_mir_operand_t* mirOp);
 static jx_x64_size jx_x64gen_convertMIRTypeToSize(jx_mir_type_kind type);
 static jx_x64_reg jx_x64gen_convertMIRReg(uint32_t mirRegID, jx_x64_size sz);
@@ -16,12 +20,12 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 {
 	// Declare global variables.
 	const uint32_t numGlobalVars = jx_mir_getNumGlobalVars(mirCtx);
-	jx_x64_global_var_t** jitGVs = (jx_x64_global_var_t**)JX_ALLOC(allocator, sizeof(jx_x64_global_var_t*) * numGlobalVars);
+	jx_x64_symbol_t** jitGVs = (jx_x64_symbol_t**)JX_ALLOC(allocator, sizeof(jx_x64_symbol_t*) * numGlobalVars);
 	if (!jitGVs) {
 		return false;
 	}
 
-	jx_memset(jitGVs, 0, sizeof(jx_x64_global_var_t*) * numGlobalVars);
+	jx_memset(jitGVs, 0, sizeof(jx_x64_symbol_t*) * numGlobalVars);
 	for (uint32_t iGV = 0; iGV < numGlobalVars; ++iGV) {
 		jx_mir_global_variable_t* mirGV = jx_mir_getGlobalVarByID(mirCtx, iGV);
 
@@ -37,12 +41,12 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 
 	// Declare functions
 	const uint32_t numFunctions = jx_mir_getNumFunctions(mirCtx);
-	jx_x64_func_t** jitFuncs = (jx_x64_func_t**)JX_ALLOC(allocator, sizeof(jx_x64_func_t*) * numFunctions);
+	jx_x64_symbol_t** jitFuncs = (jx_x64_symbol_t**)JX_ALLOC(allocator, sizeof(jx_x64_symbol_t*) * numFunctions);
 	if (!jitFuncs) {
 		return false;
 	}
 
-	jx_memset(jitFuncs, 0, sizeof(jx_x64_func_t*) * numFunctions);
+	jx_memset(jitFuncs, 0, sizeof(jx_x64_symbol_t*) * numFunctions);
 	for (uint32_t iFunc = 0; iFunc < numFunctions; ++iFunc) {
 		jx_mir_function_t* mirFunc = jx_mir_getFunctionByID(mirCtx, iFunc);
 
@@ -69,7 +73,7 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 
 			jx_memset(bbLabels, 0, sizeof(jx_x64_label_t*) * numBasicBlocks);
 			for (uint32_t iBB = 0; iBB < numBasicBlocks; ++iBB) {
-				bbLabels[iBB] = jx64_labelAlloc(jitCtx);
+				bbLabels[iBB] = jx64_labelAlloc(jitCtx, JX64_SECTION_TEXT);
 			}
 
 			jx64_funcBegin(jitCtx, jitFuncs[iFunc]);
@@ -261,8 +265,44 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 		jx_mir_global_variable_t* mirGV = jx_mir_getGlobalVarByID(mirCtx, iGV);
 
 		const uint32_t dataSize = (uint32_t)jx_array_sizeu(mirGV->m_DataArr);
-		jx64_globalVarDefine(jitCtx, jitGVs[iGV], mirGV->m_DataArr, dataSize);
+		jx64_globalVarDefine(jitCtx, jitGVs[iGV], mirGV->m_DataArr, dataSize, mirGV->m_Alignment);
+
+		const uint32_t numRelocations = (uint32_t)jx_array_sizeu(mirGV->m_Relocations);
+		for (uint32_t iReloc = 0; iReloc < numRelocations; ++iReloc) {
+			jx_mir_relocation_t* mirReloc = &mirGV->m_Relocations[iReloc];
+			jx64_symbolAddRelocation(jitCtx, jitGVs[iGV], JX64_RELOC_ADDR64, mirReloc->m_Offset, mirReloc->m_SymbolName);
+		}
 	}
+
+	// DEBUG/TEST
+	{
+		jx_x64_symbol_t* strlenSymbol = jx64_symbolGetByName(jitCtx, "strlen");
+		if (strlenSymbol) {
+			jx64_symbolSetExternalAddress(jitCtx, strlenSymbol, (void*)jx_strlen);
+		}
+
+		jx_x64_symbol_t* callocSymbol = jx64_symbolGetByName(jitCtx, "calloc");
+		if (callocSymbol) {
+			jx64_symbolSetExternalAddress(jitCtx, callocSymbol, (void*)calloc);
+		}
+
+		jx_x64_symbol_t* printfSymbol = jx64_symbolGetByName(jitCtx, "printf");
+		if (printfSymbol) {
+			jx64_symbolSetExternalAddress(jitCtx, printfSymbol, (void*)printf);
+		}
+
+		jx_x64_symbol_t* memsetSymbol = jx64_symbolGetByName(jitCtx, "memset");
+		if (memsetSymbol) {
+			jx64_symbolSetExternalAddress(jitCtx, memsetSymbol, (void*)memset);
+		}
+
+		jx_x64_symbol_t* memcpySymbol = jx64_symbolGetByName(jitCtx, "memcpy");
+		if (memcpySymbol) {
+			jx64_symbolSetExternalAddress(jitCtx, memcpySymbol, (void*)memcpy);
+		}
+	}
+
+	jx64_finalize(jitCtx);
 
 	JX_FREE(allocator, jitFuncs);
 	JX_FREE(allocator, jitGVs);
@@ -347,12 +387,19 @@ static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64_context_t* jitCtx, co
 	} break;
 	case JMIR_OPERAND_EXTERNAL_SYMBOL: {
 		const char* name = mirOp->u.m_ExternalSymbolName;
-		jx_x64_label_t* lbl = jx64_globalVarGetLabelByName(jitCtx, name);
-		if (!lbl) {
-			lbl = jx64_funcGetLabelByName(jitCtx, name);
+		jx_x64_symbol_t* symbol = jx64_symbolGetByName(jitCtx, name);
+		if (!symbol) {
+			// Check if this is an intrinsic function and add a new symbol now.
+			const bool isIntrinsic = false
+				|| !jx_strcmp(name, "memset")
+				|| !jx_strcmp(name, "memcpy")
+				;
+			if (isIntrinsic) {
+				symbol = jx64_funcDeclare(jitCtx, name);
+			}
 		}
-		JX_CHECK(lbl, "External symbol not found!");
-		op = jx64_opLbl(JX64_SIZE_64, lbl);
+		JX_CHECK(symbol, "Symbol not found!");
+		op = jx64_opSymbol(JX64_SIZE_64, symbol);
 	} break;
 	case JMIR_OPERAND_MEMORY_REF: {
 		jx_x64_size size = jx_x64gen_convertMIRTypeToSize(mirOp->m_Type);

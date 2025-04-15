@@ -5,7 +5,9 @@
 #include <jlib/allocator.h>
 #include <jlib/array.h>
 #include <jlib/dbg.h>
+#include <jlib/math.h>
 #include <jlib/memory.h>
+#include <jlib/os.h>
 #include <jlib/string.h>
 
 #define JX64_REX(W, R, X, B)         (0x40 | ((W) << 3) | ((R) << 2) | ((X) << 1) | ((B) << 0))
@@ -23,7 +25,7 @@
 #define JX64_OPERAND_SIZE_PREFIX 0x66
 #define JX64_ADDRESS_SIZE_PREFIX 0x67
 
-#define JX64_LABEL_OFFSET_UNBOUND 0x7FFFFFFF
+#define JX64_LABEL_OFFSET_UNBOUND 0x7FFFFFFFFFFFFFFF
 
 typedef enum jx_x64_segment_prefix
 {
@@ -77,7 +79,7 @@ typedef struct jx_x64_instr_encoding_t
 
 	uint8_t m_Opcode[3];
 	
-	uint32_t m_Disp;
+	int32_t m_Disp;
 	JX_PAD(4);
 
 	int64_t m_ImmI64;
@@ -97,38 +99,39 @@ typedef struct jx_x64_label_ref_t
 
 typedef struct jx_x64_label_t
 {
-	uint32_t m_Offset;
+	uint64_t m_Offset;
 	jx_x64_label_ref_t* m_RefsArr;
+	jx_x64_section_kind m_Section;
+	JX_PAD(4);
 } jx_x64_label_t;
 
-typedef struct jx_x64_func_t
+typedef struct jx_x64_section_t
 {
-	jx_x64_label_t* m_Label;
-	char* m_Name;
+	uint8_t* m_Buffer;
 	uint32_t m_Size;
+	uint32_t m_Capacity;
+	uint32_t m_CodeBufferOffset;
 	JX_PAD(4);
-} jx_x64_func_t;
+} jx_x64_section_t;
 
-typedef struct jx_x64_global_var_t
+typedef struct jx_x64_code_buffer_t
 {
-	jx_x64_label_t* m_Label;
-	char* m_Name;
+	uint8_t* m_Buffer;
 	uint32_t m_Size;
 	JX_PAD(4);
-} jx_x64_global_var_t;
+} jx_x64_code_buffer_t;
 
 typedef struct jx_x64_context_t
 {
 	jx_allocator_i* m_Allocator;
-	jx_x64_func_t** m_FuncArr;
-	jx_x64_global_var_t** m_GlobalVarArr;
-	uint32_t* m_CurFuncJccArr;
-	uint8_t* m_Buffer;
-	uint32_t m_Size;
-	uint32_t m_Capacity;
-	bool m_InsideFunc;
-	JX_PAD(7);
+	jx_x64_symbol_t** m_SymbolArr;
+	jx_x64_symbol_t* m_CurFunc;
+	jx_x64_section_t m_Section[JX64_SECTION_COUNT];
+	jx_x64_code_buffer_t m_CodeBuffer;
 } jx_x64_context_t;
+
+static jx_x64_symbol_t* jx64_symbolAlloc(jx_x64_context_t* ctx, jx_x64_symbol_kind kind, const char* name);
+static void jx64_symbolFree(jx_x64_context_t* ctx, jx_x64_symbol_t* sym);
 
 static bool jx64_stack_op_mem(jx_x64_instr_encoding_t* enc, uint8_t opcode, uint8_t modrm_reg, const jx_x64_mem_t* mem, jx_x64_size sz);
 static bool jx64_stack_op_reg(jx_x64_instr_encoding_t* enc, uint8_t baseOpcode, jx_x64_reg reg);
@@ -162,7 +165,7 @@ static void jx64_instrEnc_opcoden(jx_x64_instr_encoding_t* enc, const uint8_t* o
 static void jx64_instrEnc_modrm(jx_x64_instr_encoding_t* enc, uint8_t mod, uint8_t reg, uint8_t rm);
 static void jx64_instrEnc_sib(jx_x64_instr_encoding_t* enc, bool hasSIB, uint8_t scale, uint8_t index, uint8_t base);
 static void jx64_instrEnc_rex(jx_x64_instr_encoding_t* enc, bool hasREX, uint8_t w, uint8_t r, uint8_t x, uint8_t b);
-static void jx64_instrEnc_disp(jx_x64_instr_encoding_t* enc, bool hasDisp, jx_x64_size dispSize, uint32_t disp);
+static void jx64_instrEnc_disp(jx_x64_instr_encoding_t* enc, bool hasDisp, jx_x64_size dispSize, int32_t disp);
 static void jx64_instrEnc_imm(jx_x64_instr_encoding_t* enc, bool hasImm, jx_x64_size immSize, int64_t imm);
 static void jx64_instrEnc_segment(jx_x64_instr_encoding_t* enc, jx_x64_segment_prefix seg);
 static void jx64_instrEnc_lock_rep(jx_x64_instr_encoding_t* enc, jx_x64_lock_repeat_prefix lockRepeat);
@@ -182,20 +185,8 @@ jx_x64_context_t* jx_x64_createContext(jx_allocator_i* allocator)
 	jx_memset(ctx, 0, sizeof(jx_x64_context_t));
 	ctx->m_Allocator = allocator;
 
-	ctx->m_FuncArr = (jx_x64_func_t**)jx_array_create(allocator);
-	if (!ctx->m_FuncArr) {
-		jx_x64_destroyContext(ctx);
-		return NULL;
-	}
-
-	ctx->m_GlobalVarArr = (jx_x64_global_var_t**)jx_array_create(allocator);
-	if (!ctx->m_GlobalVarArr) {
-		jx_x64_destroyContext(ctx);
-		return NULL;
-	}
-
-	ctx->m_CurFuncJccArr = (uint32_t*)jx_array_create(allocator);
-	if (!ctx->m_CurFuncJccArr) {
+	ctx->m_SymbolArr = (jx_x64_symbol_t**)jx_array_create(allocator);
+	if (!ctx->m_SymbolArr) {
 		jx_x64_destroyContext(ctx);
 		return NULL;
 	}
@@ -207,41 +198,137 @@ void jx_x64_destroyContext(jx_x64_context_t* ctx)
 {
 	jx_allocator_i* allocator = ctx->m_Allocator;
 
-	const uint32_t numGlobalVars = (uint32_t)jx_array_sizeu(ctx->m_GlobalVarArr);
-	for (uint32_t iGV = 0; iGV < numGlobalVars; ++iGV) {
-		jx_x64_global_var_t* gv = ctx->m_GlobalVarArr[iGV];
-		JX_FREE(ctx->m_Allocator, gv->m_Name);
-		jx64_labelFree(ctx, gv->m_Label);
-		JX_FREE(ctx->m_Allocator, gv);
+	const uint32_t numSymbols = (uint32_t)jx_array_sizeu(ctx->m_SymbolArr);
+	for (uint32_t iSym = 0; iSym < numSymbols; ++iSym) {
+		jx_x64_symbol_t* sym = ctx->m_SymbolArr[iSym];
+		jx64_symbolFree(ctx, sym);
 	}
-	jx_array_free(ctx->m_GlobalVarArr);
-
-	const uint32_t numFuncs = (uint32_t)jx_array_sizeu(ctx->m_FuncArr);
-	for (uint32_t iFunc = 0; iFunc < numFuncs; ++iFunc) {
-		jx_x64_func_t* func = ctx->m_FuncArr[iFunc];
-		JX_FREE(ctx->m_Allocator, func->m_Name);
-		jx64_labelFree(ctx, func->m_Label);
-		JX_FREE(ctx->m_Allocator, func);
-	}
-	jx_array_free(ctx->m_FuncArr);
-
-	jx_array_free(ctx->m_CurFuncJccArr);
-	JX_FREE(allocator, ctx->m_Buffer);
+	jx_array_free(ctx->m_SymbolArr);
 	JX_FREE(allocator, ctx);
 }
 
 void jx64_resetBuffer(jx_x64_context_t* ctx)
 {
-	ctx->m_Size = 0;
 }
 
 const uint8_t* jx64_getBuffer(jx_x64_context_t* ctx, uint32_t* sz)
 {
-	*sz = ctx->m_Size;
-	return ctx->m_Buffer;
+	*sz = ctx->m_CodeBuffer.m_Size;
+	return ctx->m_CodeBuffer.m_Buffer;
 }
 
-jx_x64_label_t* jx64_labelAlloc(jx_x64_context_t* ctx)
+bool jx64_finalize(jx_x64_context_t* ctx)
+{
+	const uint32_t numSymbols = (uint32_t)jx_array_sizeu(ctx->m_SymbolArr);
+
+	// Emit stubs for all external functions
+	for (uint32_t iSym = 0; iSym < numSymbols; ++iSym) {
+		jx_x64_symbol_t* sym = ctx->m_SymbolArr[iSym];
+		if (sym->m_Kind == JX64_SYMBOL_FUNCTION && sym->m_Size == 0) {
+			char iatEntryName[256];
+			jx_snprintf(iatEntryName, JX_COUNTOF(iatEntryName), "__iat_%s", sym->m_Name);
+			jx_x64_symbol_t* iatEntry = jx64_globalVarDeclare(ctx, iatEntryName);
+			jx64_globalVarDefine(ctx, iatEntry, (const uint8_t*)&sym->m_Label->m_Offset, sizeof(void*), 8);
+
+			sym->m_Label->m_Offset = JX64_LABEL_OFFSET_UNBOUND;
+
+			jx64_funcBegin(ctx, sym);
+			jx64_jmp(ctx, jx64_opMemSymbol(JX64_SIZE_64, iatEntry, 0));
+			jx64_funcEnd(ctx);
+		}
+	}
+
+	// Combine all sections into a continuous buffer
+	const uint32_t pageSize = jx_os_vmemGetPageSize();
+	uint32_t totalSize = 0;
+	for (uint32_t iSection = 0; iSection < JX64_SECTION_COUNT; ++iSection) {
+		jx_x64_section_t* sec = &ctx->m_Section[iSection];
+		sec->m_CodeBufferOffset = totalSize;
+		totalSize += jx_roundup_u32(sec->m_Size, pageSize);
+	}
+
+	jx_x64_code_buffer_t* cb = &ctx->m_CodeBuffer;
+	cb->m_Buffer = jx_os_vmemAlloc(NULL, totalSize, JX_VMEM_PROTECT_READ_Msk | JX_VMEM_PROTECT_WRITE_Msk);
+	if (!cb->m_Buffer) {
+		return false;
+	}
+	cb->m_Size = totalSize;
+
+	jx_memset(cb->m_Buffer, 0, totalSize);
+
+	for (uint32_t iSection = 0; iSection < JX64_SECTION_COUNT; ++iSection) {
+		jx_x64_section_t* sec = &ctx->m_Section[iSection];
+		jx_memcpy(&cb->m_Buffer[sec->m_CodeBufferOffset], sec->m_Buffer, sec->m_Size);
+	}
+
+	for (uint32_t iSym = 0; iSym < numSymbols; ++iSym) {
+		jx_x64_symbol_t* sym = ctx->m_SymbolArr[iSym];
+
+		if (sym->m_Kind == JX64_SYMBOL_GLOBAL_VARIABLE) {
+			// Nothing to do at the moment
+		} else if (sym->m_Kind == JX64_SYMBOL_FUNCTION) {
+			// Nothing to do at the moment
+		} else {
+			JX_CHECK(false, "Unknown symbol kind.");
+		}
+
+		const uint32_t numRelocs = (uint32_t)jx_array_sizeu(sym->m_RelocArr);
+		for (uint32_t iReloc = 0; iReloc < numRelocs; ++iReloc) {
+			jx_x64_relocation_t* reloc = &sym->m_RelocArr[iReloc];
+			jx_x64_symbol_t* refSym = jx64_symbolGetByName(ctx, reloc->m_SymbolName);
+			if (!refSym || refSym->m_Label->m_Offset == JX64_LABEL_OFFSET_UNBOUND) {
+				// Unresolved external symbol
+				return false;
+			}
+
+			jx_x64_section_t* refSymSection = &ctx->m_Section[refSym->m_Label->m_Section];
+			const uint32_t refSymOffset = refSymSection->m_CodeBufferOffset + (uint32_t)refSym->m_Label->m_Offset;
+
+			jx_x64_section_t* symSection = &ctx->m_Section[sym->m_Label->m_Section];
+			const uint32_t patchOffset = symSection->m_CodeBufferOffset + (uint32_t)sym->m_Label->m_Offset + reloc->m_Offset;
+			uint8_t* patchAddr = &cb->m_Buffer[patchOffset];
+
+			switch (reloc->m_Kind) {
+			case JX64_RELOC_ABSOLUTE: {
+				JX_NOT_IMPLEMENTED();
+			} break;
+			case JX64_RELOC_ADDR64: {
+				*(uintptr_t*)patchAddr = (uintptr_t)&cb->m_Buffer[refSymOffset];
+			} break;
+			case JX64_RELOC_REL32: {
+				*(int32_t*)patchAddr += (int32_t)refSymOffset - (int32_t)(patchOffset + 4);
+			} break;
+			case JX64_RELOC_REL32_1: {
+				*(int32_t*)patchAddr += (int32_t)refSymOffset - (int32_t)(patchOffset + 5);
+			} break;
+			case JX64_RELOC_REL32_2: {
+				*(int32_t*)patchAddr += (int32_t)refSymOffset - (int32_t)(patchOffset + 6);
+			} break;
+			case JX64_RELOC_REL32_3: {
+				*(int32_t*)patchAddr += (int32_t)refSymOffset - (int32_t)(patchOffset + 7);
+			} break;
+			case JX64_RELOC_REL32_4: {
+				*(int32_t*)patchAddr += (int32_t)refSymOffset - (int32_t)(patchOffset + 8);
+			} break;
+			case JX64_RELOC_REL32_5: {
+				*(int32_t*)patchAddr += (int32_t)refSymOffset - (int32_t)(patchOffset + 9);
+			} break;
+			default:
+				JX_CHECK(false, "Unknown relocation kind.");
+				break;
+			}
+		}
+	}
+
+	// TODO: Mark .text section as execute/read and data sections as read/write or read-only once I add a .rodata section
+	if (!jx_os_vmemProtect(cb->m_Buffer, cb->m_Size, JX_VMEM_PROTECT_EXEC_Msk | JX_VMEM_PROTECT_READ_Msk | JX_VMEM_PROTECT_WRITE_Msk)) {
+		JX_CHECK(false, "Failed to change code buffer protect flags!");
+	}
+
+	return true;
+}
+
+jx_x64_label_t* jx64_labelAlloc(jx_x64_context_t* ctx, jx_x64_section_kind section)
 {
 	jx_x64_label_t* lbl = (jx_x64_label_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_x64_label_t));
 	if (!lbl) {
@@ -249,6 +336,7 @@ jx_x64_label_t* jx64_labelAlloc(jx_x64_context_t* ctx)
 	}
 
 	jx_memset(lbl, 0, sizeof(jx_x64_label_t));
+	lbl->m_Section = section;
 	lbl->m_Offset = JX64_LABEL_OFFSET_UNBOUND;
 	lbl->m_RefsArr = (jx_x64_label_ref_t*)jx_array_create(ctx->m_Allocator);
 
@@ -264,13 +352,13 @@ void jx64_labelFree(jx_x64_context_t* ctx, jx_x64_label_t* lbl)
 void jx64_labelBind(jx_x64_context_t* ctx, jx_x64_label_t* lbl)
 {
 	JX_CHECK(lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND, "Label already bound!");
-	lbl->m_Offset = ctx->m_Size;
+	lbl->m_Offset = ctx->m_Section[lbl->m_Section].m_Size;
 
 	const uint32_t numRefs = (uint32_t)jx_array_sizeu(lbl->m_RefsArr);
 	for (uint32_t i = 0; i < numRefs; ++i) {
 		const jx_x64_label_ref_t* ref = &lbl->m_RefsArr[i];
 
-		uint8_t* instrPtr = &ctx->m_Buffer[ref->m_DispOffset];
+		uint8_t* instrPtr = &ctx->m_Section[lbl->m_Section].m_Buffer[ref->m_DispOffset];
 
 		const int32_t diff = (int32_t)lbl->m_Offset - (int32_t)ref->m_NextInstrOffset;
 		*(int32_t*)instrPtr = diff;
@@ -279,29 +367,32 @@ void jx64_labelBind(jx_x64_context_t* ctx, jx_x64_label_t* lbl)
 
 uint32_t jx64_labelGetOffset(jx_x64_context_t* ctx, jx_x64_label_t* lbl)
 {
-	return lbl->m_Offset;
+	return (uint32_t)lbl->m_Offset;
 }
 
-jx_x64_global_var_t* jx64_globalVarDeclare(jx_x64_context_t* ctx, const char* name)
+jx_x64_symbol_t* jx64_globalVarDeclare(jx_x64_context_t* ctx, const char* name)
 {
-	jx_x64_global_var_t* gv = (jx_x64_global_var_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_x64_global_var_t));
+	jx_x64_symbol_t* gv = jx64_symbolAlloc(ctx, JX64_SYMBOL_GLOBAL_VARIABLE, name);
 	if (!gv) {
 		return NULL;
 	}
 
-	jx_memset(gv, 0, sizeof(jx_x64_global_var_t));
-	gv->m_Name = jx_strdup(name, ctx->m_Allocator);
-	gv->m_Label = jx64_labelAlloc(ctx);
-
-	jx_array_push_back(ctx->m_GlobalVarArr, gv);
+	jx_array_push_back(ctx->m_SymbolArr, gv);
 
 	return gv;
 }
 
-bool jx64_globalVarDefine(jx_x64_context_t* ctx, jx_x64_global_var_t* gv, const uint8_t* data, uint32_t sz)
+bool jx64_globalVarDefine(jx_x64_context_t* ctx, jx_x64_symbol_t* gv, const uint8_t* data, uint32_t sz, uint32_t alignment)
 {
-	const uint32_t curPos = ctx->m_Size;
-	const uint32_t alignedPos = ((curPos + 15) / 16) * 16;
+	if (gv->m_Kind != JX64_SYMBOL_GLOBAL_VARIABLE) {
+		JX_CHECK(false, "Expected global variable symbol.");
+		return false;
+	}
+
+	JX_CHECK(jx_isPow2_u32(alignment), "Alignment expected to be a power of 2.");
+
+	const uint32_t curPos = ctx->m_Section[JX64_SECTION_DATA].m_Size;
+	const uint32_t alignedPos = ((curPos + (alignment - 1)) / alignment) * alignment;
 	const uint32_t alignmentSize = alignedPos - curPos;
 
 	if (alignmentSize && !jx64_nop(ctx, alignmentSize)) {
@@ -310,141 +401,107 @@ bool jx64_globalVarDefine(jx_x64_context_t* ctx, jx_x64_global_var_t* gv, const 
 
 	jx64_labelBind(ctx, gv->m_Label);
 
-	return jx64_emitBytes(ctx, data, sz);
+	return jx64_emitBytes(ctx, JX64_SECTION_DATA, data, sz);
 }
 
-jx_x64_label_t* jx64_globalVarGetLabelByName(jx_x64_context_t* ctx, const char* name)
+jx_x64_symbol_t* jx64_funcDeclare(jx_x64_context_t* ctx, const char* name)
 {
-	const uint32_t numGlobalVars = (uint32_t)jx_array_sizeu(ctx->m_GlobalVarArr);
-	for (uint32_t iGV = 0; iGV < numGlobalVars; ++iGV) {
-		jx_x64_global_var_t* gv = ctx->m_GlobalVarArr[iGV];
-		if (!jx_strcmp(gv->m_Name, name)) {
-			return gv->m_Label;
-		}
-	}
-
-	return NULL;
-}
-
-jx_x64_func_t* jx64_funcDeclare(jx_x64_context_t* ctx, const char* name)
-{
-	jx_x64_func_t* func = (jx_x64_func_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_x64_func_t));
+	jx_x64_symbol_t* func = jx64_symbolAlloc(ctx, JX64_SYMBOL_FUNCTION, name);
 	if (!func) {
 		return NULL;
 	}
 
-	jx_memset(func, 0, sizeof(jx_x64_func_t));
-	func->m_Name = jx_strdup(name, ctx->m_Allocator);
-	func->m_Label = jx64_labelAlloc(ctx);
-	
-	jx_array_push_back(ctx->m_FuncArr, func);
+	jx_array_push_back(ctx->m_SymbolArr, func);
 
 	return func;
 }
 
-bool jx64_funcBegin(jx_x64_context_t* ctx, jx_x64_func_t* func)
+bool jx64_funcBegin(jx_x64_context_t* ctx, jx_x64_symbol_t* func)
 {
-	if (ctx->m_InsideFunc) {
+	if (func->m_Kind != JX64_SYMBOL_FUNCTION) {
+		JX_CHECK(false, "Expected function symbol");
+		return false;
+	}
+
+	if (ctx->m_CurFunc) {
 		return false;
 	}
 
 	jx64_labelBind(ctx, func->m_Label);
-	jx_array_resize(ctx->m_CurFuncJccArr, 0);
 
-	ctx->m_InsideFunc = true;
+	ctx->m_CurFunc = func;
 
 	return true;
 }
 
 void jx64_funcEnd(jx_x64_context_t* ctx)
 {
-	if (!ctx->m_InsideFunc) {
+	if (!ctx->m_CurFunc) {
 		return;
 	}
 
-	const uint32_t numFuncs = (uint32_t)jx_array_sizeu(ctx->m_FuncArr);
-	jx_x64_func_t* func = ctx->m_FuncArr[numFuncs - 1];
-	func->m_Size = ctx->m_Size - func->m_Label->m_Offset;
+	jx_x64_symbol_t* func = ctx->m_CurFunc;
+	func->m_Size = ctx->m_Section[JX64_SECTION_TEXT].m_Size - (uint32_t)func->m_Label->m_Offset;
 
-	ctx->m_InsideFunc = false;
+	ctx->m_CurFunc = NULL;
 
 	// TODO: Patch all jumps inside the function body in order to turn them into 1-byte rel jumps
 	// and pad the rest of the function with nops in order to keep the other function addresses 
 	// intact.
 	// NOTE: I have to keep all jumps and not only conditional jumps in order to replace 
 	// their displacements if at least 1 of them changes
-#if 0
-	const uint32_t numJumps = (uint32_t)jx_array_sizeu(ctx->m_CurFuncJccArr);
-	for (uint32_t iJmp = numJumps; iJmp > 0; --iJmp) {
-		const uint32_t codeOffset = ctx->m_CurFuncJccArr[iJmp - 1];
-
-		uint8_t* code = &ctx->m_Buffer[codeOffset];
-		if (code[0] == 0x0F && (code[1] & 0xF0) == 0x80) {
-			// Conditional jump with 32-bit displacement
-			// Check if displacement can fit into an 8-bit signed integer
-			// and convert instruction.
-			int32_t disp32 = *(int32_t*)&code[2];
-			if (JX64_DISP_IS_8BIT(disp32)) {
-				const uint8_t cc = (code[1] & 0x0F);
-				code[0] = 0x90; // nop
-				code[1] = 0x90;
-				code[2] = 0x90;
-				code[3] = 0x90;
-				code[4] = 0x70 | cc;
-				code[5] = (uint8_t)disp32;
-			}
-		}
-	}
-#endif
 }
 
-jx_x64_label_t* jx64_funcGetLabelByName(jx_x64_context_t* ctx, const char* name)
+jx_x64_symbol_t* jx64_symbolGetByName(jx_x64_context_t* ctx, const char* name)
 {
-	const uint32_t numFuncs = (uint32_t)jx_array_sizeu(ctx->m_FuncArr);
-	for (uint32_t iFunc = 0; iFunc < numFuncs; ++iFunc) {
-		jx_x64_func_t* func = ctx->m_FuncArr[iFunc];
-		if (!jx_strcmp(func->m_Name, name)) {
-			return func->m_Label;
+	const uint32_t numSymbols = (uint32_t)jx_array_sizeu(ctx->m_SymbolArr);
+	for (uint32_t iSym = 0; iSym < numSymbols; ++iSym) {
+		jx_x64_symbol_t* sym = ctx->m_SymbolArr[iSym];
+		if (!jx_strcmp(sym->m_Name, name)) {
+			return sym;
 		}
 	}
 
 	return NULL;
 }
 
-jx_x64_label_t* jx64_funcGetLabel(jx_x64_context_t* ctx, jx_x64_func_t* func)
+void jx64_symbolAddRelocation(jx_x64_context_t* ctx, jx_x64_symbol_t* sym, jx_x64_relocation_kind kind, uint32_t offset, const char* symbolName)
 {
-	return func->m_Label;
+	jx_array_push_back(sym->m_RelocArr, (jx_x64_relocation_t){
+		.m_Kind = kind,
+		.m_Offset = offset,
+		.m_SymbolName = jx_strdup(symbolName, ctx->m_Allocator)
+	});
 }
 
-uint32_t jx64_funcGetOffset(jx_x64_context_t* ctx, jx_x64_func_t* func)
+bool jx64_symbolSetExternalAddress(jx_x64_context_t* ctx, jx_x64_symbol_t* sym, void* ptr)
 {
-	return func->m_Label->m_Offset;
+	sym->m_Label->m_Offset = (uint64_t)ptr;
+	return true;
 }
 
-bool jx64_emitBytes(jx_x64_context_t* ctx, const uint8_t* bytes, uint32_t n)
+bool jx64_emitBytes(jx_x64_context_t* ctx, jx_x64_section_kind section, const uint8_t* bytes, uint32_t n)
 {
-	if (ctx->m_Size + n > ctx->m_Capacity) {
-		const uint32_t oldCapacity = ctx->m_Capacity;
-		const uint32_t newCapacity = oldCapacity
-			? oldCapacity * 2
-			: 256
-			;
+	jx_x64_section_t* sec = &ctx->m_Section[section];
+	if (sec->m_Size + n > sec->m_Capacity) {
+		const uint32_t oldCapacity = sec->m_Capacity;
+		const uint32_t newCapacity = oldCapacity + jx_max_u32(n, 256);
 
 		uint8_t* newBuffer = (uint8_t*)JX_ALLOC(ctx->m_Allocator, newCapacity);
 		if (!newBuffer) {
 			return false;
 		}
 
-		jx_memcpy(newBuffer, ctx->m_Buffer, oldCapacity);
+		jx_memcpy(newBuffer, sec->m_Buffer, oldCapacity);
 		jx_memset(&newBuffer[oldCapacity], 0, newCapacity - oldCapacity);
 
-		JX_FREE(ctx->m_Allocator, ctx->m_Buffer);
-		ctx->m_Buffer = newBuffer;
-		ctx->m_Capacity = newCapacity;
+		JX_FREE(ctx->m_Allocator, sec->m_Buffer);
+		sec->m_Buffer = newBuffer;
+		sec->m_Capacity = newCapacity;
 	}
 
-	jx_memcpy(&ctx->m_Buffer[ctx->m_Size], bytes, n);
-	ctx->m_Size += n;
+	jx_memcpy(&sec->m_Buffer[sec->m_Size], bytes, n);
+	sec->m_Size += n;
 
 	return true;
 }
@@ -452,40 +509,26 @@ bool jx64_emitBytes(jx_x64_context_t* ctx, const uint8_t* bytes, uint32_t n)
 bool jx64_retn(jx_x64_context_t* ctx)
 {
 	const uint8_t instr[] = { 0xC3 };
-	return jx64_emitBytes(ctx, &instr[0], JX_COUNTOF(instr));
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, &instr[0], JX_COUNTOF(instr));
 }
 
 bool jx64_mov(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
-	if (dst.m_Type == JX64_OPERAND_LBL && src.m_Type == JX64_OPERAND_LBL) {
+	if (dst.m_Type == JX64_OPERAND_SYM && src.m_Type == JX64_OPERAND_SYM) {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
-	// RIP-relative addressing. Calculate offset to the specified label 
-	// and turn operand into mem operand. 
-	// NOTE: Since, at this point, we don't know how long the instruction
-	// will end up being we cannot calculate the correct offset. We calculate
-	// the offset to the start of this instruction and jx64_binary_op_reg_mem() should
-	// take care of fixing it.
-	jx_x64_label_t* lbl = NULL;
-	if (src.m_Type == JX64_OPERAND_LBL) {
-		lbl = src.u.m_Lbl;
-		const int32_t diff = lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND
-			? 0
-			: (int32_t)lbl->m_Offset - (int32_t)ctx->m_Size
-			;
-		src = jx64_opMem(src.m_Size, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, diff);
-	} else if (dst.m_Type == JX64_OPERAND_LBL) {
-		lbl = dst.u.m_Lbl;
-		const int32_t diff = lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND
-			? 0
-			: (int32_t)lbl->m_Offset - (int32_t)ctx->m_Size
-			;
-		dst = jx64_opMem(dst.m_Size, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, diff);
+	jx_x64_symbol_t* sym = NULL;
+	if (src.m_Type == JX64_OPERAND_SYM) {
+		sym = src.u.m_Sym;
+		src = jx64_opMem(src.m_Size, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, 0);
+	} else if (dst.m_Type == JX64_OPERAND_SYM) {
+		sym = dst.u.m_Sym;
+		dst = jx64_opMem(dst.m_Size, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, 0);
 	}
 
 	jx_x64_instr_encoding_t* enc = &(jx_x64_instr_encoding_t) { 0 };
-
 	if (dst.m_Type == JX64_OPERAND_REG && src.m_Type == JX64_OPERAND_IMM) {
 		if (!jx64_mov_reg_imm(enc, dst.u.m_Reg, src.u.m_ImmI64, src.m_Size)) {
 			return false;
@@ -511,10 +554,15 @@ bool jx64_mov(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 		return false;
 	}
 
-	if (lbl && lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND) {
+	if (sym) {
 		const uint32_t dispOffset = jx64_instrEnc_calcDispOffset(enc);
 		const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
-		jx_array_push_back(lbl->m_RefsArr, (jx_x64_label_ref_t){ .m_DispOffset = ctx->m_Size + dispOffset, .m_NextInstrOffset = ctx->m_Size + instrSize });
+
+		const uint32_t relocDelta = (instrSize - dispOffset) - sizeof(int32_t);
+		JX_CHECK(relocDelta <= 5, "Invalid relocation type");
+		const uint32_t curFuncOffset = (uint32_t)ctx->m_CurFunc->m_Label->m_Offset;
+		const uint32_t relocOffset = ctx->m_Section[JX64_SECTION_TEXT].m_Size - curFuncOffset + dispOffset;
+		jx64_symbolAddRelocation(ctx, ctx->m_CurFunc, JX64_RELOC_REL32 + relocDelta, relocOffset, sym->m_Name);
 	}
 
 	jx_x64_instr_buffer_t* instr = &(jx_x64_instr_buffer_t) { 0 };
@@ -522,11 +570,12 @@ bool jx64_mov(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 		return false;
 	}
 
-	return jx64_emitBytes(ctx, instr->m_Buffer, instr->m_Size);
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr->m_Buffer, instr->m_Size);
 }
 
 bool jx64_movsx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
+	JX_CHECK(dst.m_Type != JX64_OPERAND_SYM && src.m_Type != JX64_OPERAND_SYM, "TODO");
 	const bool invalidOperands = false
 		|| dst.m_Type != JX64_OPERAND_REG // Destination operand should always be a register
 		|| dst.m_Size <= src.m_Size
@@ -535,6 +584,7 @@ bool jx64_movsx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 		return false;
 	}
 
+#if 0
 	// RIP-relative addressing. Calculate offset to the specified label 
 	// and turn operand into mem operand. 
 	// NOTE: Since, at this point, we don't know how long the instruction
@@ -550,6 +600,7 @@ bool jx64_movsx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 			;
 		src = jx64_opMem(src.m_Size, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, diff);
 	}
+#endif
 
 	jx_x64_instr_encoding_t* enc = &(jx_x64_instr_encoding_t) { 0 };
 
@@ -579,22 +630,25 @@ bool jx64_movsx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 		return false;
 	}
 
+#if 0
 	if (lbl && lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND) {
 		const uint32_t dispOffset = jx64_instrEnc_calcDispOffset(enc);
 		const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
 		jx_array_push_back(lbl->m_RefsArr, (jx_x64_label_ref_t) { .m_DispOffset = ctx->m_Size + dispOffset, .m_NextInstrOffset = ctx->m_Size + instrSize });
 	}
+#endif
 
 	jx_x64_instr_buffer_t* instr = &(jx_x64_instr_buffer_t) { 0 };
 	if (!jx64_encodeInstr(instr, enc)) {
 		return false;
 	}
 
-	return jx64_emitBytes(ctx, instr->m_Buffer, instr->m_Size);
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr->m_Buffer, instr->m_Size);
 }
 
 bool jx64_movzx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
+	JX_CHECK(dst.m_Type != JX64_OPERAND_SYM && src.m_Type != JX64_OPERAND_SYM, "TODO");
 	const bool invalidOperands = false
 		|| dst.m_Type != JX64_OPERAND_REG // Destination operand should always be a register
 		|| dst.m_Size < src.m_Size
@@ -605,6 +659,7 @@ bool jx64_movzx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 
 	JX_CHECK(!(dst.m_Size == JX64_SIZE_64 && src.m_Size == JX64_SIZE_32), "Use mov!");
 
+#if 0
 	// RIP-relative addressing. Calculate offset to the specified label 
 	// and turn operand into mem operand. 
 	// NOTE: Since, at this point, we don't know how long the instruction
@@ -620,6 +675,7 @@ bool jx64_movzx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 			;
 		src = jx64_opMem(src.m_Size, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, diff);
 	}
+#endif
 
 	jx_x64_instr_encoding_t* enc = &(jx_x64_instr_encoding_t) { 0 };
 
@@ -647,18 +703,20 @@ bool jx64_movzx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 		return false;
 	}
 
+#if 0
 	if (lbl && lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND) {
 		const uint32_t dispOffset = jx64_instrEnc_calcDispOffset(enc);
 		const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
 		jx_array_push_back(lbl->m_RefsArr, (jx_x64_label_ref_t) { .m_DispOffset = ctx->m_Size + dispOffset, .m_NextInstrOffset = ctx->m_Size + instrSize });
 	}
+#endif
 
 	jx_x64_instr_buffer_t* instr = &(jx_x64_instr_buffer_t) { 0 };
 	if (!jx64_encodeInstr(instr, enc)) {
 		return false;
 	}
 
-	return jx64_emitBytes(ctx, instr->m_Buffer, instr->m_Size);
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr->m_Buffer, instr->m_Size);
 }
 
 bool jx64_nop(jx_x64_context_t* ctx, uint32_t n)
@@ -681,19 +739,21 @@ bool jx64_nop(jx_x64_context_t* ctx, uint32_t n)
 	};
 
 	while (n > 9) {
-		jx64_emitBytes(ctx, &kNops[9][0], 9);
+		jx64_emitBytes(ctx, JX64_SECTION_TEXT, &kNops[9][0], 9);
 		n -= 9;
 	}
 
-	jx64_emitBytes(ctx, &kNops[n][0], n);
+	jx64_emitBytes(ctx, JX64_SECTION_TEXT, &kNops[n][0], n);
 
 	return true;
 }
 
 bool jx64_push(jx_x64_context_t* ctx, jx_x64_operand_t op)
 {
+	JX_CHECK(op.m_Type != JX64_OPERAND_SYM, "TODO");
 	jx_x64_instr_encoding_t* enc = &(jx_x64_instr_encoding_t){ 0 };
 	
+#if 0
 	jx_x64_label_t* lbl = NULL;
 	if (op.m_Type == JX64_OPERAND_LBL) {
 		lbl = op.u.m_Lbl;
@@ -703,6 +763,7 @@ bool jx64_push(jx_x64_context_t* ctx, jx_x64_operand_t op)
 			;
 		op = jx64_opMem(op.m_Size, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, diff);
 	}
+#endif
 
 	if (op.m_Type == JX64_OPERAND_IMM) {
 		const bool invalidOperand = false
@@ -726,24 +787,28 @@ bool jx64_push(jx_x64_context_t* ctx, jx_x64_operand_t op)
 		}
 	}
 
+#if 0
 	if (lbl && lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND) {
 		const uint32_t dispOffset = jx64_instrEnc_calcDispOffset(enc);
 		const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
 		jx_array_push_back(lbl->m_RefsArr, (jx_x64_label_ref_t) { .m_DispOffset = ctx->m_Size + dispOffset, .m_NextInstrOffset = ctx->m_Size + instrSize });
 	}
+#endif
 
 	jx_x64_instr_buffer_t* instr = &(jx_x64_instr_buffer_t){ 0 };
 	if (!jx64_encodeInstr(instr, enc)) {
 		return false;
 	}
 
-	return jx64_emitBytes(ctx, instr->m_Buffer, instr->m_Size);
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr->m_Buffer, instr->m_Size);
 }
 
 bool jx64_pop(jx_x64_context_t* ctx, jx_x64_operand_t op)
 {
+	JX_CHECK(op.m_Type != JX64_OPERAND_SYM, "TODO");
 	jx_x64_instr_encoding_t* enc = &(jx_x64_instr_encoding_t){ 0 };
 
+#if 0
 	jx_x64_label_t* lbl = NULL;
 	if (op.m_Type == JX64_OPERAND_LBL) {
 		lbl = op.u.m_Lbl;
@@ -753,6 +818,7 @@ bool jx64_pop(jx_x64_context_t* ctx, jx_x64_operand_t op)
 			;
 		op = jx64_opMem(op.m_Size, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, diff);
 	}
+#endif
 
 	if (op.m_Type == JX64_OPERAND_REG) {
 		// 0x58+ r
@@ -769,18 +835,20 @@ bool jx64_pop(jx_x64_context_t* ctx, jx_x64_operand_t op)
 		return false;
 	}
 
+#if 0
 	if (lbl && lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND) {
 		const uint32_t dispOffset = jx64_instrEnc_calcDispOffset(enc);
 		const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
 		jx_array_push_back(lbl->m_RefsArr, (jx_x64_label_ref_t) { .m_DispOffset = ctx->m_Size + dispOffset, .m_NextInstrOffset = ctx->m_Size + instrSize });
 	}
+#endif
 
 	jx_x64_instr_buffer_t* instr = &(jx_x64_instr_buffer_t){ 0 };
 	if (!jx64_encodeInstr(instr, enc)) {
 		return false;
 	}
 
-	return jx64_emitBytes(ctx, instr->m_Buffer, instr->m_Size);
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr->m_Buffer, instr->m_Size);
 }
 
 bool jx64_add(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
@@ -860,6 +928,7 @@ bool jx64_dec(jx_x64_context_t* ctx, jx_x64_operand_t op)
 
 bool jx64_imul(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
+	JX_CHECK(dst.m_Type != JX64_OPERAND_SYM && src.m_Type != JX64_OPERAND_SYM, "TODO");
 	const bool invalidOperands = false
 		|| dst.m_Type != JX64_OPERAND_REG // Destination operand should always be a register
 		;
@@ -896,7 +965,7 @@ bool jx64_imul(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src
 		return false;
 	}
 
-	return jx64_emitBytes(ctx, instr->m_Buffer, instr->m_Size);
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr->m_Buffer, instr->m_Size);
 }
 
 bool jx64_lea(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
@@ -905,26 +974,16 @@ bool jx64_lea(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 
 	const bool invalidOperands = false
 		|| dst.m_Type != JX64_OPERAND_REG
-		|| (src.m_Type != JX64_OPERAND_MEM && src.m_Type != JX64_OPERAND_LBL)
+		|| (src.m_Type != JX64_OPERAND_MEM && src.m_Type != JX64_OPERAND_LBL && src.m_Type != JX64_OPERAND_SYM)
 		;
 	if (invalidOperands) {
 		return false;
 	}
 
-	jx_x64_label_t* lbl = NULL;
-	if (src.m_Type == JX64_OPERAND_LBL) {
-		// RIP-relative addressing. Calculate offset to the specified label 
-		// and turn src operand into mem operand. 
-		// NOTE: Since, at this point, we don't know how long the instruction
-		// will end up being we cannot calculate the correct offset. We calculate
-		// the offset to the start of this instruction and jx64_binary_op_reg_mem() should
-		// take care of fixing it.
-		lbl = src.u.m_Lbl;
-		const int32_t diff = lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND
-			? 0
-			: (int32_t)lbl->m_Offset - (int32_t)ctx->m_Size
-			;
-		src = jx64_opMem(JX64_SIZE_64, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, diff);
+	jx_x64_symbol_t* sym = NULL;
+	if (src.m_Type == JX64_OPERAND_SYM) {
+		sym = src.u.m_Sym;
+		src = jx64_opMem(JX64_SIZE_64, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, 0);
 	}
 
 	const uint8_t opcode = 0x8D;
@@ -932,10 +991,15 @@ bool jx64_lea(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 		return false;
 	}
 
-	if (lbl && lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND) {
+	if (sym) {
 		const uint32_t dispOffset = jx64_instrEnc_calcDispOffset(enc);
 		const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
-		jx_array_push_back(lbl->m_RefsArr, (jx_x64_label_ref_t) { .m_DispOffset = ctx->m_Size + dispOffset, .m_NextInstrOffset = ctx->m_Size + instrSize });
+
+		const uint32_t relocDelta = (instrSize - dispOffset) - sizeof(int32_t);
+		JX_CHECK(relocDelta <= 5, "Invalid relocation type");
+		const uint32_t curFuncOffset = (uint32_t)ctx->m_CurFunc->m_Label->m_Offset;
+		const uint32_t relocOffset = ctx->m_Section[JX64_SECTION_TEXT].m_Size - curFuncOffset + dispOffset;
+		jx64_symbolAddRelocation(ctx, ctx->m_CurFunc, JX64_RELOC_REL32 + relocDelta, relocOffset, sym->m_Name);
 	}
 
 	jx_x64_instr_buffer_t* instr = &(jx_x64_instr_buffer_t) { 0 };
@@ -943,11 +1007,13 @@ bool jx64_lea(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 		return false;
 	}
 
-	return jx64_emitBytes(ctx, instr->m_Buffer, instr->m_Size);
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr->m_Buffer, instr->m_Size);
 }
 
 bool jx64_test(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
+	JX_CHECK(dst.m_Type != JX64_OPERAND_SYM && src.m_Type != JX64_OPERAND_SYM, "TODO");
+#if 0
 	// RIP relative addressing
 	jx_x64_label_t* lbl = NULL;
 	if (dst.m_Type == JX64_OPERAND_LBL) {
@@ -958,6 +1024,7 @@ bool jx64_test(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src
 			;
 		dst = jx64_opMem(src.m_Size, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, diff);
 	}
+#endif
 
 	const bool invalidOperands = false
 		|| !(dst.m_Size == src.m_Size || (dst.m_Size == JX64_SIZE_64 && src.m_Size == JX64_SIZE_32)) // only allow reg size == imm size or 64-bit with 32-bit imm
@@ -993,52 +1060,56 @@ bool jx64_test(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src
 		return false;
 	}
 
+#if 0
 	if (lbl && lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND) {
 		const uint32_t dispOffset = jx64_instrEnc_calcDispOffset(enc);
 		const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
 		jx_array_push_back(lbl->m_RefsArr, (jx_x64_label_ref_t) { .m_DispOffset = ctx->m_Size + dispOffset, .m_NextInstrOffset = ctx->m_Size + instrSize });
 	}
+#endif
 
 	jx_x64_instr_buffer_t* instr = &(jx_x64_instr_buffer_t) { 0 };
 	if (!jx64_encodeInstr(instr, enc)) {
 		return false;
 	}
 
-	return jx64_emitBytes(ctx, instr->m_Buffer, instr->m_Size);
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr->m_Buffer, instr->m_Size);
 }
 
 bool jx64_std(jx_x64_context_t* ctx)
 {
 	const uint8_t instr[] = { 0xFD };
-	return jx64_emitBytes(ctx, &instr[0], JX_COUNTOF(instr));
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, &instr[0], JX_COUNTOF(instr));
 }
 
 bool jx64_cld(jx_x64_context_t* ctx)
 {
 	const uint8_t instr[] = { 0xFC };
-	return jx64_emitBytes(ctx, &instr[0], JX_COUNTOF(instr));
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, &instr[0], JX_COUNTOF(instr));
 }
 
 bool jx64_stc(jx_x64_context_t* ctx)
 {
 	const uint8_t instr[] = { 0xF9 };
-	return jx64_emitBytes(ctx, &instr[0], JX_COUNTOF(instr));
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, &instr[0], JX_COUNTOF(instr));
 }
 
 bool jx64_cmc(jx_x64_context_t* ctx)
 {
 	const uint8_t instr[] = { 0xF5 };
-	return jx64_emitBytes(ctx, &instr[0], JX_COUNTOF(instr));
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, &instr[0], JX_COUNTOF(instr));
 }
 
 bool jx64_clc(jx_x64_context_t* ctx)
 {
 	const uint8_t instr[] = { 0xF8 };
-	return jx64_emitBytes(ctx, &instr[0], JX_COUNTOF(instr));
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, &instr[0], JX_COUNTOF(instr));
 }
 
 bool jx64_setcc(jx_x64_context_t* ctx, jx_x64_condition_code cc, jx_x64_operand_t dst)
 {
+	JX_CHECK(dst.m_Type != JX64_OPERAND_SYM, "TODO");
+#if 0
 	jx_x64_label_t* lbl = NULL;
 	if (dst.m_Type == JX64_OPERAND_LBL) {
 		// RIP-relative addressing. Calculate offset to the specified label 
@@ -1054,6 +1125,7 @@ bool jx64_setcc(jx_x64_context_t* ctx, jx_x64_condition_code cc, jx_x64_operand_
 			;
 		dst = jx64_opMem(dst.m_Size, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, diff);
 	}
+#endif
 
 	const bool invalidOperands = false
 		|| (dst.m_Type != JX64_OPERAND_REG && dst.m_Type != JX64_OPERAND_MEM)
@@ -1082,18 +1154,20 @@ bool jx64_setcc(jx_x64_context_t* ctx, jx_x64_condition_code cc, jx_x64_operand_
 		return false;
 	}
 
+#if 0
 	if (lbl && lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND) {
 		const uint32_t dispOffset = jx64_instrEnc_calcDispOffset(enc);
 		const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
 		jx_array_push_back(lbl->m_RefsArr, (jx_x64_label_ref_t) { .m_DispOffset = ctx->m_Size + dispOffset, .m_NextInstrOffset = ctx->m_Size + instrSize });
 	}
+#endif
 
 	jx_x64_instr_buffer_t* instr = &(jx_x64_instr_buffer_t) { 0 };
 	if (!jx64_encodeInstr(instr, enc)) {
 		return false;
 	}
 
-	return jx64_emitBytes(ctx, instr->m_Buffer, instr->m_Size);
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr->m_Buffer, instr->m_Size);
 
 	return false;
 }
@@ -1175,9 +1249,16 @@ bool jx64_bsf(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 
 bool jx64_jcc(jx_x64_context_t* ctx, jx_x64_condition_code cc, jx_x64_label_t* lbl)
 {
+	if (lbl->m_Section != JX64_SECTION_TEXT) {
+		JX_CHECK(false, "Can only jump to text section labels");
+		return false;
+	}
+
+	jx_x64_section_t* sec = &ctx->m_Section[lbl->m_Section];
+
 	const int32_t displacement = lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND
 		? 0
-		: (int32_t)lbl->m_Offset - (int32_t)ctx->m_Size
+		: (int32_t)lbl->m_Offset - (int32_t)sec->m_Size
 		;
 
 	jx_x64_instr_encoding_t* enc = &(jx_x64_instr_encoding_t){ 0 };
@@ -1195,12 +1276,10 @@ bool jx64_jcc(jx_x64_context_t* ctx, jx_x64_condition_code cc, jx_x64_label_t* l
 	if (lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND) {
 		const uint32_t dispOffset = jx64_instrEnc_calcDispOffset(enc);
 		const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
-		jx_array_push_back(lbl->m_RefsArr, (jx_x64_label_ref_t){ .m_DispOffset = ctx->m_Size + dispOffset, .m_NextInstrOffset = ctx->m_Size + instrSize });
+		jx_array_push_back(lbl->m_RefsArr, (jx_x64_label_ref_t){ .m_DispOffset = sec->m_Size + dispOffset, .m_NextInstrOffset = sec->m_Size + instrSize });
 	}
 
-	jx_array_push_back(ctx->m_CurFuncJccArr, ctx->m_Size);
-
-	return jx64_emitBytes(ctx, instr->m_Buffer, instr->m_Size);
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr->m_Buffer, instr->m_Size);
 }
 
 bool jx64_jmp(jx_x64_context_t* ctx, jx_x64_operand_t op)
@@ -1216,37 +1295,73 @@ bool jx64_call(jx_x64_context_t* ctx, jx_x64_operand_t op)
 bool jx64_cwd(jx_x64_context_t* ctx)
 {
 	const uint8_t instr[] = { JX64_OPERAND_SIZE_PREFIX, 0x99 };
-	return jx64_emitBytes(ctx, instr, JX_COUNTOF(instr));
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr, JX_COUNTOF(instr));
 }
 
 bool jx64_cdq(jx_x64_context_t* ctx)
 {
 	const uint8_t instr[] = { 0x99 };
-	return jx64_emitBytes(ctx, instr, JX_COUNTOF(instr));
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr, JX_COUNTOF(instr));
 }
 
 bool jx64_cqo(jx_x64_context_t* ctx)
 {
 	const uint8_t instr[] = { JX64_REX(1, 0, 0, 0), 0x99};
-	return jx64_emitBytes(ctx, instr, JX_COUNTOF(instr));
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr, JX_COUNTOF(instr));
 }
 
 bool jx64_cbw(jx_x64_context_t* ctx)
 {
 	const uint8_t instr[] = { JX64_OPERAND_SIZE_PREFIX, 0x98 };
-	return jx64_emitBytes(ctx, instr, JX_COUNTOF(instr));
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr, JX_COUNTOF(instr));
 }
 
 bool jx64_cwde(jx_x64_context_t* ctx)
 {
 	const uint8_t instr[] = { 0x98 };
-	return jx64_emitBytes(ctx, instr, JX_COUNTOF(instr));
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr, JX_COUNTOF(instr));
 }
 
 bool jx64_cdqe(jx_x64_context_t* ctx)
 {
 	const uint8_t instr[] = { JX64_REX(1, 0, 0, 0), 0x98 };
-	return jx64_emitBytes(ctx, instr, JX_COUNTOF(instr));
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr, JX_COUNTOF(instr));
+}
+
+static jx_x64_symbol_t* jx64_symbolAlloc(jx_x64_context_t* ctx, jx_x64_symbol_kind kind, const char* name)
+{
+	jx_x64_symbol_t* sym = (jx_x64_symbol_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_x64_symbol_t));
+	if (!sym) {
+		return NULL;
+	}
+
+	jx_x64_section_kind section = kind == JX64_SYMBOL_FUNCTION
+		? JX64_SECTION_TEXT
+		: JX64_SECTION_DATA
+		;
+
+	jx_memset(sym, 0, sizeof(jx_x64_symbol_t));
+	sym->m_Kind = kind;
+	sym->m_Label = jx64_labelAlloc(ctx, section);
+	sym->m_Name = jx_strdup(name, ctx->m_Allocator);
+	sym->m_RelocArr = (jx_x64_relocation_t*)jx_array_create(ctx->m_Allocator);
+	if (!sym->m_Label || !sym->m_Name || !sym->m_RelocArr) {
+		jx64_symbolFree(ctx, sym);
+		return NULL;
+	}
+
+	return sym;
+}
+
+static void jx64_symbolFree(jx_x64_context_t* ctx, jx_x64_symbol_t* sym)
+{
+	jx_array_free(sym->m_RelocArr);
+	JX_FREE(ctx->m_Allocator, sym->m_Name);
+	if (sym->m_Label) {
+		jx64_labelFree(ctx, sym->m_Label);
+		sym->m_Label = NULL;
+	}
+	JX_FREE(ctx->m_Allocator, sym);
 }
 
 // push, pop
@@ -1354,6 +1469,7 @@ static bool jx64_stack_op_mem(jx_x64_instr_encoding_t* enc, uint8_t opcode, uint
 		jx64_instrEnc_sib(enc, isBase_rsp, 0b00, 0b100, 0b100);
 		jx64_instrEnc_disp(enc, needsDisplacement, JX64_DISP_IS_8BIT(mem->m_Displacement) && !isBase_rip ? JX64_SIZE_8 : JX64_SIZE_32, mem->m_Displacement);
 
+#if 0
 		// RIP-relative addressing: 
 		// Fix displacement by the number of bytes of this instruction.
 		// The caller doesn't and shouldn't know how many bytes the current instruction
@@ -1364,6 +1480,7 @@ static bool jx64_stack_op_mem(jx_x64_instr_encoding_t* enc, uint8_t opcode, uint
 		if (isBase_rip) {
 			enc->m_Disp -= jx64_instrEnc_calcInstrSize(enc);
 		}
+#endif
 	} else {
 		// op (q)word ptr [disp]
 		jx64_instrEnc_operandSize(enc, sz == JX64_SIZE_16);
@@ -1419,37 +1536,23 @@ static bool jx64_math_unary_op(jx_x64_context_t* ctx, uint8_t baseOpcode, uint8_
 		return false;
 	}
 
-	return jx64_emitBytes(ctx, instr->m_Buffer, instr->m_Size);
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr->m_Buffer, instr->m_Size);
 }
 
 // adc, add, sub, sbb, or, xor, and, cmp
 static bool jx64_math_binary_op(jx_x64_context_t* ctx, uint8_t opcode_imm, uint8_t modrm_reg, uint8_t opcode_rm, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
-	if (dst.m_Type == JX64_OPERAND_LBL && src.m_Type == JX64_OPERAND_LBL) {
+	if (dst.m_Type == JX64_OPERAND_SYM && src.m_Type == JX64_OPERAND_SYM) {
 		return false;
 	}
 
-	// RIP-relative addressing. Calculate offset to the specified label 
-	// and turn src operand into mem operand. 
-	// NOTE: Since, at this point, we don't know how long the instruction
-	// will end up being we cannot calculate the correct offset. We calculate
-	// the offset to the start of this instruction and jx64_binary_op_reg_mem() should
-	// take care of fixing it.
-	jx_x64_label_t* lbl = NULL;
-	if (src.m_Type == JX64_OPERAND_LBL) {
-		lbl = src.u.m_Lbl;
-		const int32_t diff = lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND
-			? 0
-			: (int32_t)lbl->m_Offset - (int32_t)ctx->m_Size
-			;
-		src = jx64_opMem(src.m_Size, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, diff);
-	} else if (dst.m_Type == JX64_OPERAND_LBL) {
-		lbl = dst.u.m_Lbl;
-		const int32_t diff = lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND
-			? 0
-			: (int32_t)lbl->m_Offset - (int32_t)ctx->m_Size
-			;
-		dst = jx64_opMem(dst.m_Size, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, diff);
+	jx_x64_symbol_t* sym = NULL;
+	if (src.m_Type == JX64_OPERAND_SYM) {
+		sym = src.u.m_Sym;
+		src = jx64_opMem(src.m_Size, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, 0);
+	} else if (dst.m_Type == JX64_OPERAND_SYM) {
+		sym = dst.u.m_Sym;
+		dst = jx64_opMem(dst.m_Size, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, 0);
 	}
 
 	jx_x64_instr_encoding_t* enc = &(jx_x64_instr_encoding_t) { 0 };
@@ -1499,10 +1602,15 @@ static bool jx64_math_binary_op(jx_x64_context_t* ctx, uint8_t opcode_imm, uint8
 		return false;
 	}
 
-	if (lbl && lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND) {
+	if (sym) {
 		const uint32_t dispOffset = jx64_instrEnc_calcDispOffset(enc);
 		const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
-		jx_array_push_back(lbl->m_RefsArr, (jx_x64_label_ref_t) { .m_DispOffset = ctx->m_Size + dispOffset, .m_NextInstrOffset = ctx->m_Size + instrSize });
+
+		const uint32_t relocDelta = (instrSize - dispOffset) - sizeof(int32_t);
+		JX_CHECK(relocDelta <= 5, "Invalid relocation type");
+		const uint32_t curFuncOffset = (uint32_t)ctx->m_CurFunc->m_Label->m_Offset;
+		const uint32_t relocOffset = ctx->m_Section[JX64_SECTION_TEXT].m_Size - curFuncOffset + dispOffset;
+		jx64_symbolAddRelocation(ctx, ctx->m_CurFunc, JX64_RELOC_REL32 + relocDelta, relocOffset, sym->m_Name);
 	}
 
 	jx_x64_instr_buffer_t* instr = &(jx_x64_instr_buffer_t) { 0 };
@@ -1510,7 +1618,7 @@ static bool jx64_math_binary_op(jx_x64_context_t* ctx, uint8_t opcode_imm, uint8
 		return false;
 	}
 
-	return jx64_emitBytes(ctx, instr->m_Buffer, instr->m_Size);
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr->m_Buffer, instr->m_Size);
 }
 
 // jmp, call
@@ -1519,11 +1627,14 @@ static bool jx64_jmp_call_op(jx_x64_context_t* ctx, uint8_t opcode_lbl, uint8_t 
 	jx_x64_instr_encoding_t* enc = &(jx_x64_instr_encoding_t) { 0 };
 
 	if (op.m_Type == JX64_OPERAND_LBL) {
+		// jmp/call label
 		jx_x64_label_t* lbl = op.u.m_Lbl;
+		JX_CHECK(lbl->m_Section == JX64_SECTION_TEXT, "Only text section labels are allowed!");
 
+		jx_x64_section_t* sec = &ctx->m_Section[lbl->m_Section];
 		const int32_t displacement = lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND
 			? 0
-			: (int32_t)lbl->m_Offset - (int32_t)ctx->m_Size
+			: (int32_t)lbl->m_Offset - (int32_t)sec->m_Size
 			;
 
 		jx64_instrEnc_opcode1(enc, opcode_lbl);
@@ -1535,9 +1646,42 @@ static bool jx64_jmp_call_op(jx_x64_context_t* ctx, uint8_t opcode_lbl, uint8_t 
 		if (lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND) {
 			const uint32_t dispOffset = jx64_instrEnc_calcDispOffset(enc);
 			const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
-			jx_array_push_back(lbl->m_RefsArr, (jx_x64_label_ref_t) { .m_DispOffset = ctx->m_Size + dispOffset, .m_NextInstrOffset = ctx->m_Size + instrSize });
+			jx_array_push_back(lbl->m_RefsArr, (jx_x64_label_ref_t) { .m_DispOffset = sec->m_Size + dispOffset, .m_NextInstrOffset = sec->m_Size + instrSize });
 		}
+	} else if (op.m_Type == JX64_OPERAND_SYM) {
+		// jmp/call symbol
+		jx_x64_symbol_t* sym = op.u.m_Sym;
+
+		jx64_instrEnc_opcode1(enc, opcode_lbl);
+		jx64_instrEnc_disp(enc, true, JX64_SIZE_32, 0);
+
+		const uint32_t dispOffset = jx64_instrEnc_calcDispOffset(enc);
+		const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
+		const uint32_t relocDelta = (instrSize - dispOffset) - sizeof(int32_t);
+		JX_CHECK(relocDelta <= 5, "Invalid relocation type");
+		const uint32_t curFuncOffset = (uint32_t)ctx->m_CurFunc->m_Label->m_Offset;
+		const uint32_t relocOffset = ctx->m_Section[JX64_SECTION_TEXT].m_Size - curFuncOffset + dispOffset;
+		jx64_symbolAddRelocation(ctx, ctx->m_CurFunc, JX64_RELOC_REL32 + relocDelta, relocOffset, sym->m_Name);
+	} else if (op.m_Type == JX64_OPERAND_MEM_SYM) {
+		// jmp/call [symbol + offset]
+		jx_x64_symbol_t* sym = op.u.m_MemSym.m_Symbol;
+		int32_t symOffset = op.u.m_MemSym.m_Displacement;
+
+		jx64_instrEnc_addrSize(enc, false);
+		jx64_instrEnc_opcode1(enc, opcode_rm);
+		jx64_instrEnc_modrm(enc, 0b00, modrm_reg, JX64_REG_LO(JX64_REG_RIP));
+		jx64_instrEnc_sib(enc, false, 0b00, 0b100, 0b100);
+		jx64_instrEnc_disp(enc, true, JX64_SIZE_32, symOffset);
+
+		const uint32_t dispOffset = jx64_instrEnc_calcDispOffset(enc);
+		const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
+		const uint32_t relocDelta = (instrSize - dispOffset) - sizeof(int32_t);
+		JX_CHECK(relocDelta <= 5, "Invalid relocation type");
+		const uint32_t curFuncOffset = (uint32_t)ctx->m_CurFunc->m_Label->m_Offset;
+		const uint32_t relocOffset = ctx->m_Section[JX64_SECTION_TEXT].m_Size - curFuncOffset + dispOffset;
+		jx64_symbolAddRelocation(ctx, ctx->m_CurFunc, JX64_RELOC_REL32 + relocDelta, relocOffset, sym->m_Name);
 	} else if (op.m_Type == JX64_OPERAND_REG) {
+		// jmp/call reg
 		const jx_x64_reg reg = op.u.m_Reg;
 
 		const bool invalidOperands = false
@@ -1552,6 +1696,8 @@ static bool jx64_jmp_call_op(jx_x64_context_t* ctx, uint8_t opcode_lbl, uint8_t 
 		jx64_instrEnc_opcode1(enc, opcode_rm);
 		jx64_instrEnc_modrm(enc, 0b11, modrm_reg, JX64_REG_LO(reg));
 	} else {
+		// jmp/call [base + index * scale + disp]
+		JX_CHECK(op.m_Type == JX64_OPERAND_MEM, "Expected memory operand.");
 		const jx_x64_mem_t* mem = &op.u.m_Mem;
 
 		const jx_x64_reg base_r = mem->m_Base;
@@ -1640,6 +1786,7 @@ static bool jx64_jmp_call_op(jx_x64_context_t* ctx, uint8_t opcode_lbl, uint8_t 
 			jx64_instrEnc_sib(enc, isBase_rsp, 0b00, 0b100, 0b100);
 			jx64_instrEnc_disp(enc, needsDisplacement, JX64_DISP_IS_8BIT(mem->m_Displacement) && !isBase_rip ? JX64_SIZE_8 : JX64_SIZE_32, mem->m_Displacement);
 
+#if 0
 			// RIP-relative addressing: 
 			// Fix displacement by the number of bytes of this instruction.
 			// The caller doesn't and shouldn't know how many bytes the current instruction
@@ -1650,6 +1797,7 @@ static bool jx64_jmp_call_op(jx_x64_context_t* ctx, uint8_t opcode_lbl, uint8_t 
 			if (isBase_rip) {
 				enc->m_Disp -= jx64_instrEnc_calcInstrSize(enc);
 			}
+#endif
 		} else {
 			jx64_instrEnc_opcode1(enc, opcode_rm);
 			jx64_instrEnc_modrm(enc, 0b00, modrm_reg, 0b100);
@@ -1663,7 +1811,7 @@ static bool jx64_jmp_call_op(jx_x64_context_t* ctx, uint8_t opcode_lbl, uint8_t 
 		return false;
 	}
 
-	return jx64_emitBytes(ctx, instr->m_Buffer, instr->m_Size);
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr->m_Buffer, instr->m_Size);
 }
 
 // sal, sar, shl, shr, rcl, rcr, rol, ror
@@ -1671,6 +1819,7 @@ static bool jx64_shift_rotate_op(jx_x64_context_t* ctx, uint8_t modrm_reg, jx_x6
 {
 	jx_x64_instr_encoding_t* enc = &(jx_x64_instr_encoding_t) { 0 };
 
+#if 0
 	// RIP-relative addressing. 
 	jx_x64_label_t* lbl = NULL;
 	if (op.m_Type == JX64_OPERAND_LBL) {
@@ -1681,6 +1830,7 @@ static bool jx64_shift_rotate_op(jx_x64_context_t* ctx, uint8_t modrm_reg, jx_x6
 			;
 		op = jx64_opMem(op.m_Size, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, diff);
 	}
+#endif
 
 	if (op.m_Type == JX64_OPERAND_REG) {
 		if (shift.m_Type == JX64_OPERAND_IMM) {
@@ -1723,11 +1873,13 @@ static bool jx64_shift_rotate_op(jx_x64_context_t* ctx, uint8_t modrm_reg, jx_x6
 			return false;
 		}
 
+#if 0
 		if (lbl && lbl->m_Offset == JX64_LABEL_OFFSET_UNBOUND) {
 			const uint32_t dispOffset = jx64_instrEnc_calcDispOffset(enc);
 			const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
 			jx_array_push_back(lbl->m_RefsArr, (jx_x64_label_ref_t) { .m_DispOffset = ctx->m_Size + dispOffset, .m_NextInstrOffset = ctx->m_Size + instrSize });
 		}
+#endif
 	} else {
 		return false;
 	}
@@ -1737,7 +1889,7 @@ static bool jx64_shift_rotate_op(jx_x64_context_t* ctx, uint8_t modrm_reg, jx_x6
 		return false;
 	}
 
-	return jx64_emitBytes(ctx, instr->m_Buffer, instr->m_Size);
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr->m_Buffer, instr->m_Size);
 }
 
 static bool jx64_math_unary_op_reg(jx_x64_instr_encoding_t* enc, uint8_t baseOpcode, uint8_t modrm_reg, jx_x64_reg reg)
@@ -1886,6 +2038,7 @@ static bool jx64_math_unary_op_mem(jx_x64_instr_encoding_t* enc, uint8_t baseOpc
 		jx64_instrEnc_sib(enc, isBase_rsp, 0b00, 0b100, 0b100);
 		jx64_instrEnc_disp(enc, needsDisplacement, JX64_DISP_IS_8BIT(mem->m_Displacement) && !isBase_rip ? JX64_SIZE_8 : JX64_SIZE_32, mem->m_Displacement);
 
+#if 0
 		// RIP-relative addressing: 
 		// Fix displacement by the number of bytes of this instruction.
 		// The caller doesn't and shouldn't know how many bytes the current instruction
@@ -1896,6 +2049,7 @@ static bool jx64_math_unary_op_mem(jx_x64_instr_encoding_t* enc, uint8_t baseOpc
 		if (isBase_rip) {
 			enc->m_Disp -= jx64_instrEnc_calcInstrSize(enc);
 		}
+#endif
 	} else {
 		// op [disp32], reg
 		// op reg, [disp32]
@@ -2105,6 +2259,7 @@ static bool jx64_binary_op_mem_imm(jx_x64_instr_encoding_t* enc, const uint8_t* 
 		jx64_instrEnc_disp(enc, needsDisplacement, JX64_DISP_IS_8BIT(dst_m->m_Displacement) && !isBase_rip ? JX64_SIZE_8 : JX64_SIZE_32, dst_m->m_Displacement);
 		jx64_instrEnc_imm(enc, true, src_imm_sz == JX64_SIZE_64 ? JX64_SIZE_32 : src_imm_sz, src_imm);
 
+#if 0
 		// RIP-relative addressing: 
 		// Fix displacement by the number of bytes of this instruction.
 		// The caller doesn't and shouldn't know how many bytes the current instruction
@@ -2115,6 +2270,7 @@ static bool jx64_binary_op_mem_imm(jx_x64_instr_encoding_t* enc, const uint8_t* 
 		if (isBase_rip) {
 			enc->m_Disp -= jx64_instrEnc_calcInstrSize(enc);
 		}
+#endif
 	} else {
 		// op [disp], imm
 		const bool invalidOperands = false
@@ -2285,6 +2441,7 @@ static bool jx64_binary_op_reg_mem(jx_x64_instr_encoding_t* enc, const uint8_t* 
 		jx64_instrEnc_sib(enc, isBase_rsp, 0b00, 0b100, 0b100);
 		jx64_instrEnc_disp(enc, needsDisplacement, JX64_DISP_IS_8BIT(mem->m_Displacement) && !isBase_rip ? JX64_SIZE_8 : JX64_SIZE_32, mem->m_Displacement);
 
+#if 0
 		// RIP-relative addressing: 
 		// Fix displacement by the number of bytes of this instruction.
 		// The caller doesn't and shouldn't know how many bytes the current instruction
@@ -2295,6 +2452,7 @@ static bool jx64_binary_op_reg_mem(jx_x64_instr_encoding_t* enc, const uint8_t* 
 		if (isBase_rip) {
 			enc->m_Disp -= jx64_instrEnc_calcInstrSize(enc);
 		}
+#endif
 	} else {
 		// op [disp32], reg
 		// op reg, [disp32]
@@ -2471,6 +2629,7 @@ static bool jx64_mov_mem_imm(jx_x64_instr_encoding_t* enc, const jx_x64_mem_t* d
 		jx64_instrEnc_disp(enc, needsDisplacement, (JX64_DISP_IS_8BIT(dst_m->m_Displacement) && !isBase_rip) ? JX64_SIZE_8 : JX64_SIZE_32, dst_m->m_Displacement);
 		jx64_instrEnc_imm(enc, true, src_imm_sz == JX64_SIZE_64 ? JX64_SIZE_32 : src_imm_sz, src_imm);
 
+#if 0
 		// RIP-relative addressing: 
 		// Fix displacement by the number of bytes of this instruction.
 		// The caller doesn't and shouldn't know how many bytes the current instruction
@@ -2481,6 +2640,7 @@ static bool jx64_mov_mem_imm(jx_x64_instr_encoding_t* enc, const jx_x64_mem_t* d
 		if (isBase_rip) {
 			enc->m_Disp -= jx64_instrEnc_calcInstrSize(enc);
 		}
+#endif
 	} else {
 		// mov [disp], imm
 		const bool invalidOperands = false
@@ -2713,7 +2873,7 @@ static inline void jx64_instrEnc_rex(jx_x64_instr_encoding_t* enc, bool hasREX, 
 	enc->m_REX_B = b;
 }
 
-static inline void jx64_instrEnc_disp(jx_x64_instr_encoding_t* enc, bool hasDisp, jx_x64_size dispSize, uint32_t disp)
+static inline void jx64_instrEnc_disp(jx_x64_instr_encoding_t* enc, bool hasDisp, jx_x64_size dispSize, int32_t disp)
 {
 	enc->m_HasDisp = hasDisp ? 1 : 0;
 	enc->m_DispSize = dispSize;

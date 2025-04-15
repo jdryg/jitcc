@@ -305,6 +305,19 @@ jx_mir_global_variable_t* jx_mir_getGlobalVarByID(jx_mir_context_t* ctx, uint32_
 	return ctx->m_GlobalVarArr[id];
 }
 
+jx_mir_global_variable_t* jx_mir_getGlobalVarByName(jx_mir_context_t* ctx, const char* name)
+{
+	const uint32_t numGlobalVariables = (uint32_t)jx_array_sizeu(ctx->m_GlobalVarArr);
+	for (uint32_t iGV = 0; iGV < numGlobalVariables; ++iGV) {
+		jx_mir_global_variable_t* gv = ctx->m_GlobalVarArr[iGV];
+		if (!jx_strcmp(gv->m_Name, name)) {
+			return gv;
+		}
+	}
+
+	return NULL;
+}
+
 uint32_t jx_mir_getNumFunctions(jx_mir_context_t* ctx)
 {
 	return (uint32_t)jx_array_sizeu(ctx->m_FuncArr);
@@ -328,7 +341,7 @@ jx_mir_function_t* jx_mir_getFunctionByName(jx_mir_context_t* ctx, const char* n
 	return NULL;
 }
 
-jx_mir_global_variable_t* jx_mir_globalVarBegin(jx_mir_context_t* ctx, const char* name)
+jx_mir_global_variable_t* jx_mir_globalVarBegin(jx_mir_context_t* ctx, const char* name, uint32_t alignment)
 {
 	jx_mir_global_variable_t* gv = (jx_mir_global_variable_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_global_variable_t));
 	if (!gv) {
@@ -336,6 +349,7 @@ jx_mir_global_variable_t* jx_mir_globalVarBegin(jx_mir_context_t* ctx, const cha
 	}
 
 	jx_memset(gv, 0, sizeof(jx_mir_global_variable_t));
+	gv->m_Alignment = alignment;
 	gv->m_Name = jx_strdup(name, ctx->m_Allocator);
 	if (!gv->m_Name) {
 		jmir_globalVarFree(ctx, gv);
@@ -344,6 +358,12 @@ jx_mir_global_variable_t* jx_mir_globalVarBegin(jx_mir_context_t* ctx, const cha
 
 	gv->m_DataArr = (uint8_t*)jx_array_create(ctx->m_Allocator);
 	if (!gv->m_DataArr) {
+		jmir_globalVarFree(ctx, gv);
+		return NULL;
+	}
+
+	gv->m_Relocations = (jx_mir_relocation_t*)jx_array_create(ctx->m_Allocator);
+	if (!gv->m_Relocations) {
 		jmir_globalVarFree(ctx, gv);
 		return NULL;
 	}
@@ -358,16 +378,25 @@ void jx_mir_globalVarEnd(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv)
 	JX_CHECK(jx_array_sizeu(gv->m_DataArr) > 0, "Empty global variable?");
 }
 
-bool jx_mir_globalVarAppendData(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv, const uint8_t* data, uint32_t sz)
+uint32_t jx_mir_globalVarAppendData(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv, const uint8_t* data, uint32_t sz)
 {
+	const uint32_t offset = (uint32_t)jx_array_sizeu(gv->m_DataArr);
 	uint8_t* dst = jx_array_addnptr(gv->m_DataArr, sz);
 	if (!dst) {
-		return false;
+		return UINT32_MAX;
 	}
 
 	jx_memcpy(dst, data, sz);
 
-	return true;
+	return offset;
+}
+
+void jx_mir_globalVarAddRelocation(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv, uint32_t dataOffset, const char* symbolName)
+{
+	jx_array_push_back(gv->m_Relocations, (jx_mir_relocation_t){
+		.m_SymbolName = jx_strdup(symbolName, ctx->m_Allocator),
+		.m_Offset = dataOffset
+	});
 }
 
 jx_mir_function_t* jx_mir_funcBegin(jx_mir_context_t* ctx, jx_mir_type_kind retType, uint32_t numArgs, jx_mir_type_kind* args, uint32_t flags, const char* name)

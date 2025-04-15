@@ -371,6 +371,26 @@ static void* jx_os_fsReadFile(jx_file_base_dir baseDir, const char* relPath, jx_
 	return buffer;
 }
 
+static inline uint32_t jx_os_vmemGetPageSize(void)
+{
+	return os_api->vmemGetPageSize();
+}
+
+static inline void* jx_os_vmemAlloc(void* desiredAddr, size_t sz, uint32_t protectFlags)
+{
+	return os_api->vmemAlloc(desiredAddr, sz, protectFlags);
+}
+
+static inline void jx_os_vmemFree(void* addr, size_t sz)
+{
+	os_api->vmemFree(addr, sz);
+}
+
+static inline bool jx_os_vmemProtect(void* addr, size_t sz, uint32_t protectFlags)
+{
+	return os_api->vmemProtect(addr, sz, protectFlags);
+}
+
 #ifdef __cplusplus
 }
 #endif

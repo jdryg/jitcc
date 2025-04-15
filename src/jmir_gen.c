@@ -228,13 +228,16 @@ bool jx_mirgen_moduleGen(jx_mirgen_context_t* ctx, jx_ir_module_t* mod)
 
 static bool jmirgen_globalVarBuild(jx_mirgen_context_t* ctx, const char* namePrefix, jx_ir_global_variable_t* irGV)
 {
-	jx_mir_global_variable_t* gv = jx_mir_globalVarBegin(ctx->m_MIRCtx, jx_ir_globalVarToValue(irGV)->m_Name);
+	jx_ir_constant_t* gvInit = jx_ir_valueToConst(irGV->super.super.m_OperandArr[0]->m_Value);
+	JX_CHECK(gvInit, "Expected constant value operand.");
+
+	const size_t alignment = jx_ir_typeGetAlignment(gvInit->super.super.m_Type);
+
+	jx_mir_global_variable_t* gv = jx_mir_globalVarBegin(ctx->m_MIRCtx, jx_ir_globalVarToValue(irGV)->m_Name, (uint32_t)alignment);
 	if (!gv) {
 		return false;
 	}
 
-	jx_ir_constant_t* gvInit = jx_ir_valueToConst(irGV->super.super.m_OperandArr[0]->m_Value);
-	JX_CHECK(gvInit, "Expected constant value operand.");
 	jmirgen_globalVarInitializer(ctx, gv, gvInit);
 
 	jx_mir_globalVarEnd(ctx->m_MIRCtx, gv);
@@ -267,9 +270,21 @@ static bool jmirgen_globalVarInitializer(jx_mirgen_context_t* ctx, jx_mir_global
 		jx_mir_globalVarAppendData(mirctx, gv, (const uint8_t*)&init->u.m_I64, sizeof(uint32_t));
 	} break;
 	case JIR_TYPE_U64:
-	case JIR_TYPE_I64:
-	case JIR_TYPE_POINTER: {
+	case JIR_TYPE_I64: {
 		jx_mir_globalVarAppendData(mirctx, gv, (const uint8_t*)&init->u.m_I64, sizeof(uint64_t));
+	} break;
+	case JIR_TYPE_POINTER: {
+		if ((init->super.super.m_Flags & JIR_VALUE_FLAGS_CONST_GLOBAL_VAL_PTR_Msk) != 0) {
+			jx_ir_global_value_t* irGV = (jx_ir_global_value_t*)init->u.m_I64;
+			const char* symbolName = irGV->super.super.m_Name;
+			
+			const uint64_t placeholder = 0ull;
+			const uint32_t offset = jx_mir_globalVarAppendData(mirctx, gv, (const uint8_t*)&placeholder, sizeof(uint64_t));
+
+			jx_mir_globalVarAddRelocation(mirctx, gv, offset, symbolName);
+		} else {
+			jx_mir_globalVarAppendData(mirctx, gv, (const uint8_t*)&init->u.m_I64, sizeof(uint64_t));
+		}
 	} break;
 	case JIR_TYPE_F32: {
 		jx_mir_globalVarAppendData(mirctx, gv, (const uint8_t*)&init->u.m_F32, sizeof(float));
@@ -417,7 +432,12 @@ static jx_mir_operand_t* jmirgen_instrBuild_ret(jx_mirgen_context_t* ctx, jx_ir_
 		jx_mir_operand_t* mirRetVal = jmirgen_getOperand(ctx, retVal);
 		jx_mir_type_kind mirType = jmirgen_convertType(retVal->m_Type);
 		retReg = jx_mir_opHWReg(ctx->m_MIRCtx, ctx->m_Func, mirType, JMIR_HWREG_RET);
-		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, retReg, mirRetVal));
+
+		if (mirRetVal->m_Kind == JMIR_OPERAND_STACK_OBJECT || mirRetVal->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, retReg, mirRetVal));
+		} else {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, retReg, mirRetVal));
+		}
 	}
 
 	jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_ret(ctx->m_MIRCtx, NULL));

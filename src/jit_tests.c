@@ -1083,9 +1083,9 @@ void jit_tests(jx_allocator_i* allocator)
 	// factorial, clang 19.1.0 -O0 -target x86_64-pc-win32-eabi
 	jx64_resetBuffer(ctx);
 
-	jx_x64_func_t* func_plugin_main = jx64_funcDeclare(ctx, "plugin_main");
-	jx_x64_func_t* func_factorial = jx64_funcDeclare(ctx, "factorial");
-	jx_x64_func_t* func_n_choose_k = jx64_funcDeclare(ctx, "n_choose_k");
+	jx_x64_symbol_t* func_plugin_main = jx64_funcDeclare(ctx, "plugin_main");
+	jx_x64_symbol_t* func_factorial = jx64_funcDeclare(ctx, "factorial");
+	jx_x64_symbol_t* func_n_choose_k = jx64_funcDeclare(ctx, "n_choose_k");
 
 	{
 		jx64_funcBegin(ctx, func_n_choose_k);
@@ -1099,14 +1099,14 @@ void jit_tests(jx_allocator_i* allocator)
 			jx64_mov(ctx, local_n, jx64_opReg(JX64_REG_ECX));
 			jx64_mov(ctx, local_k, jx64_opReg(JX64_REG_EDX));
 			jx64_mov(ctx, jx64_opReg(JX64_REG_ECX), local_n);
-			jx64_call(ctx, jx64_opLbl(JX64_SIZE_64, jx64_funcGetLabel(ctx, func_factorial)));
+			jx64_call(ctx, jx64_opLbl(JX64_SIZE_64, func_factorial->m_Label));
 			jx64_mov(ctx, local_fact_n, jx64_opReg(JX64_REG_EAX));
 			jx64_mov(ctx, jx64_opReg(JX64_REG_ECX), local_k);
-			jx64_call(ctx, jx64_opLbl(JX64_SIZE_64, jx64_funcGetLabel(ctx, func_factorial)));
+			jx64_call(ctx, jx64_opLbl(JX64_SIZE_64, func_factorial->m_Label));
 			jx64_mov(ctx, local_fact_k, jx64_opReg(JX64_REG_EAX));
 			jx64_mov(ctx, jx64_opReg(JX64_REG_ECX), local_n);
 			jx64_sub(ctx, jx64_opReg(JX64_REG_ECX), local_k);
-			jx64_call(ctx, jx64_opLbl(JX64_SIZE_64, jx64_funcGetLabel(ctx, func_factorial)));
+			jx64_call(ctx, jx64_opLbl(JX64_SIZE_64, func_factorial->m_Label));
 			jx64_mov(ctx, jx64_opReg(JX64_REG_ECX), local_fact_k);
 			jx64_mov(ctx, jx64_opReg(JX64_REG_EDX), jx64_opReg(JX64_REG_EAX));
 			jx64_mov(ctx, jx64_opReg(JX64_REG_EAX), local_fact_n);
@@ -1178,7 +1178,7 @@ void jit_tests(jx_allocator_i* allocator)
 
 			jx64_mov(ctx, jx64_opReg(JX64_REG_ECX), jx64_opImmI32(5));
 			jx64_mov(ctx, jx64_opReg(JX64_REG_EDX), jx64_opImmI32(2));
-			jx64_call(ctx, jx64_opLbl(JX64_SIZE_64, jx64_funcGetLabel(ctx, func_n_choose_k)));
+			jx64_call(ctx, jx64_opLbl(JX64_SIZE_64, func_n_choose_k->m_Label));
 			jx64_mov(ctx, jx64_opReg(JX64_REG_EDX), jx64_opReg(JX64_REG_EAX));
 
 			jx64_mov(ctx, jx64_opReg(JX64_REG_RAX), local_api_printf);
@@ -1224,7 +1224,7 @@ void jit_tests(jx_allocator_i* allocator)
 			} api_t;
 
 			typedef int32_t(*pfnPluginMain)(api_t* api);
-			pfnPluginMain pluginMain = (pfnPluginMain)((uint8_t*)execBuf + jx64_funcGetOffset(ctx, func_plugin_main));
+			pfnPluginMain pluginMain = (pfnPluginMain)((uint8_t*)execBuf + jx64_labelGetOffset(ctx, func_plugin_main->m_Label));
 
 			api_t api = {
 				.printf = printf
