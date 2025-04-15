@@ -203,28 +203,17 @@ void jx_x64_destroyContext(jx_x64_context_t* ctx)
 		jx64_symbolFree(ctx, sym);
 	}
 	jx_array_free(ctx->m_SymbolArr);
-#if 0
-	JX_FREE(allocator, ctx->m_Buffer);
-#endif
 	JX_FREE(allocator, ctx);
 }
 
 void jx64_resetBuffer(jx_x64_context_t* ctx)
 {
-#if 0
-	ctx->m_Size = 0;
-#endif
 }
 
 const uint8_t* jx64_getBuffer(jx_x64_context_t* ctx, uint32_t* sz)
 {
-#if 1
-	* sz = ctx->m_CodeBuffer.m_Size;
+	*sz = ctx->m_CodeBuffer.m_Size;
 	return ctx->m_CodeBuffer.m_Buffer;
-#else
-	*sz = ctx->m_Section[JX64_SECTION_TEXT].m_Size;
-	return ctx->m_Section[JX64_SECTION_TEXT].m_Buffer;
-#endif
 }
 
 // TODO: 
