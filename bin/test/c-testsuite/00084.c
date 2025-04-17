@@ -1,7 +1,6 @@
 #define ARGS(...) __VA_ARGS__
 
-int
-none()
+int none(void)
 {
 	return 0;
 }
@@ -39,8 +38,7 @@ three(int a, int b, int c)
 	return 0;
 }
 
-int
-main()
+int main(void)
 {
 	if (none(ARGS()))
 		return 1;

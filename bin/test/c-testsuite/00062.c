@@ -14,8 +14,7 @@
 int x = 0;
 #endif
 
-int
-main()
+int main(void)
 {
 	return x;
 }

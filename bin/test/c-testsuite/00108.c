@@ -2,8 +2,7 @@ int foo(void);
 int foo(void);
 #define FOO 0
 
-int
-main()
+int main(void)
 {
 	return FOO;
 }

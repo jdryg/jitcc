@@ -28,6 +28,8 @@ typedef struct jx_cc_ast_stmt_case_t jx_cc_ast_stmt_case_t;
 typedef struct jx_cc_ast_stmt_goto_t jx_cc_ast_stmt_goto_t;
 typedef struct jx_cc_ast_stmt_label_t jx_cc_ast_stmt_label_t;
 
+typedef struct jx_cc_hideset_t jx_cc_hideset_t;
+
 // token
 typedef enum jx_cc_token_kind 
 {
@@ -84,6 +86,18 @@ typedef enum jx_cc_token_kind
 	JCC_TOKEN_GENERIC,       // "_Generic"
 	JCC_TOKEN_PACKED,        // "packed"
 	JCC_TOKEN_ALIGNED,       // "aligned"
+	JCC_TOKEN_INCLUDE,       // "include"
+	JCC_TOKEN_INCLUDE_NEXT,  // "include_next"
+	JCC_TOKEN_DEFINE,        // "define"
+	JCC_TOKEN_UNDEF,         // "undef"
+	JCC_TOKEN_IFDEF,         // "ifdef"
+	JCC_TOKEN_IFNDEF,        // "ifndef"
+	JCC_TOKEN_ELIF,          // "elif"
+	JCC_TOKEN_ENDIF,         // "endif"
+	JCC_TOKEN_PRAGMA,        // "pragma"
+	JCC_TOKEN_ONCE,          // "once"
+	JCC_TOKEN_ERROR,         // "error"
+	JCC_TOKEN_DEFINED,       // "defined"
 
 	// punctuators
 	JCC_TOKEN_LSHIFT_ASSIGN,      // "<<=",
@@ -176,6 +190,9 @@ typedef struct jx_cc_token_t
 	int64_t m_Val_int;        // If kind is JCC_TOKEN_NUMBER, its value
 
 	jx_cc_token_t* m_Next;    // Next token
+
+	jx_cc_hideset_t* m_HideSet; // For macro expansion
+	jx_cc_token_t* m_Origin;    // If this is expanded from a macro, the original token.
 } jx_cc_token_t;
 
 #define JCC_OBJECT_FLAGS_IS_LOCAL_Pos      0

@@ -4,8 +4,7 @@
 #define ZERO_VAR(...) 0
 #define ZERO_1_VAR(A, ...) 0
 
-int
-main()
+int main(void)
 {
 	if (ZERO_0())
 		return 1;

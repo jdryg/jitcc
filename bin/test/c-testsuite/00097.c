@@ -7,8 +7,7 @@
 #define BAR(X, Y, ...) (X + Y + Z)
 #define BAR(X, Y, ...) (X + Y + Z)
 
-int
-main()
+int main(void)
 {
 	return 0;
 }

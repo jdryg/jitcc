@@ -33,8 +33,7 @@ three(int a, int b, int c)
 	return 0;
 }
 
-int
-main()
+int main(void)
 {
 	if (CALL(one, 1))
 		return 2;

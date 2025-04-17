@@ -13,8 +13,7 @@
 	#endif
 #endif
 
-int
-main()
+int main(void)
 {
 	return BAR;
 }
