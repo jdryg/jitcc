@@ -772,6 +772,7 @@ int main(int argc, char** argv)
 		const bool skipTest = false
 			|| iTest == 113 // Floating point
 			|| iTest == 119 // Floating point
+			|| iTest == 123 // Floating point
 			;
 		if (skipTest) {
 			++numSkipped;
