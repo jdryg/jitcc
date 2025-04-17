@@ -2,8 +2,7 @@
 #define FOO(X,Y,Z) X + Y + Z
 #define SEMI ;
 
-int
-main()
+int main(void)
 {
 	if(FOO(1, 2, A) != 6)
 		return 1 SEMI

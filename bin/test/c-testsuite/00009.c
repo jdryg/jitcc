@@ -1,4 +1,3 @@
-// TODO: Generates divisions by constants
 int main(void)
 {
 	int x;

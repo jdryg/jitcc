@@ -2,8 +2,7 @@
 
 char s[] = "a" B "c";
 
-int
-main()
+int main(void)
 {
 	if (s[0] != 'a')
 		return 1;

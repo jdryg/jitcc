@@ -657,7 +657,9 @@ bool jx64_movzx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 		return false;
 	}
 
-	JX_CHECK(!(dst.m_Size == JX64_SIZE_64 && src.m_Size == JX64_SIZE_32), "Use mov!");
+	if (dst.m_Size == JX64_SIZE_64 && src.m_Size == JX64_SIZE_32) {
+		return jx64_mov(ctx, dst, src);
+	}
 
 #if 0
 	// RIP-relative addressing. Calculate offset to the specified label 

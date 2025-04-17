@@ -8,8 +8,7 @@ int x = 0;
 X
 #endif
 
-int
-main()
+int main(void)
 {
 	return x;
 }

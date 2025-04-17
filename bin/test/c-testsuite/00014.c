@@ -1,4 +1,3 @@
-// TODO: Wrong output. Returns 1 (x) instead of 0 (p = &x). Memory aliasing.
 int main(void)
 {
 	int x;

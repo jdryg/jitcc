@@ -114,6 +114,18 @@ static const jcc_known_token_t kKeywords[] = {
 	JCC_DEFINE_KNOWN_TOKEN("_Generic", JCC_TOKEN_GENERIC),
 	JCC_DEFINE_KNOWN_TOKEN("packed", JCC_TOKEN_PACKED),
 	JCC_DEFINE_KNOWN_TOKEN("aligned", JCC_TOKEN_ALIGNED),
+	JCC_DEFINE_KNOWN_TOKEN("include", JCC_TOKEN_INCLUDE),
+	JCC_DEFINE_KNOWN_TOKEN("include_next", JCC_TOKEN_INCLUDE_NEXT),
+	JCC_DEFINE_KNOWN_TOKEN("define", JCC_TOKEN_DEFINE),
+	JCC_DEFINE_KNOWN_TOKEN("undef", JCC_TOKEN_UNDEF),
+	JCC_DEFINE_KNOWN_TOKEN("ifdef", JCC_TOKEN_IFDEF),
+	JCC_DEFINE_KNOWN_TOKEN("ifndef", JCC_TOKEN_IFNDEF),
+	JCC_DEFINE_KNOWN_TOKEN("elif", JCC_TOKEN_ELIF),
+	JCC_DEFINE_KNOWN_TOKEN("endif", JCC_TOKEN_ENDIF),
+	JCC_DEFINE_KNOWN_TOKEN("pragma", JCC_TOKEN_PRAGMA),
+	JCC_DEFINE_KNOWN_TOKEN("once", JCC_TOKEN_ONCE),
+	JCC_DEFINE_KNOWN_TOKEN("error", JCC_TOKEN_ERROR),
+	JCC_DEFINE_KNOWN_TOKEN("defined", JCC_TOKEN_DEFINED),
 };
 
 static const jcc_known_token_t kPunctuators[] = {
@@ -205,6 +217,15 @@ typedef struct jcc_scope_t
 	jx_hashmap_t* m_Tags;
 } jcc_scope_t;
 
+typedef struct jcc_macro_t jcc_macro_t;
+typedef struct jcc_cond_include_t jcc_cond_include_t;
+
+typedef struct jcc_macro_entry_t
+{
+	const char* m_Name;
+	jcc_macro_t* m_Macro;
+} jcc_macro_entry_t;
+
 // Variable attributes such as typedef or extern.
 #define JCC_VAR_ATTR_IS_TYPEDEF_Pos 0
 #define JCC_VAR_ATTR_IS_TYPEDEF_Msk (1u << JCC_VAR_ATTR_IS_TYPEDEF_Pos)
@@ -281,6 +302,9 @@ typedef struct jcc_translation_unit_t
 	// a switch statement. Otherwise, NULL.
 	jx_cc_ast_stmt_switch_t* m_CurFuncSwitch;
 
+	jx_hashmap_t* m_MacroMap;
+	jcc_cond_include_t* m_CondIncludeListHead;
+
 	// Tokenizer
 	const char* m_CurFilename;
 	uint32_t m_CurLineNumber;
@@ -301,8 +325,10 @@ typedef struct jx_cc_context_t
 	jx_logger_i* m_Logger;
 } jx_cc_context_t;
 
-jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, char* source, uint64_t sourceLen);
+static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, char* source, uint64_t sourceLen);
+static jx_cc_token_t* jcc_concatAdjacentStringLiterals(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok);
 static bool jcc_convertPreprocessorNumber(jx_cc_token_t* tok);
+static bool jcc_convertPreprocessorNumbers(jx_cc_context_t* ctx, jx_cc_token_t* tok);
 static bool jcc_parse(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok);
 
 static bool jcc_tokIs(jx_cc_token_t* tok, jx_cc_token_kind kind);
@@ -380,6 +406,9 @@ static jx_cc_type_t* jcc_typeAllocStruct(jx_cc_context_t* ctx);
 static bool jcc_astAddType(jx_cc_context_t* ctx, jx_cc_ast_node_t* node);
 
 static void jcc_logError(jx_cc_context_t* ctx, const jx_cc_source_loc_t* loc, const char* fmt, ...);
+static jx_cc_token_t* jcc_preprocess(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok);
+static uint64_t jcc_macroEntryHashCallback(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
+static int32_t jcc_macroEntryCompareCallback(const void* a, const void* b, void* udata);
 
 jx_cc_context_t* jx_cc_createContext(jx_allocator_i* allocator, jx_logger_i* logger)
 {
@@ -475,11 +504,18 @@ jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_d
 	char* source = (char*)jx_os_fsReadFile(baseDir, filename, ctx->m_Allocator, true, &sourceLen);
 	if (!source) {
 		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Failed to open file \"%s\".", filename);
+		jx_hashmapDestroy(tu->m_MacroMap);
 		JX_FREE(ctx->m_Allocator, unit);
 		return NULL;
 	}
 
 	tu->m_CurFilename = filename;
+
+	tu->m_MacroMap = jx_hashmapCreate(ctx->m_Allocator, sizeof(jcc_macro_entry_t), 64, 0, 0, jcc_macroEntryHashCallback, jcc_macroEntryCompareCallback, NULL, ctx);
+	if (!tu->m_MacroMap) {
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.", filename);
+		goto end;
+	}
 
 	if (!jcc_tuEnterScope(ctx, tu)) {
 		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
@@ -495,15 +531,18 @@ jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_d
 		goto end;
 	}
 
+	tok = jcc_preprocess(ctx, tu, tok);
+	if (!tok) {
+		jcc_tuLeaveScope(ctx, tu);
+		goto end;
+	}
+
+	tok = jcc_concatAdjacentStringLiterals(ctx, tu, tok);
+
 	// Convert preprocessor numbers
-	for (jx_cc_token_t* t = tok; t->m_Kind != JCC_TOKEN_EOF; t = t->m_Next) {
-		if (t->m_Kind == JCC_TOKEN_PREPROC_NUMBER) {
-			if (!jcc_convertPreprocessorNumber(t)) {
-				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Failed to convert preprocessor number.");
-				jcc_tuLeaveScope(ctx, tu);
-				goto end;
-			}
-		}
+	if (!jcc_convertPreprocessorNumbers(ctx, tok)) {
+		jcc_tuLeaveScope(ctx, tu);
+		goto end;
 	}
 
 	bool res = jcc_parse(ctx, tu, tok);
@@ -515,6 +554,11 @@ jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_d
 	jcc_tuLeaveScope(ctx, tu);
 
 end:
+	if (tu->m_MacroMap) {
+		jx_hashmapDestroy(tu->m_MacroMap);
+		tu->m_MacroMap = NULL;
+	}
+
 	unit->m_Globals = tu->m_GlobalsHead;
 
 	jx_array_push_back(ctx->m_TranslationUnitsArr, unit);
@@ -7329,6 +7373,11 @@ static bool jcc_tokIs(jx_cc_token_t* tok, jx_cc_token_kind kind)
 	return tok->m_Kind == kind;
 }
 
+static bool jcc_tokIsHash(jx_cc_token_t* tok)
+{
+	return tok->m_Kind == JCC_TOKEN_HASH && (tok->m_Flags & JCC_TOKEN_FLAGS_AT_BEGIN_OF_LINE_Msk) != 0;
+}
+
 static bool jcc_tokExpect(jx_cc_token_t** tok, jx_cc_token_kind kind)
 {
 	if (!jcc_tokIs(*tok, kind)) {
@@ -7363,6 +7412,46 @@ static jx_cc_token_t* jcc_allocToken(jx_cc_context_t* ctx, jcc_translation_unit_
 	tu->m_HasSpace = false;
 
 	return tok;
+}
+
+static jx_cc_token_t* jcc_copyToken(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok)
+{
+	jx_cc_token_t* copy = JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_cc_token_t));
+	if (!copy) {
+		return NULL;
+	}
+
+	jx_memcpy(copy, tok, sizeof(jx_cc_token_t));
+
+	return copy;
+}
+
+
+// Copy all tokens until the next newline, terminate them with
+// an EOF token and then returns them. This function is used to
+// create a new list of tokens for `#if` arguments.
+static jx_cc_token_t* jcc_copyLine(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr)
+{
+	jx_cc_token_t* tok = *tokenListPtr;
+
+	jx_cc_token_t head = { 0 };
+	jx_cc_token_t* cur = &head;
+
+	while ((tok->m_Flags & JCC_TOKEN_FLAGS_AT_BEGIN_OF_LINE_Msk) == 0) {
+		cur->m_Next = jcc_copyToken(ctx, tu, tok);
+		cur = cur->m_Next;
+		tok = tok->m_Next;
+	}
+
+	cur->m_Next = jcc_allocToken(ctx, tu, JCC_TOKEN_EOF, tok->m_String, tok->m_String);
+	if (!cur->m_Next) {
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+		return NULL;
+	}
+
+	*tokenListPtr = tok;
+
+	return head.m_Next;
 }
 
 // Read an identifier and returns the length of it.
@@ -7859,6 +7948,23 @@ static bool jcc_convertPreprocessorNumber(jx_cc_token_t* tok)
 	return true;
 }
 
+static bool jcc_convertPreprocessorNumbers(jx_cc_context_t* ctx, jx_cc_token_t* tok)
+{
+	jx_cc_token_t* t = tok;
+	while (!jcc_tokIs(t, JCC_TOKEN_EOF)) {
+		if (t->m_Kind == JCC_TOKEN_PREPROC_NUMBER) {
+			if (!jcc_convertPreprocessorNumber(t)) {
+				jcc_logError(ctx, &t->m_Loc, "Failed to convert preprocessor number.");
+				return false;
+			}
+		}
+
+		t = t->m_Next;
+	}
+
+	return true;
+}
+
 // Replaces \r or \r\n with \n.
 static void jcc_canonicalizeNewlines(char* p)
 {
@@ -8140,40 +8246,43 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 	}
 	cur = cur->m_Next;
 
-	// Concatenate adjacent string literal tokens.
-	{
-		jx_cc_token_t* tok = head.m_Next;
-		while (tok) {
-			if (tok->m_Kind == JCC_TOKEN_STRING_LITERAL) {
-				while (tok->m_Next->m_Kind == JCC_TOKEN_STRING_LITERAL) {
-					// Concatenate strings
-					const char* str1 = tok->m_Val_string;
-					const char* str2 = tok->m_Next->m_Val_string;
+	return head.m_Next;
+}
 
-					const uint32_t len1 = jx_strlen(str1);
-					const uint32_t len2 = jx_strlen(str2);
-					char* tmpBuf = (char*)JX_ALLOC(ctx->m_Allocator, len1 + len2);
-					if (!tmpBuf) {
-						jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
-						return NULL;
-					}
+static jx_cc_token_t* jcc_concatAdjacentStringLiterals(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok)
+{
+	jx_cc_token_t* start = tok;
+	while (tok) {
+		if (jcc_tokIs(tok, JCC_TOKEN_STRING_LITERAL)) {
+			while (jcc_tokIs(tok->m_Next, JCC_TOKEN_STRING_LITERAL)) {
+				// Concatenate strings
+				const char* str1 = tok->m_Val_string;
+				const char* str2 = tok->m_Next->m_Val_string;
 
-					jx_memcpy(&tmpBuf[0], str1, len1);
-					jx_memcpy(&tmpBuf[len1], str2, len2);
-					tok->m_Val_string = jx_strtable_insert(ctx->m_StringTable, tmpBuf, len1 + len2);
-
-					JX_FREE(ctx->m_Allocator, tmpBuf);
-
-					tok->m_Type = jcc_typeAllocArrayOf(ctx, tok->m_Type->m_BaseType, len1 + len2);
-					tok->m_Next = tok->m_Next->m_Next;
+				const uint32_t len1 = jx_strlen(str1);
+				const uint32_t len2 = jx_strlen(str2);
+				char* tmpBuf = (char*)JX_ALLOC(ctx->m_Allocator, len1 + len2 + 1);
+				if (!tmpBuf) {
+					jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+					return NULL;
 				}
-			}
 
-			tok = tok->m_Next;
+				jx_memcpy(&tmpBuf[0], str1, len1);
+				jx_memcpy(&tmpBuf[len1], str2, len2);
+				tmpBuf[len1 + len2] = '\0';
+				tok->m_Val_string = jx_strtable_insert(ctx->m_StringTable, tmpBuf, len1 + len2 + 1);
+
+				JX_FREE(ctx->m_Allocator, tmpBuf);
+
+				tok->m_Type = jcc_typeAllocArrayOf(ctx, tok->m_Type->m_BaseType, len1 + len2 + 1);
+				tok->m_Next = tok->m_Next->m_Next;
+			}
 		}
+
+		tok = tok->m_Next;
 	}
 
-	return head.m_Next;
+	return start;
 }
 
 static bool jcc_inRange(const uint32_t* range, uint32_t c)
@@ -8285,4 +8394,1045 @@ static void jcc_logError(jx_cc_context_t* ctx, const jx_cc_source_loc_t* loc, co
 	va_end(argList);
 
 	JX_LOG_ERROR(ctx->m_Logger, "jcc", "%s(%u): %s\n", loc->m_Filename, loc->m_LineNum, str);
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Preprocessor
+//
+typedef struct jcc_macro_param_t jcc_macro_param_t;
+typedef struct jcc_macro_arg_t jcc_macro_arg_t;
+typedef struct jcc_macro_t jcc_macro_t;
+
+typedef jx_cc_token_t* (*jccMacroHandlerCallback)(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok);
+
+typedef struct jx_cc_hideset_t
+{
+	jx_cc_hideset_t* m_Next;
+	const char* m_Name;
+} jx_cc_hideset_t;
+
+typedef struct jcc_macro_param_t
+{
+	jcc_macro_param_t* m_Next;
+	const char* m_Name;
+} jcc_macro_param_t;
+
+typedef struct jcc_macro_arg_t
+{
+	jcc_macro_arg_t* m_Next;
+	const char* m_Name;
+	bool m_IsVAArgs;
+	jx_cc_token_t* m_Token;
+} jcc_macro_arg_t;
+
+typedef struct jcc_macro_t
+{
+	const char* m_Name;
+	bool m_IsObjLike; // Object-like or function-like
+	jcc_macro_param_t* m_Params;
+	char* m_VAArgsName;
+	jx_cc_token_t* m_Body;
+	jccMacroHandlerCallback m_Callback;
+} jcc_macro_t;
+
+// `#if` can be nested, so we use a stack to manage nested `#if`s.
+typedef enum jcc_cond_include_kind
+{
+	JCC_CONDINCL_IN_THEN,
+	JCC_CONDINCL_IN_ELIF,
+	JCC_CONDINCL_IN_ELSE
+} jcc_cond_include_kind;
+
+typedef struct jcc_cond_include_t
+{
+	jcc_cond_include_t* m_Next;
+	jcc_cond_include_kind m_Ctx;
+	jx_cc_token_t* m_Token;
+	bool m_Included;
+} jcc_cond_include_t;
+
+static bool jcc_ppExpandMacro(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokListPtr);
+static jcc_macro_t* jcc_ppFindMacro(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok);
+static bool jcc_ppReadMacroDefinition(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr);
+static jcc_macro_param_t* jcc_ppReadMacroParams(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr, const char** va_args_name);
+static jcc_macro_arg_t* jcc_ppReadMacroArgs(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr, jcc_macro_param_t* params, char* va_args_name);
+static jcc_macro_arg_t* jcc_ppReadMacroArg(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr, bool read_rest);
+static jcc_macro_t* jcc_ppAddMacro(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* name, bool isObjLike, jx_cc_token_t* body);
+static void jcc_ppUndefMacro(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* name);
+static jx_cc_token_t* jcc_ppAddHideSet(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok, jx_cc_hideset_t* hs);
+static jx_cc_token_t* jcc_ppAppend(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok1, jx_cc_token_t* tok2);
+static jx_cc_token_t* jcc_ppSubstitute(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok, jcc_macro_arg_t* args);
+static jcc_macro_arg_t* jcc_ppFindArg(jcc_macro_arg_t* args, jx_cc_token_t* tok);
+static jcc_cond_include_t* jcc_ppPushConditionalInclude(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok, bool included);
+static jx_cc_token_t* jcc_ppSkipConditionalInclude(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok);
+static jx_cc_token_t* jcc_ppSkipLine(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok);
+static int64_t jcc_ppEvalConstExpression(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr, bool* err);
+static jx_cc_token_t* jcc_ppReadConstExpression(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr);
+
+static jx_cc_hideset_t* jcc_hidesetCreate(jx_cc_context_t* ctx, const char* name);
+static bool jcc_hidesetContains(jx_cc_context_t* ctx, jx_cc_hideset_t* hs, const char* name);
+static jx_cc_hideset_t* jcc_hidesetUnion(jx_cc_context_t* ctx, jx_cc_hideset_t* hs1, jx_cc_hideset_t* hs2);
+static jx_cc_hideset_t* jcc_hidesetIntersection(jx_cc_context_t* ctx, jx_cc_hideset_t* hs1, jx_cc_hideset_t* hs2);
+
+static jx_cc_token_t* jcc_preprocess(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok)
+{
+	jx_cc_token_t head = { 0 };
+	jx_cc_token_t* cur = &head;
+
+	while (!jcc_tokIs(tok, JCC_TOKEN_EOF)) {
+		if (jcc_ppExpandMacro(ctx, tu, &tok)) {
+			continue;
+		}
+
+		if (!jcc_tokIsHash(tok)) {
+			cur->m_Next = tok;
+			cur = cur->m_Next;
+			tok = tok->m_Next;
+			continue;
+		}
+
+		jx_cc_token_t* start = tok;
+		tok = tok->m_Next;
+
+		if (jcc_tokIs(tok, JCC_TOKEN_INCLUDE)) {
+			JX_NOT_IMPLEMENTED();
+		} else if (jcc_tokIs(tok, JCC_TOKEN_INCLUDE_NEXT)) {
+			JX_NOT_IMPLEMENTED();
+		} else if (jcc_tokIs(tok, JCC_TOKEN_DEFINE)) {
+			tok = tok->m_Next;
+			if (!jcc_ppReadMacroDefinition(ctx, tu, &tok)) {
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse macro definition.");
+				return NULL;
+			}
+		} else if (jcc_tokIs(tok, JCC_TOKEN_UNDEF)) {
+			tok = tok->m_Next;
+			if (!jcc_tokIs(tok, JCC_TOKEN_IDENTIFIER)) {
+				jcc_logError(ctx, &tok->m_Loc, "Macro name must be an identifier");
+				return NULL;
+			}
+
+			jcc_ppUndefMacro(ctx, tu, tok->m_String);
+			tok = jcc_ppSkipLine(ctx, tu, tok->m_Next);
+		} else if (jcc_tokIs(tok, JCC_TOKEN_IF)) {
+			bool err = false;
+			int64_t val = jcc_ppEvalConstExpression(ctx, tu, &tok, &err);
+			if (err) {
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse constant expression.");
+				return NULL;
+			}
+			jcc_ppPushConditionalInclude(ctx, tu, start, val != 0);
+			if (val == 0) {
+				tok = jcc_ppSkipConditionalInclude(ctx, tu, tok);
+			}
+		} else if (jcc_tokIs(tok, JCC_TOKEN_IFDEF)) {
+			jcc_macro_t* macro = jcc_ppFindMacro(ctx, tu, tok->m_Next);
+			jcc_ppPushConditionalInclude(ctx, tu, tok, macro != NULL);
+			tok = jcc_ppSkipLine(ctx, tu, tok->m_Next->m_Next);
+			if (macro == NULL) {
+				tok = jcc_ppSkipConditionalInclude(ctx, tu, tok);
+			}
+		} else if (jcc_tokIs(tok, JCC_TOKEN_IFNDEF)) {
+			jcc_macro_t* macro = jcc_ppFindMacro(ctx, tu, tok->m_Next);
+			jcc_ppPushConditionalInclude(ctx, tu, tok, macro == NULL);
+			tok = jcc_ppSkipLine(ctx, tu, tok->m_Next->m_Next);
+			if (macro) {
+				tok = jcc_ppSkipConditionalInclude(ctx, tu, tok);
+			}
+		} else if (jcc_tokIs(tok, JCC_TOKEN_ELIF)) {
+			if (!tu->m_CondIncludeListHead || tu->m_CondIncludeListHead->m_Ctx == JCC_CONDINCL_IN_ELSE) {
+				jcc_logError(ctx, &start->m_Loc, "Stray #elif");
+				return NULL;
+			}
+			tu->m_CondIncludeListHead->m_Ctx = JCC_CONDINCL_IN_ELIF;
+
+			bool err = false;
+			if (!tu->m_CondIncludeListHead->m_Included && jcc_ppEvalConstExpression(ctx, tu, &tok, &err)) {
+				if (err) {
+					return NULL;
+				}
+
+				tu->m_CondIncludeListHead->m_Included = true;
+			} else {
+				tok = jcc_ppSkipConditionalInclude(ctx, tu, tok);
+			}
+		} else if (jcc_tokIs(tok, JCC_TOKEN_ELSE)) {
+			if (!tu->m_CondIncludeListHead || tu->m_CondIncludeListHead->m_Ctx == JCC_CONDINCL_IN_ELSE) {
+				jcc_logError(ctx, &tok->m_Loc, "Stray #else");
+				return NULL;
+			}
+
+			tu->m_CondIncludeListHead->m_Ctx = JCC_CONDINCL_IN_ELSE;
+			tok = jcc_ppSkipLine(ctx, tu, tok->m_Next);
+
+			if (tu->m_CondIncludeListHead->m_Included) {
+				tok = jcc_ppSkipConditionalInclude(ctx, tu, tok);
+			}
+		} else if (jcc_tokIs(tok, JCC_TOKEN_ENDIF)) {
+			if (!tu->m_CondIncludeListHead) {
+				jcc_logError(ctx, &tok->m_Loc, "Stray #endif");
+				return false;
+			}
+
+			tu->m_CondIncludeListHead = tu->m_CondIncludeListHead->m_Next;
+
+			tok = jcc_ppSkipLine(ctx, tu, tok->m_Next);
+		} else if (jcc_tokIs(tok, JCC_TOKEN_PREPROC_NUMBER)) {
+			JX_NOT_IMPLEMENTED();
+		} else if (jcc_tokIs(tok, JCC_TOKEN_PRAGMA)) {
+			if (jcc_tokIs(tok->m_Next, JCC_TOKEN_ONCE)) {
+				JX_NOT_IMPLEMENTED();
+			} else {
+				JX_NOT_IMPLEMENTED();
+			}
+		} else if (jcc_tokIs(tok, JCC_TOKEN_ERROR)) {
+			JX_NOT_IMPLEMENTED();
+		} else if ((tok->m_Flags & JCC_TOKEN_FLAGS_AT_BEGIN_OF_LINE_Msk) != 0) {
+			// `#`-only line is legal. It's called a null directive.
+		} else {
+			jcc_logError(ctx, &tok->m_Loc, "Invalid preprocessor token");
+		}
+	}
+
+	cur->m_Next = tok;
+
+	// Convert all unprocessed preprocessor tokens into identifiers.
+	{
+		tok = head.m_Next;
+		while (tok) {
+			const bool isPreproc = false
+				|| jcc_tokIs(tok, JCC_TOKEN_INCLUDE)
+				|| jcc_tokIs(tok, JCC_TOKEN_INCLUDE_NEXT)
+				|| jcc_tokIs(tok, JCC_TOKEN_DEFINE)
+				|| jcc_tokIs(tok, JCC_TOKEN_UNDEF)
+				|| jcc_tokIs(tok, JCC_TOKEN_IFDEF)
+				|| jcc_tokIs(tok, JCC_TOKEN_IFNDEF)
+				|| jcc_tokIs(tok, JCC_TOKEN_ELIF)
+				|| jcc_tokIs(tok, JCC_TOKEN_ENDIF)
+				|| jcc_tokIs(tok, JCC_TOKEN_PRAGMA)
+				|| jcc_tokIs(tok, JCC_TOKEN_ONCE)
+				|| jcc_tokIs(tok, JCC_TOKEN_ERROR)
+				|| jcc_tokIs(tok, JCC_TOKEN_DEFINED)
+				;
+			if (isPreproc) {
+				tok->m_Kind = JCC_TOKEN_IDENTIFIER;
+			}
+
+			tok = tok->m_Next;
+		}
+	}
+
+	return head.m_Next;
+}
+
+static bool jcc_ppExpandMacro(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr)
+{
+	jx_cc_token_t* tok = *tokenListPtr;
+	if (jcc_hidesetContains(ctx, tok->m_HideSet, tok->m_String)) {
+		return false;
+	}
+
+	jcc_macro_t* macro = jcc_ppFindMacro(ctx, tu, tok);
+	if (!macro) {
+		return false;
+	}
+
+	if (macro->m_Callback) {
+		// Built-in dynamic macro application such as __LINE__
+		jx_cc_token_t* rest = macro->m_Callback(ctx, tu, tok);
+		rest->m_Next = tok->m_Next;
+		*tokenListPtr = rest;
+		return true;
+	}
+
+	if (macro->m_IsObjLike) {
+		// Object-like macro application
+		jx_cc_hideset_t* hs = jcc_hidesetUnion(ctx, tok->m_HideSet, jcc_hidesetCreate(ctx, macro->m_Name));
+		jx_cc_token_t* body = jcc_ppAddHideSet(ctx, tu, macro->m_Body, hs);
+
+		jx_cc_token_t* t = body;
+		while (!jcc_tokIs(t, JCC_TOKEN_EOF)) {
+			t->m_Origin = tok;
+			t = t->m_Next;
+		}
+
+		*tokenListPtr = jcc_ppAppend(ctx, tu, body, tok->m_Next);
+		(*tokenListPtr)->m_Flags = tok->m_Flags;
+
+		return true;
+	}
+	
+	// If a funclike macro token is not followed by an argument list,
+	// treat it as a normal identifier.
+	if (!jcc_tokIs(tok->m_Next, JCC_TOKEN_OPEN_PAREN)) {
+		return false;
+	}
+
+	jx_cc_token_t* macroToken = tok;
+	jcc_macro_arg_t* args = jcc_ppReadMacroArgs(ctx, tu, &tok, macro->m_Params, macro->m_VAArgsName);
+	jx_cc_token_t* rparen = tok;
+
+	// Tokens that consist a func-like macro invocation may have different
+	// hidesets, and if that's the case, it's not clear what the hideset
+	// for the new tokens should be. We take the interesection of the
+	// macro token and the closing parenthesis and use it as a new hideset
+	// as explained in the Dave Prossor's algorithm.
+	jx_cc_hideset_t* hs = jcc_hidesetIntersection(ctx, macroToken->m_HideSet, rparen->m_HideSet);
+	hs = jcc_hidesetUnion(ctx, hs, jcc_hidesetCreate(ctx, macro->m_Name));
+
+	jx_cc_token_t* body = jcc_ppSubstitute(ctx, tu, macro->m_Body, args);
+	body = jcc_ppAddHideSet(ctx, tu, body, hs);
+	
+	jx_cc_token_t* t = body;
+	while (!jcc_tokIs(t, JCC_TOKEN_EOF)) {
+		t->m_Origin = macroToken;
+		t = t->m_Next;
+	}
+
+	tok = jcc_ppAppend(ctx, tu, body, tok->m_Next);
+	tok->m_Flags = macroToken->m_Flags;
+
+	*tokenListPtr = tok;
+
+	return true;
+}
+
+static jcc_macro_t* jcc_ppFindMacro(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok)
+{
+	if (!jcc_tokIs(tok, JCC_TOKEN_IDENTIFIER)) {
+		return NULL;
+	}
+
+	jcc_macro_entry_t* entry = (jcc_macro_entry_t*)jx_hashmapGet(tu->m_MacroMap, &(jcc_macro_entry_t){ .m_Name = tok->m_String });
+	return entry
+		? entry->m_Macro
+		: NULL
+		;
+}
+
+static bool jcc_ppReadMacroDefinition(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr)
+{
+	jx_cc_token_t* tok = *tokenListPtr;
+
+	if (!jcc_tokIs(tok, JCC_TOKEN_IDENTIFIER)) {
+		jcc_logError(ctx, &tok->m_Loc, "Macro name must be an identifier.");
+		return false;;
+	}
+
+	const char* name = tok->m_String;
+	tok = tok->m_Next;
+
+	const bool hasSpace = (tok->m_Flags & JCC_TOKEN_FLAGS_HAS_SPACE_Msk) != 0;
+	if (!hasSpace && jcc_tokIs(tok, JCC_TOKEN_OPEN_PAREN)) {
+		char* vaArgsName = NULL;
+
+		tok = tok->m_Next;
+		jcc_macro_param_t* params = jcc_ppReadMacroParams(ctx, tu, &tok, &vaArgsName);
+
+		jx_cc_token_t* body = jcc_copyLine(ctx, tu, &tok);
+		if (!body) {
+			return false;
+		}
+
+		jcc_macro_t* macro = jcc_ppAddMacro(ctx, tu, name, false, body);
+		if (!macro) {
+			return false;
+		}
+
+		macro->m_VAArgsName = vaArgsName;
+		macro->m_Params = params;
+	} else {
+		// Object-like macro
+		jx_cc_token_t* body = jcc_copyLine(ctx, tu, &tok);
+		if (!body) {
+			return false;
+		}
+
+		if (!jcc_ppAddMacro(ctx, tu, name, true, body)) {
+			jcc_logError(ctx, &tok->m_Loc, "Internal Error: Faile to add macro to map.");
+			return false;
+		}
+	}
+
+	*tokenListPtr = tok;
+
+	return true;
+}
+
+static jcc_macro_param_t* jcc_ppReadMacroParams(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr, const char** va_args_name)
+{
+	jx_cc_token_t* tok = *tokenListPtr;
+
+	jcc_macro_param_t head = { 0 };
+	jcc_macro_param_t* cur = &head;
+
+	bool first = true;
+	while (!jcc_tokIs(tok, JCC_TOKEN_CLOSE_PAREN)) {
+		if (!first) {
+			if (!jcc_tokExpect(&tok, JCC_TOKEN_COMMA)) {
+				jcc_logError(ctx, &tok->m_Loc, "Expected ','");
+				return NULL;
+			}
+		}
+		first = false;
+
+		if (jcc_tokIs(tok, JCC_TOKEN_ELLIPSIS)) {
+			*va_args_name = jx_strtable_insert(ctx->m_StringTable, "__VA_ARGS__", UINT32_MAX);
+			tok = tok->m_Next;
+			break;
+		} else {
+			if (!jcc_tokIs(tok, JCC_TOKEN_IDENTIFIER)) {
+				jcc_logError(ctx, &tok->m_Loc, "Expected identifier.");
+				return NULL;
+			}
+
+			if (jcc_tokIs(tok->m_Next, JCC_TOKEN_ELLIPSIS)) {
+				*va_args_name = tok->m_String;
+				break;
+			} else {
+				jcc_macro_param_t* param = (jcc_macro_param_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jcc_macro_param_t));
+				if (!param) {
+					return NULL;
+				}
+
+				jx_memset(param, 0, sizeof(jcc_macro_param_t));
+				param->m_Name = tok->m_String;
+				cur->m_Next = param;
+				cur = cur->m_Next;
+				tok = tok->m_Next;
+			}
+		}
+	}
+
+	if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
+		jcc_logError(ctx, &tok->m_Loc, "Expected ')'");
+		return NULL;
+	}
+
+	*tokenListPtr = tok;
+
+	return head.m_Next;
+}
+
+static jcc_macro_arg_t* jcc_ppReadMacroArgs(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr, jcc_macro_param_t* params, char* va_args_name)
+{
+	jx_cc_token_t* tok = *tokenListPtr;
+	jx_cc_token_t* start = tok;
+	tok = tok->m_Next->m_Next;
+
+	jcc_macro_arg_t head = { 0 };
+	jcc_macro_arg_t* cur = &head;
+
+	bool first = true;
+	jcc_macro_param_t* pp = params;
+	while (pp) {
+		if (!first) {
+			if (!jcc_tokExpect(&tok, JCC_TOKEN_COMMA)) {
+				jcc_logError(ctx, &tok->m_Loc, "Expected ','");
+				return NULL;
+			}
+		}
+		first = false;
+
+		cur->m_Next = jcc_ppReadMacroArg(ctx, tu, &tok, false);
+		cur = cur->m_Next;
+
+		cur->m_Name = pp->m_Name;
+
+		pp = pp->m_Next;
+	}
+
+	if (va_args_name) {
+		jcc_macro_arg_t* arg;
+		if (jcc_tokIs(tok, JCC_TOKEN_CLOSE_PAREN)) {
+			arg = (jcc_macro_arg_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jcc_macro_arg_t));
+			if (!arg) {
+				jcc_logError(ctx, &tok->m_Loc, "Internal Error: Memory allocation failed.");
+				return NULL;
+			}
+
+			arg->m_Token = jcc_allocToken(ctx, tu, JCC_TOKEN_EOF, tok->m_String, tok->m_String);
+		} else {
+			if (pp != params) {
+				if (!jcc_tokExpect(&tok, JCC_TOKEN_COMMA)) {
+					jcc_logError(ctx, &tok->m_Loc, "Expected ','");
+					return NULL;
+				}
+			}
+
+			arg = jcc_ppReadMacroArg(ctx, tu, &tok, true);
+		}
+
+		arg->m_Name = va_args_name;
+		arg->m_IsVAArgs = true;
+
+		cur->m_Next = arg;
+		cur = cur->m_Next;
+	} else if (pp) {
+		jcc_logError(ctx, &start->m_Loc, "Too many arguments");
+		return NULL;
+	}
+
+	if (!jcc_tokIs(tok, JCC_TOKEN_CLOSE_PAREN)) {
+		jcc_logError(ctx, &tok->m_Loc, "Expected ')'");
+		return NULL;
+	}
+
+	*tokenListPtr = tok;
+
+	return head.m_Next;
+}
+
+static jcc_macro_arg_t* jcc_ppReadMacroArg(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr, bool read_rest)
+{
+	jx_cc_token_t* tok = *tokenListPtr;
+
+	jx_cc_token_t head = { 0 };
+	jx_cc_token_t* cur = &head;
+	int32_t level = 0;
+
+	while (tok) {
+		if (level == 0) {
+			if (jcc_tokIs(tok, JCC_TOKEN_CLOSE_PAREN) || (!read_rest && jcc_tokIs(tok, JCC_TOKEN_COMMA))) {
+				break;
+			}
+		}
+
+		if (jcc_tokIs(tok, JCC_TOKEN_EOF)) {
+			jcc_logError(ctx, &tok->m_Loc, "Premature end of input");
+			return NULL;
+		}
+
+		if (jcc_tokIs(tok, JCC_TOKEN_OPEN_PAREN)) {
+			level++;
+		} else if (jcc_tokIs(tok, JCC_TOKEN_CLOSE_PAREN)) {
+			level--;
+		}
+
+		cur->m_Next = jcc_copyToken(ctx, tu, tok);
+		cur = cur->m_Next;
+		tok = tok->m_Next;
+	}
+	
+	if (!tok) {
+		jcc_logError(ctx, &(*tokenListPtr)->m_Loc, "Invalid token list. EOF token not found.");
+		return NULL;
+	}
+
+	cur->m_Next = jcc_allocToken(ctx, tu, JCC_TOKEN_EOF, tok->m_String, tok->m_String);
+	if (!cur->m_Next) {
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+		return NULL;
+	}
+
+	jcc_macro_arg_t* arg = (jcc_macro_arg_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jcc_macro_arg_t));
+	if (!arg) {
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+		return NULL;
+	}
+	
+	jx_memset(arg, 0, sizeof(jcc_macro_arg_t));
+	arg->m_Token = head.m_Next;
+
+	*tokenListPtr = tok;
+
+	return arg;
+}
+
+static jcc_macro_t* jcc_ppAddMacro(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* name, bool isObjLike, jx_cc_token_t* body)
+{
+	jcc_macro_t* macro = (jcc_macro_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jcc_macro_t));
+	if (!macro) {
+		return NULL;
+	}
+
+	jx_memset(macro, 0, sizeof(jcc_macro_t));
+	macro->m_Name = jx_strtable_insert(ctx->m_StringTable, name, UINT32_MAX);
+	macro->m_IsObjLike = isObjLike;
+	macro->m_Body = body;
+	
+	void* prevDefinition = jx_hashmapSet(tu->m_MacroMap, &(jcc_macro_entry_t){ .m_Name = macro->m_Name, .m_Macro = macro });
+	if (prevDefinition) {
+		// TODO: 
+		// C11 6.10.3/2
+		// An identifier currently defined as an object-like macro shall not be redefined by another
+		// #define preprocessing directive unless the second definition is an object-like macro
+		// definition and the two replacement lists are identical. Likewise, an identifier currently
+		// defined as a function - like macro shall not be redefined by another #define
+		// preprocessing directive unless the second definition is a function - like macro definition
+		// that has the same number and spelling of parameters, and the two replacement lists are
+		// identical.
+	}
+	
+	return macro;
+}
+
+static void jcc_ppUndefMacro(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* name)
+{
+	jx_hashmapDelete(tu->m_MacroMap, &(jcc_macro_entry_t){ .m_Name = name });
+}
+
+static jx_cc_token_t* jcc_ppAddHideSet(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok, jx_cc_hideset_t* hs)
+{
+	jx_cc_token_t head = { 0 };
+	jx_cc_token_t* cur = &head;
+
+	while (tok) {
+		jx_cc_token_t* t = jcc_copyToken(ctx, tu, tok);
+		if (!t) {
+			return NULL;
+		}
+
+		t->m_HideSet = jcc_hidesetUnion(ctx, t->m_HideSet, hs);
+		if (!t->m_HideSet) {
+			return NULL;
+		}
+
+		cur->m_Next = t;
+		cur = cur->m_Next;
+
+		tok = tok->m_Next;
+	}
+	
+	return head.m_Next;
+}
+
+// Append tok2 to the end of tok1.
+static jx_cc_token_t* jcc_ppAppend(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok1, jx_cc_token_t* tok2)
+{
+	if (jcc_tokIs(tok1, JCC_TOKEN_EOF)) {
+		return tok2;
+	}
+
+	jx_cc_token_t head = { 0 };
+	jx_cc_token_t* cur = &head;
+
+	while (!jcc_tokIs(tok1, JCC_TOKEN_EOF)) {
+		cur->m_Next = jcc_copyToken(ctx, tu, tok1);
+		cur = cur->m_Next;
+
+		tok1 = tok1->m_Next;
+	}
+	cur->m_Next = tok2;
+
+	return head.m_Next;
+}
+
+// Replace func-like macro parameters with given arguments.
+static jx_cc_token_t* jcc_ppSubstitute(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok, jcc_macro_arg_t* args)
+{
+	jx_cc_token_t head = { 0 };
+	jx_cc_token_t* cur = &head;
+
+	bool first = true;
+	while (!jcc_tokIs(tok, JCC_TOKEN_EOF)) {
+		// "#" followed by a parameter is replaced with stringized actuals.
+		if (jcc_tokIs(tok, JCC_TOKEN_HASH)) {
+#if 1
+			JX_NOT_IMPLEMENTED();
+			return NULL;
+#else
+			MacroArg* arg = find_arg(args, tok->next);
+			if (!arg)
+				error_tok(tok->next, "'#' is not followed by a macro parameter");
+			cur = cur->next = stringize(tok, arg->tok);
+			tok = tok->next->next;
+			continue;
+#endif
+		}
+
+		// [GNU] If __VA_ARG__ is empty, `,##__VA_ARGS__` is expanded
+		// to the empty token list. Otherwise, its expaned to `,` and
+		// __VA_ARGS__.
+		if (jcc_tokIs(tok, JCC_TOKEN_COMMA) && jcc_tokIs(tok->m_Next, JCC_TOKEN_HASHASH)) {
+#if 1
+			JX_NOT_IMPLEMENTED();
+			return NULL;
+#else
+			MacroArg* arg = find_arg(args, tok->next->next);
+			if (arg && arg->is_va_args) {
+				if (arg->tok->kind == TK_EOF) {
+					tok = tok->next->next->next;
+				} else {
+					cur = cur->next = copy_token(tok);
+					tok = tok->next->next;
+				}
+				continue;
+			}
+#endif
+		}
+
+		if (jcc_tokIs(tok, JCC_TOKEN_HASHASH)) {
+#if 1
+			JX_NOT_IMPLEMENTED();
+			return NULL;
+#else
+			if (first) {
+				jcc_logError(ctx, &tok->m_Loc, "'##' cannot appear at start of macro expansion");
+				return NULL;
+			}
+
+			if (jcc_tokIs(tok->m_Next, JCC_TOKEN_EOF)) {
+				jcc_logError(ctx, &tok->m_Loc, "'##' cannot appear at end of macro expansion");
+				return NULL;
+			}
+
+			jcc_macro_arg_t* arg = jcc_ppFindArg(ctx, tu, args, tok->m_Next);
+			if (arg) {
+				if (!jcc_tokIs(arg->m_Token, JCC_TOKEN_EOF)) {
+					*cur = *paste(cur, arg->m_Token);
+
+					jx_cc_token_t* t = arg->m_Token->m_Next;
+					while (!jcc_tokIs(t, JCC_TOKEN_EOF)) {
+						cur->m_Next = jcc_copyToken(ctx, tu, t);
+						cur = cur->m_Next;
+						t = t->m_Next;
+					}
+				}
+				tok = tok->m_Next->m_Next;
+				continue;
+			}
+
+			*cur = *paste(cur, tok->m_Next);
+			tok = tok->m_Next->m_Next;
+			continue;
+#endif
+		}
+
+		jcc_macro_arg_t* arg = jcc_ppFindArg(args, tok);
+		if (arg && jcc_tokIs(tok->m_Next, JCC_TOKEN_HASHASH)) {
+			jx_cc_token_t* rhs = tok->m_Next->m_Next;
+
+			if (jcc_tokIs(arg->m_Token, JCC_TOKEN_EOF)) {
+				jcc_macro_arg_t* arg2 = jcc_ppFindArg(args, rhs);
+				if (arg2) {
+					jx_cc_token_t* t = arg2->m_Token;
+					while (!jcc_tokIs(t, JCC_TOKEN_EOF)) {
+						cur->m_Next = jcc_copyToken(ctx, tu, t);
+						cur = cur->m_Next;
+						t = t->m_Next;
+					}
+				} else {
+					cur->m_Next = jcc_copyToken(ctx, tu, rhs);
+					cur = cur->m_Next;
+				}
+
+				tok = rhs->m_Next;
+				continue;
+			}
+
+			jx_cc_token_t* t = arg->m_Token;
+			while (!jcc_tokIs(t, JCC_TOKEN_EOF)) {
+				cur->m_Next = jcc_copyToken(ctx, tu, t);
+				cur = cur->m_Next;
+				t = t->m_Next;
+			}
+
+			tok = tok->m_Next;
+			continue;
+		}
+
+		// If __VA_ARG__ is empty, __VA_OPT__(x) is expanded to the
+		// empty token list. Otherwise, __VA_OPT__(x) is expanded to x.
+#if 0
+		if (equal(tok, "__VA_OPT__") && equal(tok->next, "(")) {
+			MacroArg* arg = read_macro_arg_one(&tok, tok->next->next, true);
+			if (has_varargs(args))
+				for (Token* t = arg->tok; t->kind != TK_EOF; t = t->next)
+					cur = cur->next = t;
+			tok = skip(tok, ")");
+			continue;
+		}
+#endif
+
+		// Handle a macro token. Macro arguments are completely macro-expanded
+		// before they are substituted into a macro body.
+		if (arg) {
+			jx_cc_token_t* t = jcc_preprocess(ctx, tu, arg->m_Token);
+			t->m_Flags = tok->m_Flags;
+
+			while (!jcc_tokIs(t, JCC_TOKEN_EOF)) {
+				cur->m_Next = jcc_copyToken(ctx, tu, t);
+				cur = cur->m_Next;
+				t = t->m_Next;
+			}
+
+			tok = tok->m_Next;
+			continue;
+		}
+
+		// Handle a non-macro token.
+		cur->m_Next = jcc_copyToken(ctx, tu, tok);
+		cur = cur->m_Next;
+		tok = tok->m_Next;
+	}
+
+	cur->m_Next = tok;
+
+	return head.m_Next;
+}
+
+static jcc_macro_arg_t* jcc_ppFindArg(jcc_macro_arg_t* args, jx_cc_token_t* tok)
+{
+	jcc_macro_arg_t* ap = args;
+	while (ap) {
+		if (tok->m_String == ap->m_Name) {
+			return ap;
+		}
+
+		ap = ap->m_Next;
+	}
+
+	return NULL;
+}
+
+static jcc_cond_include_t* jcc_ppPushConditionalInclude(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok, bool included)
+{
+	jcc_cond_include_t* ci = (jcc_cond_include_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jcc_cond_include_t));
+	if (!ci) {
+		return NULL;
+	}
+
+	jx_memset(ci, 0, sizeof(jcc_cond_include_t));
+	ci->m_Next = tu->m_CondIncludeListHead;
+	ci->m_Ctx = JCC_CONDINCL_IN_THEN;
+	ci->m_Token = tok;
+	ci->m_Included = included;
+
+	tu->m_CondIncludeListHead = ci;
+
+	return ci;
+}
+
+static jx_cc_token_t* jcc_ppSkipConditionalIncludeNested(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok)
+{
+	while (!jcc_tokIs(tok, JCC_TOKEN_EOF)) {
+		if (jcc_tokIsHash(tok)) {
+			if (jcc_tokIs(tok->m_Next, JCC_TOKEN_IF) || jcc_tokIs(tok->m_Next, JCC_TOKEN_IFDEF) || jcc_tokIs(tok->m_Next, JCC_TOKEN_IFNDEF)) {
+				tok = jcc_ppSkipConditionalIncludeNested(ctx, tu, tok->m_Next->m_Next);
+				continue;
+			} else if (jcc_tokIs(tok->m_Next, JCC_TOKEN_ENDIF)) {
+				return tok->m_Next->m_Next;
+			}
+		}
+
+		tok = tok->m_Next;
+	}
+
+	return tok;
+}
+
+// Skip until next `#else`, `#elif` or `#endif`.
+// Nested `#if` and `#endif` are skipped.
+static jx_cc_token_t* jcc_ppSkipConditionalInclude(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok)
+{
+	while (!jcc_tokIs(tok, JCC_TOKEN_EOF)) {
+		if (jcc_tokIsHash(tok)) {
+			if (jcc_tokIs(tok->m_Next, JCC_TOKEN_IF) || jcc_tokIs(tok->m_Next, JCC_TOKEN_IFDEF) || jcc_tokIs(tok->m_Next, JCC_TOKEN_IFNDEF)) {
+				tok = jcc_ppSkipConditionalIncludeNested(ctx, tu, tok->m_Next->m_Next);
+				continue;
+			} else if (jcc_tokIs(tok->m_Next, JCC_TOKEN_ELIF) || jcc_tokIs(tok->m_Next, JCC_TOKEN_ELSE) || jcc_tokIs(tok->m_Next, JCC_TOKEN_ENDIF)) {
+				break;
+			}
+		}
+
+		tok = tok->m_Next;
+	}
+
+	return tok;
+}
+
+// Some preprocessor directives such as #include allow extraneous
+// tokens before newline. This function skips such tokens.
+static jx_cc_token_t* jcc_ppSkipLine(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok)
+{
+	if ((tok->m_Flags & JCC_TOKEN_FLAGS_AT_BEGIN_OF_LINE_Msk) != 0) {
+		return tok;
+	}
+
+	while ((tok->m_Flags & JCC_TOKEN_FLAGS_AT_BEGIN_OF_LINE_Msk) == 0) {
+		tok = tok->m_Next;
+	}
+
+	return tok;
+}
+
+static int64_t jcc_ppEvalConstExpression(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr, bool* err)
+{
+	jx_cc_token_t* tok = *tokenListPtr;
+	jx_cc_token_t* start = tok;
+	tok = tok->m_Next;
+
+	jx_cc_token_t* expr = jcc_ppReadConstExpression(ctx, tu, &tok);
+	expr = jcc_preprocess(ctx, tu, expr);
+
+	if (jcc_tokIs(expr, JCC_TOKEN_EOF)) {
+		jcc_logError(ctx, &start->m_Loc, "No expression");
+		*err = true;
+		return 0;
+	}
+
+	// [https://www.sigbus.info/n1570#6.10.1p4] The standard requires
+	// we replace remaining non-macro identifiers with "0" before
+	// evaluating a constant expression. For example, `#if foo` is
+	// equivalent to `#if 0` if foo is not defined.
+	jx_cc_token_t* t = expr;
+	while (!jcc_tokIs(t, JCC_TOKEN_EOF)) {
+		if (jcc_tokIs(t, JCC_TOKEN_IDENTIFIER)) {
+			jx_cc_token_t* next = t->m_Next;
+
+			const char* zeroStr = jx_strtable_insert(ctx->m_StringTable, "0", UINT32_MAX);
+			jx_cc_token_t* numTok = jcc_allocToken(ctx, tu, JCC_TOKEN_PREPROC_NUMBER, zeroStr, zeroStr + 1);
+			if (!numTok) {
+				*err = true;
+				return 0;
+			}
+
+			if (t == expr) {
+				expr = numTok;
+			}
+			numTok->m_Next = next;
+			t = numTok;
+		}
+
+		t = t->m_Next;
+	}
+
+	jcc_convertPreprocessorNumbers(ctx, expr);
+
+	jx_cc_token_t* rest2 = expr;
+	int64_t val = jcc_parseConstExpression(ctx, tu, &rest2, err);
+	if (*err) {
+		return 0;
+	}
+
+	if (!jcc_tokIs(rest2, JCC_TOKEN_EOF)) {
+		jcc_logError(ctx, &rest2->m_Loc, "Extra token");
+		*err = true;
+		return 0;
+	}
+
+	*tokenListPtr = tok;
+
+	return val;
+}
+
+static jx_cc_token_t* jcc_ppReadConstExpression(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr)
+{
+	jx_cc_token_t* tok = jcc_copyLine(ctx, tu, tokenListPtr);
+
+	jx_cc_token_t head = { 0 };
+	jx_cc_token_t* cur = &head;
+
+	while (!jcc_tokIs(tok, JCC_TOKEN_EOF)) {
+		// "defined(foo)" or "defined foo" becomes "1" if macro "foo"
+		// is defined. Otherwise "0".
+		if (jcc_tokIs(tok, JCC_TOKEN_DEFINED)) {
+			jx_cc_token_t* start = tok;
+			tok = tok->m_Next;
+
+			bool has_paren = jcc_tokExpect(&tok, JCC_TOKEN_OPEN_PAREN);
+
+			if (!jcc_tokIs(tok, JCC_TOKEN_IDENTIFIER)) {
+				jcc_logError(ctx, &start->m_Loc, "Macro name must be an identifier");
+				return NULL;
+			}
+
+			jcc_macro_t* macro = jcc_ppFindMacro(ctx, tu, tok);
+			tok = tok->m_Next;
+
+			if (has_paren) {
+				if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
+					jcc_logError(ctx, &tok->m_Loc, "Expected ')'");
+					return NULL;
+				}
+			}
+
+			const char* valStr = jx_strtable_insert(ctx->m_StringTable, macro ? "1" : "0", UINT32_MAX);
+			cur->m_Next = jcc_allocToken(ctx, tu, JCC_TOKEN_PREPROC_NUMBER, valStr, valStr + 1);
+			cur = cur->m_Next;
+		} else {
+			cur->m_Next = tok;
+			cur = cur->m_Next;
+			tok = tok->m_Next;
+		}
+	}
+
+	cur->m_Next = tok;
+
+	return head.m_Next;
+}
+
+static jx_cc_hideset_t* jcc_hidesetCreate(jx_cc_context_t* ctx, const char* name)
+{
+	jx_cc_hideset_t* hs = (jx_cc_hideset_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_cc_hideset_t));
+	if (!hs) {
+		return NULL;
+	}
+
+	jx_memset(hs, 0, sizeof(jx_cc_hideset_t));
+	hs->m_Name = jx_strtable_insert(ctx->m_StringTable, name, UINT32_MAX);
+
+	return hs;
+}
+
+static bool jcc_hidesetContains(jx_cc_context_t* ctx, jx_cc_hideset_t* hs, const char* name)
+{
+	JX_UNUSED(ctx);
+
+	while (hs) {
+		if (hs->m_Name == name) {
+			return true;
+		}
+
+		hs = hs->m_Next;
+	}
+
+	return false;
+}
+
+static jx_cc_hideset_t* jcc_hidesetUnion(jx_cc_context_t* ctx, jx_cc_hideset_t* hs1, jx_cc_hideset_t* hs2)
+{
+	jx_cc_hideset_t head = { 0 };
+	jx_cc_hideset_t* cur = &head;
+
+	while (hs1) {
+		cur->m_Next = jcc_hidesetCreate(ctx, hs1->m_Name);
+		cur = cur->m_Next;
+		hs1 = hs1->m_Next;
+	}
+	cur->m_Next = hs2;
+
+	return head.m_Next;
+}
+
+static jx_cc_hideset_t* jcc_hidesetIntersection(jx_cc_context_t* ctx, jx_cc_hideset_t* hs1, jx_cc_hideset_t* hs2)
+{
+	jx_cc_hideset_t head = { 0 };
+	jx_cc_hideset_t* cur = &head;
+
+	while (hs1) {
+		if (jcc_hidesetContains(ctx, hs2, hs1->m_Name)) {
+			cur->m_Next = jcc_hidesetCreate(ctx, hs1->m_Name);
+			cur = cur->m_Next;
+		}
+
+		hs1 = hs1->m_Next;
+	}
+
+	return head.m_Next;
+}
+
+static uint64_t jcc_macroEntryHashCallback(const void* item, uint64_t seed0, uint64_t seed1, void* udata)
+{
+	JX_UNUSED(udata);
+	const jcc_macro_entry_t* node = (const jcc_macro_entry_t*)item;
+	return jx_hashFNV1a_cstr(node->m_Name, UINT32_MAX, seed0, seed1);
+}
+
+static int32_t jcc_macroEntryCompareCallback(const void* a, const void* b, void* udata)
+{
+	JX_UNUSED(udata);
+	const jcc_macro_entry_t* nodeA = (const jcc_macro_entry_t*)a;
+	const jcc_macro_entry_t* nodeB = (const jcc_macro_entry_t*)b;
+	return jx_strcmp(nodeA->m_Name, nodeB->m_Name);
 }

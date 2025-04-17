@@ -1,4 +1,3 @@
-// TODO: Constant folding
 int main(void)
 {
 	return (2 + 2) * 2 - 8;

@@ -24,8 +24,7 @@ int x = 0;
 #define X 1
 
 #if X
-int
-main()
+int main(void)
 {
 	return 0;
 }
