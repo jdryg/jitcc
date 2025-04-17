@@ -7373,6 +7373,11 @@ static bool jcc_tokIs(jx_cc_token_t* tok, jx_cc_token_kind kind)
 	return tok->m_Kind == kind;
 }
 
+static bool jcc_tokIsHash(jx_cc_token_t* tok)
+{
+	return tok->m_Kind == JCC_TOKEN_HASH && (tok->m_Flags & JCC_TOKEN_FLAGS_AT_BEGIN_OF_LINE_Msk) != 0;
+}
+
 static bool jcc_tokExpect(jx_cc_token_t** tok, jx_cc_token_kind kind)
 {
 	if (!jcc_tokIs(*tok, kind)) {
@@ -8479,7 +8484,7 @@ static jx_cc_token_t* jcc_preprocess(jx_cc_context_t* ctx, jcc_translation_unit_
 			continue;
 		}
 
-		if ((tok->m_Flags & JCC_TOKEN_FLAGS_AT_BEGIN_OF_LINE_Msk) == 0 || !jcc_tokIs(tok, JCC_TOKEN_HASH)) {
+		if (!jcc_tokIsHash(tok)) {
 			cur->m_Next = tok;
 			cur = cur->m_Next;
 			tok = tok->m_Next;
@@ -9031,8 +9036,8 @@ static jx_cc_token_t* jcc_ppSubstitute(jx_cc_context_t* ctx, jcc_translation_uni
 				error_tok(tok->next, "'#' is not followed by a macro parameter");
 			cur = cur->next = stringize(tok, arg->tok);
 			tok = tok->next->next;
-#endif
 			continue;
+#endif
 		}
 
 		// [GNU] If __VA_ARG__ is empty, `,##__VA_ARGS__` is expanded
@@ -9201,7 +9206,7 @@ static jcc_cond_include_t* jcc_ppPushConditionalInclude(jx_cc_context_t* ctx, jc
 static jx_cc_token_t* jcc_ppSkipConditionalIncludeNested(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok)
 {
 	while (!jcc_tokIs(tok, JCC_TOKEN_EOF)) {
-		if (jcc_tokIs(tok, JCC_TOKEN_HASH)) {
+		if (jcc_tokIsHash(tok)) {
 			if (jcc_tokIs(tok->m_Next, JCC_TOKEN_IF) || jcc_tokIs(tok->m_Next, JCC_TOKEN_IFDEF) || jcc_tokIs(tok->m_Next, JCC_TOKEN_IFNDEF)) {
 				tok = jcc_ppSkipConditionalIncludeNested(ctx, tu, tok->m_Next->m_Next);
 				continue;
@@ -9221,7 +9226,7 @@ static jx_cc_token_t* jcc_ppSkipConditionalIncludeNested(jx_cc_context_t* ctx, j
 static jx_cc_token_t* jcc_ppSkipConditionalInclude(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok)
 {
 	while (!jcc_tokIs(tok, JCC_TOKEN_EOF)) {
-		if (jcc_tokIs(tok, JCC_TOKEN_HASH)) {
+		if (jcc_tokIsHash(tok)) {
 			if (jcc_tokIs(tok->m_Next, JCC_TOKEN_IF) || jcc_tokIs(tok->m_Next, JCC_TOKEN_IFDEF) || jcc_tokIs(tok->m_Next, JCC_TOKEN_IFNDEF)) {
 				tok = jcc_ppSkipConditionalIncludeNested(ctx, tu, tok->m_Next->m_Next);
 				continue;
