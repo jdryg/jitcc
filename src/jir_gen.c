@@ -738,6 +738,18 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 		jx_cc_ast_expr_binary_t* assignExpr = (jx_cc_ast_expr_binary_t*)expr;
 		jx_ir_value_t* rhs = jirgenGenExpression(ctx, assignExpr->m_ExprRHS);
 		jx_ir_value_t* lhsAddr = jirgenGenAddress(ctx, assignExpr->m_ExprLHS);
+
+		jx_ir_type_t* rhsExprType = jccTypeToIRType(ctx, assignExpr->m_ExprRHS->m_Type);
+		if (rhsExprType != rhs->m_Type && !(rhsExprType->m_Kind == JIR_TYPE_ARRAY && rhs->m_Type->m_Kind == JIR_TYPE_POINTER)) {
+			// This can happen when assigning (e.g.) a boolean (setcc instruction) to an integer (c-testsuite 00133.c).
+			// If I don't cast rhs to the correct type, jirgenGenStore() asserts.
+			if (jx_ir_typeIsIntegral(rhsExprType) && jx_ir_typeIsIntegral(rhs->m_Type)) {
+				rhs = jirgenConvertType(ctx, rhs, rhsExprType);
+			} else {
+				JX_NOT_IMPLEMENTED();
+			}
+		}
+
 		jirgenGenStore(ctx, lhsAddr, rhs);
 		val = rhs;
 	} break;
@@ -952,42 +964,36 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 	case JCC_NODE_EXPR_CAST: {
 		jx_cc_ast_expr_unary_t* castNode = (jx_cc_ast_expr_unary_t*)expr;
 		jx_ir_value_t* originalVal = jirgenGenExpression(ctx, castNode->m_Expr);
-		jx_ir_instruction_t* castInstr = NULL;
 
 		jx_ir_type_t* srcType = originalVal->m_Type;
 		jx_ir_type_t* dstType = jccTypeToIRType(ctx, expr->m_Type);
-		const bool srcIsInteger = jx_ir_typeIsInteger(srcType);
-		const bool dstIsInteger = jx_ir_typeIsInteger(dstType);
-		const bool srcIsPointer = jx_ir_typeToPointer(srcType) != NULL;
-		const bool dstIsPointer = jx_ir_typeToPointer(dstType) != NULL;
-		const uint32_t srcSize = (uint32_t)jx_ir_typeGetSize(srcType);
-		const uint32_t dstSize = (uint32_t)jx_ir_typeGetSize(dstType);
-		if (srcIsInteger && dstIsInteger) {
-			if (dstSize < srcSize) {
-				castInstr = jx_ir_instrTrunc(irctx, originalVal, dstType);
-			} else if (dstSize > srcSize) {
-				castInstr = jx_ir_typeIsSigned(srcType)
-					? jx_ir_instrSignExt(irctx, originalVal, dstType)
-					: jx_ir_instrZeroExt(irctx, originalVal, dstType)
-					;
-			} else {
-				castInstr = jx_ir_instrBitcast(irctx, originalVal, dstType);
-			}
-		} else if (srcIsInteger && dstIsPointer) {
-			castInstr = jx_ir_instrIntToPtr(irctx, originalVal, dstType);
-		} else if (srcIsPointer && dstIsInteger) {
-			castInstr = jx_ir_instrPtrToInt(irctx, originalVal, dstType);
-		} else if (srcSize == dstSize) {
-			castInstr = jx_ir_instrBitcast(irctx, originalVal, dstType);
+		if (jx_ir_typeIsIntegral(srcType) && jx_ir_typeIsIntegral(dstType)) {
+			val = jirgenConvertType(ctx, originalVal, dstType);
 		} else {
-			JX_NOT_IMPLEMENTED();
-		}
+			const bool srcIsInteger = jx_ir_typeIsInteger(srcType);
+			const bool dstIsInteger = jx_ir_typeIsInteger(dstType);
+			const bool srcIsPointer = jx_ir_typeToPointer(srcType) != NULL;
+			const bool dstIsPointer = jx_ir_typeToPointer(dstType) != NULL;
+			const uint32_t srcSize = (uint32_t)jx_ir_typeGetSize(srcType);
+			const uint32_t dstSize = (uint32_t)jx_ir_typeGetSize(dstType);
 
-		if (castInstr) {
-			jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, castInstr);
-			val = jx_ir_instrToValue(castInstr);
-		} else {
-			val = originalVal;
+			jx_ir_instruction_t* castInstr = NULL;
+			if (srcIsInteger && dstIsPointer) {
+				castInstr = jx_ir_instrIntToPtr(irctx, originalVal, dstType);
+			} else if (srcIsPointer && dstIsInteger) {
+				castInstr = jx_ir_instrPtrToInt(irctx, originalVal, dstType);
+			} else if (srcSize == dstSize) {
+				castInstr = jx_ir_instrBitcast(irctx, originalVal, dstType);
+			} else {
+				JX_NOT_IMPLEMENTED();
+			}
+
+			if (castInstr) {
+				jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, castInstr);
+				val = jx_ir_instrToValue(castInstr);
+			} else {
+				val = originalVal;
+			}
 		}
 	} break;
 	case JCC_NODE_EXPR_MEMZERO: {
