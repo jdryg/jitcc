@@ -1585,8 +1585,8 @@ jx_ir_instruction_t* jx_ir_instrZeroExt(jx_ir_context_t* ctx, jx_ir_value_t* val
 jx_ir_instruction_t* jx_ir_instrSignExt(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType)
 {
 	jx_ir_type_t* valType = val->m_Type;
-	if (!jx_ir_typeIsInteger(valType) || !jx_ir_typeIsInteger(targetType) || jx_ir_typeGetSize(valType) >= jx_ir_typeGetSize(targetType)) {
-		JX_CHECK(false, "sext can only be applied from one integer type to another larger integer type.");
+	if (!jx_ir_typeIsIntegral(valType) || !jx_ir_typeIsIntegral(targetType) || jx_ir_typeGetSize(valType) >= jx_ir_typeGetSize(targetType)) {
+		JX_CHECK(false, "sext can only be applied from one integral type to another larger integral type.");
 		return NULL;
 	}
 
@@ -4216,9 +4216,7 @@ static int32_t jir_constCompareCallback(const void* a, const void* b, void* udat
 			: (cA->u.m_F64 > cB->u.m_F64 ? 1 : 0)
 			;
 	} break;
-	case JIR_TYPE_STRUCT: {
-		JX_NOT_IMPLEMENTED();
-	} break;
+	case JIR_TYPE_STRUCT:
 	case JIR_TYPE_ARRAY: {
 		const uint32_t numElementsA = (uint32_t)jx_array_sizeu(cA->super.m_OperandArr);
 		const uint32_t numElementsB = (uint32_t)jx_array_sizeu(cB->super.m_OperandArr);

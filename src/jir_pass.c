@@ -1576,6 +1576,9 @@ static jx_ir_constant_t* jir_constFold_sextConst(jx_ir_context_t* ctx, jx_ir_con
 
 	jx_ir_constant_t* res = NULL;
 	switch (operandType->m_Kind) {
+	case JIR_TYPE_BOOL: {
+		res = jx_ir_constGetInteger(ctx, type->m_Kind, op->u.m_Bool ? 1 : 0);
+	} break;
 	case JIR_TYPE_U8: 
 	case JIR_TYPE_I8: {
 		res = jx_ir_constGetInteger(ctx, type->m_Kind, (int64_t)((int8_t)op->u.m_I64));

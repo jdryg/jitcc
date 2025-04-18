@@ -1,6 +1,7 @@
-#include <stdio.h>
+//#include <stdio.h>
+int printf(const char* str, ...);
 
-int main() 
+int main(void) 
 {
    printf("Hello\n");
    printf("Hello\n"); /* this is a comment */ printf("Hello\n");

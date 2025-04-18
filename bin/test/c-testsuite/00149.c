@@ -1,8 +1,7 @@
 struct S { int a; int b; };
 struct S *s = &(struct S) { 1, 2 };
 
-int
-main()
+int main(void)
 {
 	if(s->a != 1)
 		return 1;
