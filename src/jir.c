@@ -1585,8 +1585,8 @@ jx_ir_instruction_t* jx_ir_instrZeroExt(jx_ir_context_t* ctx, jx_ir_value_t* val
 jx_ir_instruction_t* jx_ir_instrSignExt(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType)
 {
 	jx_ir_type_t* valType = val->m_Type;
-	if (!jx_ir_typeIsInteger(valType) || !jx_ir_typeIsInteger(targetType) || jx_ir_typeGetSize(valType) >= jx_ir_typeGetSize(targetType)) {
-		JX_CHECK(false, "sext can only be applied from one integer type to another larger integer type.");
+	if (!jx_ir_typeIsIntegral(valType) || !jx_ir_typeIsIntegral(targetType) || jx_ir_typeGetSize(valType) >= jx_ir_typeGetSize(targetType)) {
+		JX_CHECK(false, "sext can only be applied from one integral type to another larger integral type.");
 		return NULL;
 	}
 
