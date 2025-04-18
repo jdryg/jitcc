@@ -4216,9 +4216,7 @@ static int32_t jir_constCompareCallback(const void* a, const void* b, void* udat
 			: (cA->u.m_F64 > cB->u.m_F64 ? 1 : 0)
 			;
 	} break;
-	case JIR_TYPE_STRUCT: {
-		JX_NOT_IMPLEMENTED();
-	} break;
+	case JIR_TYPE_STRUCT:
 	case JIR_TYPE_ARRAY: {
 		const uint32_t numElementsA = (uint32_t)jx_array_sizeu(cA->super.m_OperandArr);
 		const uint32_t numElementsB = (uint32_t)jx_array_sizeu(cB->super.m_OperandArr);

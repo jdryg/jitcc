@@ -14,8 +14,7 @@ struct S2 *s = &(struct S2) {
 	{[0] = 1,  1+1}
 };
 
-int
-main()
+int main(void)
 {
 	if(s->s1.a != 1)
 		return 1;
