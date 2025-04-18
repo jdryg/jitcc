@@ -1153,16 +1153,15 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 		jx_ir_value_t* ptrVal = jirgenGenExpression(ctx, gepNode->m_ExprPtr);
 		jx_ir_value_t* idxVal = jirgenGenExpression(ctx, gepNode->m_ExprIndex);
 
-		// If ptrVal is a pointer to an array, use a 2 index GEP because the first index
+		// If gepNode->m_ExprPtr is an array, use a 2 index GEP because the first index
 		// refers to the array itself.
- 		jx_ir_type_pointer_t* ptrType = jx_ir_typeToPointer(ptrVal->m_Type);
-		const bool isPtrToArray = ptrType->m_BaseType->m_Kind == JIR_TYPE_ARRAY;
+		const bool isArray = gepNode->m_ExprPtr->m_Type->m_Kind == JCC_TYPE_ARRAY;
 
 		jx_ir_value_t* indices[2] = {
 			jx_ir_constToValue(jx_ir_constGetI32(irctx, 0)),
 			idxVal
 		};
-		jx_ir_instruction_t* gepInstr = jx_ir_instrGetElementPtr(irctx, ptrVal, 1 + isPtrToArray, &indices[1 - isPtrToArray]);
+		jx_ir_instruction_t* gepInstr = jx_ir_instrGetElementPtr(irctx, ptrVal, 1 + isArray, &indices[1 - isArray]);
 		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, gepInstr);
 		val = jx_ir_instrToValue(gepInstr);
 	} break;
@@ -1278,6 +1277,21 @@ static jx_ir_value_t* jirgenGenLoad(jx_irgen_context_t* ctx, jx_ir_value_t* ptr,
 
 	jx_ir_type_pointer_t* ptrType = jx_ir_typeToPointer(ptr->m_Type);
 	JX_CHECK(ptrType, "Expected a pointer type");
+
+	jx_ir_type_t* baseType = ptrType->m_BaseType;
+	jx_ir_type_array_t* arrType = jx_ir_typeToArray(baseType);
+	if (arrType) {
+		// Dereference of a pointer to an array should load the first element of the array
+		// (i.e. treat the array as pointer)
+		jx_ir_value_t* indices[] = {
+			jx_ir_constToValue(jx_ir_constGetI32(irctx, 0)),
+			jx_ir_constToValue(jx_ir_constGetI32(irctx, 0)),
+		};
+		jx_ir_instruction_t* gepInstr = jx_ir_instrGetElementPtr(irctx, ptr, 2, indices);
+		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, gepInstr);
+		ptr = jx_ir_instrToValue(gepInstr);
+		ptrType = jx_ir_typeToPointer(ptr->m_Type);
+	}
 
 	jx_ir_instruction_t* loadInstr = jx_ir_instrLoad(irctx, ptrType->m_BaseType, ptr);
 	jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, loadInstr);

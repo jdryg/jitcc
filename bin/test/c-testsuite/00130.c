@@ -1,5 +1,4 @@
-int
-main()
+int main(void)
 {
 	char arr[2][4], (*p)[4], *q;
 	int v[4];

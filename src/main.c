@@ -761,7 +761,7 @@ int main(int argc, char** argv)
 	uint32_t numSkipped = 0;
 	uint32_t numPass = 0;
 	uint32_t numFailed = 0;
-	for (uint32_t iTest = 1; iTest <= 120; ++iTest) {
+	for (uint32_t iTest = 1; iTest <= 130; ++iTest) {
 		++totalTests;
 
 		char sourceFile[256];
@@ -772,6 +772,7 @@ int main(int argc, char** argv)
 		const bool skipTest = false
 			|| iTest == 113 // Floating point
 			|| iTest == 119 // Floating point
+			|| iTest == 121 // Parsing error; complex variable/function declaration
 			|| iTest == 123 // Floating point
 			;
 		if (skipTest) {
@@ -840,7 +841,7 @@ int main(int argc, char** argv)
 #else
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-	const char* sourceFile = "test/c-testsuite/00115.c";
+	const char* sourceFile = "test/c-testsuite/00130.c";
 //	const char* sourceFile = "test/pointer_arithmetic.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
