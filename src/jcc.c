@@ -126,6 +126,7 @@ static const jcc_known_token_t kKeywords[] = {
 	JCC_DEFINE_KNOWN_TOKEN("once", JCC_TOKEN_ONCE),
 	JCC_DEFINE_KNOWN_TOKEN("error", JCC_TOKEN_ERROR),
 	JCC_DEFINE_KNOWN_TOKEN("defined", JCC_TOKEN_DEFINED),
+	JCC_DEFINE_KNOWN_TOKEN("__VA_OPT__", JCC_TOKEN_VA_OPT),
 };
 
 static const jcc_known_token_t kPunctuators[] = {
@@ -8462,6 +8463,9 @@ static void jcc_ppUndefMacro(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, c
 static jx_cc_token_t* jcc_ppAddHideSet(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok, jx_cc_hideset_t* hs);
 static jx_cc_token_t* jcc_ppAppend(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok1, jx_cc_token_t* tok2);
 static jx_cc_token_t* jcc_ppSubstitute(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok, jcc_macro_arg_t* args);
+static jx_cc_token_t* jcc_ppPaste(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* lhs, jx_cc_token_t* rhs);
+static char* jcc_ppJoinTokens(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok, jx_cc_token_t* end);
+static char* jcc_ppQuoteString(jx_cc_context_t* ctx, const char* str);
 static jx_cc_token_t* jcc_ppStringize(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* hash, jx_cc_token_t* arg);
 static jcc_macro_arg_t* jcc_ppFindArg(jcc_macro_arg_t* args, jx_cc_token_t* tok);
 static jcc_cond_include_t* jcc_ppPushConditionalInclude(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok, bool included);
@@ -9026,8 +9030,8 @@ static jx_cc_token_t* jcc_ppSubstitute(jx_cc_context_t* ctx, jcc_translation_uni
 
 	bool first = true;
 	while (!jcc_tokIs(tok, JCC_TOKEN_EOF)) {
-		// "#" followed by a parameter is replaced with stringized actuals.
 		if (jcc_tokIs(tok, JCC_TOKEN_HASH)) {
+			// "#" followed by a parameter is replaced with stringized actuals.
 			jcc_macro_arg_t* arg = jcc_ppFindArg(args, tok->m_Next);
 			if (!arg) {
 				jcc_logError(ctx, &tok->m_Next->m_Loc, "'#' is not followed by a macro parameter");
@@ -9038,13 +9042,10 @@ static jx_cc_token_t* jcc_ppSubstitute(jx_cc_context_t* ctx, jcc_translation_uni
 			cur = cur->m_Next;
 
 			tok = tok->m_Next->m_Next;
-			continue;
-		}
-
-		// [GNU] If __VA_ARG__ is empty, `,##__VA_ARGS__` is expanded
-		// to the empty token list. Otherwise, its expaned to `,` and
-		// __VA_ARGS__.
-		if (jcc_tokIs(tok, JCC_TOKEN_COMMA) && jcc_tokIs(tok->m_Next, JCC_TOKEN_HASHASH)) {
+		} else if (jcc_tokIs(tok, JCC_TOKEN_COMMA) && jcc_tokIs(tok->m_Next, JCC_TOKEN_HASHASH)) {
+			// [GNU] If __VA_ARG__ is empty, `,##__VA_ARGS__` is expanded
+			// to the empty token list. Otherwise, its expaned to `,` and
+			// __VA_ARGS__.
 #if 1
 			JX_NOT_IMPLEMENTED();
 			return NULL;
@@ -9060,13 +9061,7 @@ static jx_cc_token_t* jcc_ppSubstitute(jx_cc_context_t* ctx, jcc_translation_uni
 				continue;
 			}
 #endif
-		}
-
-		if (jcc_tokIs(tok, JCC_TOKEN_HASHASH)) {
-#if 1
-			JX_NOT_IMPLEMENTED();
-			return NULL;
-#else
+		} else if (jcc_tokIs(tok, JCC_TOKEN_HASHASH)) {
 			if (first) {
 				jcc_logError(ctx, &tok->m_Loc, "'##' cannot appear at start of macro expansion");
 				return NULL;
@@ -9077,10 +9072,10 @@ static jx_cc_token_t* jcc_ppSubstitute(jx_cc_context_t* ctx, jcc_translation_uni
 				return NULL;
 			}
 
-			jcc_macro_arg_t* arg = jcc_ppFindArg(ctx, tu, args, tok->m_Next);
+			jcc_macro_arg_t* arg = jcc_ppFindArg(args, tok->m_Next);
 			if (arg) {
 				if (!jcc_tokIs(arg->m_Token, JCC_TOKEN_EOF)) {
-					*cur = *paste(cur, arg->m_Token);
+					*cur = *jcc_ppPaste(ctx, tu, cur, arg->m_Token);
 
 					jx_cc_token_t* t = arg->m_Token->m_Next;
 					while (!jcc_tokIs(t, JCC_TOKEN_EOF)) {
@@ -9089,87 +9084,113 @@ static jx_cc_token_t* jcc_ppSubstitute(jx_cc_context_t* ctx, jcc_translation_uni
 						t = t->m_Next;
 					}
 				}
-				tok = tok->m_Next->m_Next;
-				continue;
+			} else {
+				*cur = *jcc_ppPaste(ctx, tu, cur, tok->m_Next);
 			}
 
-			*cur = *paste(cur, tok->m_Next);
 			tok = tok->m_Next->m_Next;
-			continue;
-#endif
-		}
+		} else {
+			jcc_macro_arg_t* arg = jcc_ppFindArg(args, tok);
+			if (arg && jcc_tokIs(tok->m_Next, JCC_TOKEN_HASHASH)) {
+				jx_cc_token_t* rhs = tok->m_Next->m_Next;
 
-		jcc_macro_arg_t* arg = jcc_ppFindArg(args, tok);
-		if (arg && jcc_tokIs(tok->m_Next, JCC_TOKEN_HASHASH)) {
-			jx_cc_token_t* rhs = tok->m_Next->m_Next;
+				if (jcc_tokIs(arg->m_Token, JCC_TOKEN_EOF)) {
+					jcc_macro_arg_t* arg2 = jcc_ppFindArg(args, rhs);
+					if (arg2) {
+						jx_cc_token_t* t = arg2->m_Token;
+						while (!jcc_tokIs(t, JCC_TOKEN_EOF)) {
+							cur->m_Next = jcc_copyToken(ctx, tu, t);
+							cur = cur->m_Next;
+							t = t->m_Next;
+						}
+					} else {
+						cur->m_Next = jcc_copyToken(ctx, tu, rhs);
+						cur = cur->m_Next;
+					}
 
-			if (jcc_tokIs(arg->m_Token, JCC_TOKEN_EOF)) {
-				jcc_macro_arg_t* arg2 = jcc_ppFindArg(args, rhs);
-				if (arg2) {
-					jx_cc_token_t* t = arg2->m_Token;
+					tok = rhs->m_Next;
+				} else {
+					jx_cc_token_t* t = arg->m_Token;
 					while (!jcc_tokIs(t, JCC_TOKEN_EOF)) {
 						cur->m_Next = jcc_copyToken(ctx, tu, t);
 						cur = cur->m_Next;
 						t = t->m_Next;
 					}
-				} else {
-					cur->m_Next = jcc_copyToken(ctx, tu, rhs);
+
+					tok = tok->m_Next;
+				}
+			} else if (jcc_tokIs(tok, JCC_TOKEN_VA_OPT) && jcc_tokIs(tok->m_Next, JCC_TOKEN_OPEN_PAREN)) {
+#if 1
+				JX_NOT_IMPLEMENTED();
+				return NULL;
+#else
+				// If __VA_ARG__ is empty, __VA_OPT__(x) is expanded to the
+				// empty token list. Otherwise, __VA_OPT__(x) is expanded to x.
+				MacroArg* arg = read_macro_arg_one(&tok, tok->next->next, true);
+				if (has_varargs(args))
+					for (Token* t = arg->tok; t->kind != TK_EOF; t = t->next)
+						cur = cur->next = t;
+				tok = skip(tok, ")");
+				continue;
+#endif
+			} else if (arg) {
+				// Handle a macro token. Macro arguments are completely macro-expanded
+				// before they are substituted into a macro body.
+				jx_cc_token_t* t = jcc_preprocess(ctx, tu, arg->m_Token);
+				t->m_Flags = tok->m_Flags;
+
+				while (!jcc_tokIs(t, JCC_TOKEN_EOF)) {
+					cur->m_Next = jcc_copyToken(ctx, tu, t);
 					cur = cur->m_Next;
+					t = t->m_Next;
 				}
 
-				tok = rhs->m_Next;
-				continue;
-			}
-
-			jx_cc_token_t* t = arg->m_Token;
-			while (!jcc_tokIs(t, JCC_TOKEN_EOF)) {
-				cur->m_Next = jcc_copyToken(ctx, tu, t);
+				tok = tok->m_Next;
+			} else {
+				// Handle a non-macro token.
+				cur->m_Next = jcc_copyToken(ctx, tu, tok);
 				cur = cur->m_Next;
-				t = t->m_Next;
+				tok = tok->m_Next;
 			}
-
-			tok = tok->m_Next;
-			continue;
 		}
 
-		// If __VA_ARG__ is empty, __VA_OPT__(x) is expanded to the
-		// empty token list. Otherwise, __VA_OPT__(x) is expanded to x.
-#if 0
-		if (equal(tok, "__VA_OPT__") && equal(tok->next, "(")) {
-			MacroArg* arg = read_macro_arg_one(&tok, tok->next->next, true);
-			if (has_varargs(args))
-				for (Token* t = arg->tok; t->kind != TK_EOF; t = t->next)
-					cur = cur->next = t;
-			tok = skip(tok, ")");
-			continue;
-		}
-#endif
-
-		// Handle a macro token. Macro arguments are completely macro-expanded
-		// before they are substituted into a macro body.
-		if (arg) {
-			jx_cc_token_t* t = jcc_preprocess(ctx, tu, arg->m_Token);
-			t->m_Flags = tok->m_Flags;
-
-			while (!jcc_tokIs(t, JCC_TOKEN_EOF)) {
-				cur->m_Next = jcc_copyToken(ctx, tu, t);
-				cur = cur->m_Next;
-				t = t->m_Next;
-			}
-
-			tok = tok->m_Next;
-			continue;
-		}
-
-		// Handle a non-macro token.
-		cur->m_Next = jcc_copyToken(ctx, tu, tok);
-		cur = cur->m_Next;
-		tok = tok->m_Next;
+		first = false;
 	}
 
 	cur->m_Next = tok;
 
 	return head.m_Next;
+}
+
+// Concatenate two tokens to create a new token.
+static jx_cc_token_t* jcc_ppPaste(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* lhs, jx_cc_token_t* rhs)
+{
+#if 1
+	jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
+	jx_strbuf_printf(sb, "%s%s", lhs->m_String, rhs->m_String);
+	jx_strbuf_nullTerminate(sb);
+
+	uint32_t len = 0;
+	const char* buffer = jx_strbuf_getString(sb, &len);
+	jx_cc_token_t* tok = jcc_tokenizeString(ctx, tu, (char*)buffer, len);
+	if (!jcc_tokIs(tok->m_Next, JCC_TOKEN_EOF)) {
+		jcc_logError(ctx, &lhs->m_Loc, "pasting forms '%s', an invalid token", buffer);
+		return NULL;
+	}
+
+	jx_strbuf_destroy(sb);
+
+	return tok;
+#else
+	// Paste the two tokens.
+	char* buf = format("%.*s%.*s", lhs->len, lhs->loc, rhs->len, rhs->loc);
+
+	// Tokenize the resulting string.
+	Token* tok = tokenize(new_file(lhs->file->name, lhs->file->file_no, buf));
+	if (tok->next->kind != TK_EOF)
+		error_tok(lhs, "pasting forms '%s', an invalid token", buf);
+	return tok;
+#endif
 }
 
 // Concatenates all tokens in `tok` and returns a new string.
