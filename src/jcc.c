@@ -8462,6 +8462,7 @@ static void jcc_ppUndefMacro(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, c
 static jx_cc_token_t* jcc_ppAddHideSet(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok, jx_cc_hideset_t* hs);
 static jx_cc_token_t* jcc_ppAppend(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok1, jx_cc_token_t* tok2);
 static jx_cc_token_t* jcc_ppSubstitute(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok, jcc_macro_arg_t* args);
+static jx_cc_token_t* jcc_ppStringize(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* hash, jx_cc_token_t* arg);
 static jcc_macro_arg_t* jcc_ppFindArg(jcc_macro_arg_t* args, jx_cc_token_t* tok);
 static jcc_cond_include_t* jcc_ppPushConditionalInclude(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok, bool included);
 static jx_cc_token_t* jcc_ppSkipConditionalInclude(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok);
@@ -9027,17 +9028,17 @@ static jx_cc_token_t* jcc_ppSubstitute(jx_cc_context_t* ctx, jcc_translation_uni
 	while (!jcc_tokIs(tok, JCC_TOKEN_EOF)) {
 		// "#" followed by a parameter is replaced with stringized actuals.
 		if (jcc_tokIs(tok, JCC_TOKEN_HASH)) {
-#if 1
-			JX_NOT_IMPLEMENTED();
-			return NULL;
-#else
-			MacroArg* arg = find_arg(args, tok->next);
-			if (!arg)
-				error_tok(tok->next, "'#' is not followed by a macro parameter");
-			cur = cur->next = stringize(tok, arg->tok);
-			tok = tok->next->next;
+			jcc_macro_arg_t* arg = jcc_ppFindArg(args, tok->m_Next);
+			if (!arg) {
+				jcc_logError(ctx, &tok->m_Next->m_Loc, "'#' is not followed by a macro parameter");
+				return NULL;
+			}
+
+			cur->m_Next = jcc_ppStringize(ctx, tu, tok, arg->m_Token);
+			cur = cur->m_Next;
+
+			tok = tok->m_Next->m_Next;
 			continue;
-#endif
 		}
 
 		// [GNU] If __VA_ARG__ is empty, `,##__VA_ARGS__` is expanded
@@ -9169,6 +9170,86 @@ static jx_cc_token_t* jcc_ppSubstitute(jx_cc_context_t* ctx, jcc_translation_uni
 	cur->m_Next = tok;
 
 	return head.m_Next;
+}
+
+// Concatenates all tokens in `tok` and returns a new string.
+static char* jcc_ppJoinTokens(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok, jx_cc_token_t* end)
+{
+	// Compute the length of the resulting token.
+	uint32_t len = 1;
+	jx_cc_token_t* t = tok;
+	while (t != end && !jcc_tokIs(t, JCC_TOKEN_EOF)) {
+		if (t != tok && (t->m_Flags & JCC_TOKEN_FLAGS_HAS_SPACE_Msk) != 0) {
+			len++;
+		}
+		len += t->m_Length;
+
+		t = t->m_Next;
+	}
+
+	char* buf = (char*)JX_ALLOC(ctx->m_LinearAllocator, len);
+
+	// Copy token texts.
+	uint32_t pos = 0;
+	t = tok;
+	while (t != end && !jcc_tokIs(t, JCC_TOKEN_EOF)) {
+		if (t != tok && (t->m_Flags & JCC_TOKEN_FLAGS_HAS_SPACE_Msk) != 0) {
+			buf[pos++] = ' ';
+		}
+		jx_memcpy(&buf[pos], t->m_String, t->m_Length);
+		pos += t->m_Length;
+
+		t = t->m_Next;
+	}
+	buf[pos] = '\0';
+
+	return buf;
+}
+
+// Double-quote a given string and returns it.
+static char* jcc_ppQuoteString(jx_cc_context_t* ctx, const char* str)
+{
+	uint32_t bufsize = 3;
+	for (uint32_t i = 0; str[i]; i++) {
+		if (str[i] == '\\' || str[i] == '"') {
+			bufsize++;
+		}
+
+		bufsize++;
+	}
+
+	char* buf = (char*)JX_ALLOC(ctx->m_LinearAllocator, bufsize);
+	char* p = buf;
+	*p++ = '"';
+	for (uint32_t i = 0; str[i]; i++) {
+		if (str[i] == '\\' || str[i] == '"') {
+			*p++ = '\\';
+		}
+		*p++ = str[i];
+	}
+	*p++ = '"';
+	*p++ = '\0';
+
+	return buf;
+}
+
+// Concatenates all tokens in `arg` and returns a new string token.
+// This function is used for the stringizing operator (#).
+static jx_cc_token_t* jcc_ppStringize(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* hash, jx_cc_token_t* arg)
+{
+	// Create a new string token. We need to set some value to its
+	// source location for error reporting function, so we use a macro
+	// name token as a template.
+	char* s = jcc_ppJoinTokens(ctx, tu, arg, NULL);
+	char* quotedStr = jcc_ppQuoteString(ctx, s);
+	const uint32_t len = jx_strlen(quotedStr);
+	const char* internedQuotedString = jx_strtable_insert(ctx->m_StringTable, quotedStr, len);
+
+	jx_cc_token_t* tok = jcc_allocToken(ctx, tu, JCC_TOKEN_STRING_LITERAL, internedQuotedString, internedQuotedString + len);
+	tok->m_Val_string = jx_strtable_insert(ctx->m_StringTable, quotedStr + 1, len - 2);
+	tok->m_Type = jcc_typeAllocArrayOf(ctx, kType_char, len + 1);
+	tok->m_Loc = hash->m_Loc;
+	return tok;
 }
 
 static jcc_macro_arg_t* jcc_ppFindArg(jcc_macro_arg_t* args, jx_cc_token_t* tok)
