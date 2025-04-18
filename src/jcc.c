@@ -1482,7 +1482,19 @@ static jx_cc_object_t* jcc_tuVarAllocGlobal(jx_cc_context_t* ctx, jcc_translatio
 	}
 
 	var->m_Flags |= (JCC_OBJECT_FLAGS_IS_STATIC_Msk | JCC_OBJECT_FLAGS_IS_DEFINITION_Msk);
-	
+		
+	return var;
+}
+
+static jx_cc_object_t* jcc_tuVarAllocAnonGlobal(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_type_t* ty)
+{
+	char name[256];
+	jx_snprintf(name, JX_COUNTOF(name), "$gvar_%u", ++tu->m_NextGlobalVarID);
+	return jcc_tuVarAllocGlobal(ctx, tu, name, ty);
+}
+
+static void jcc_tuAppendGlobal(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_object_t* var)
+{
 	if (!tu->m_GlobalsHead) {
 		JX_CHECK(!tu->m_GlobalsTail, "Globals linked list in invalid state");
 		tu->m_GlobalsHead = var;
@@ -1492,15 +1504,6 @@ static jx_cc_object_t* jcc_tuVarAllocGlobal(jx_cc_context_t* ctx, jcc_translatio
 		tu->m_GlobalsTail->m_Next = var;
 		tu->m_GlobalsTail = var;
 	}
-	
-	return var;
-}
-
-static jx_cc_object_t* jcc_tuVarAllocAnonGlobal(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_type_t* ty)
-{
-	char name[256];
-	jx_snprintf(name, JX_COUNTOF(name), "$gvar_%u", ++tu->m_NextGlobalVarID);
-	return jcc_tuVarAllocGlobal(ctx, tu, name, ty);
 }
 
 static jx_cc_object_t* jcc_tuVarAllocStringLiteral(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* p, jx_cc_type_t* ty)
@@ -1515,6 +1518,8 @@ static jx_cc_object_t* jcc_tuVarAllocStringLiteral(jx_cc_context_t* ctx, jcc_tra
 	}
 
 	var->m_GlobalInitData = p;
+
+	jcc_tuAppendGlobal(ctx, tu, var);
 	
 	return var;
 }
@@ -2401,6 +2406,8 @@ static jx_cc_ast_stmt_t* jcc_parseDeclaration(jx_cc_context_t* ctx, jcc_translat
 					goto error;
 				}
 			}
+
+			jcc_tuAppendGlobal(ctx, tu, var);
 		} else {
 			jx_cc_object_t* var = jcc_tuVarAllocLocal(ctx, tu, jcc_tokGetIdentifier(ctx, declName), ty);
 			if (!var) {
@@ -5671,6 +5678,8 @@ static jx_cc_ast_expr_t* jcc_parsePostfix(jx_cc_context_t* ctx, jcc_translation_
 			}
 
 			node = jcc_astAllocExprVar(ctx, var, start);
+
+			jcc_tuAppendGlobal(ctx, tu, var);
 		} else {
 			jx_cc_object_t* var = jcc_tuVarAllocAnonLocal(ctx, tu, ty);
 			if (!var) {
@@ -6387,6 +6396,8 @@ static bool jcc_parseFunction(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, 
 			jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 			return false;
 		}
+
+		jcc_tuAppendGlobal(ctx, tu, fn);
 	}
 	
 	fn->m_Flags |= !((fn->m_Flags & JCC_OBJECT_FLAGS_IS_STATIC_Msk) != 0 && (fn->m_Flags & JCC_OBJECT_FLAGS_IS_INLINE_Msk) != 0)
@@ -6574,6 +6585,8 @@ static bool jcc_parseGlobalVariable(jx_cc_context_t* ctx, jcc_translation_unit_t
 		} else if ((attr->m_Flags & (JCC_VAR_ATTR_IS_EXTERN_Msk | JCC_VAR_ATTR_IS_TLS_Msk)) == 0) {
 			var->m_Flags |= JCC_OBJECT_FLAGS_IS_TENTATIVE_Msk;
 		}
+
+		jcc_tuAppendGlobal(ctx, tu, var);
 	}
 
 	*tokenListPtr = tok;
@@ -9165,7 +9178,7 @@ static jx_cc_token_t* jcc_ppSubstitute(jx_cc_context_t* ctx, jcc_translation_uni
 // Concatenate two tokens to create a new token.
 static jx_cc_token_t* jcc_ppPaste(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* lhs, jx_cc_token_t* rhs)
 {
-#if 1
+	// TODO: Avoid allocations by reusing a string buffer?
 	jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
 	jx_strbuf_printf(sb, "%s%s", lhs->m_String, rhs->m_String);
 	jx_strbuf_nullTerminate(sb);
@@ -9181,16 +9194,6 @@ static jx_cc_token_t* jcc_ppPaste(jx_cc_context_t* ctx, jcc_translation_unit_t* 
 	jx_strbuf_destroy(sb);
 
 	return tok;
-#else
-	// Paste the two tokens.
-	char* buf = format("%.*s%.*s", lhs->len, lhs->loc, rhs->len, rhs->loc);
-
-	// Tokenize the resulting string.
-	Token* tok = tokenize(new_file(lhs->file->name, lhs->file->file_no, buf));
-	if (tok->next->kind != TK_EOF)
-		error_tok(lhs, "pasting forms '%s', an invalid token", buf);
-	return tok;
-#endif
 }
 
 // Concatenates all tokens in `tok` and returns a new string.
