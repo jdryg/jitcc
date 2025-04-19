@@ -762,7 +762,7 @@ int main(int argc, char** argv)
 	uint32_t numSkipped = 0;
 	uint32_t numPass = 0;
 	uint32_t numFailed = 0;
-	for (uint32_t iTest = 1; iTest <= 170; ++iTest) {
+	for (uint32_t iTest = 1; iTest <= 180; ++iTest) {
 		++totalTests;
 
 		char sourceFile[256];
@@ -779,6 +779,11 @@ int main(int argc, char** argv)
 			|| iTest == 152 // #line+#error
 			|| iTest == 162 // const/static/volatile/restrict in array declaration
 			|| iTest == 170 // forward enum
+			|| iTest == 174 // Floating point; math functions
+			|| iTest == 175 // Floating point
+			|| iTest == 176 // BUG: Register allocation fails
+			|| iTest == 179 // string.h functions
+			|| iTest == 180 // string.h functions
 			;
 		if (skipTest) {
 			++numSkipped;
