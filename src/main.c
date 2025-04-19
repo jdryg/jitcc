@@ -128,6 +128,7 @@ static const char* kNodeKindName[] = {
 static const char* kIndexToStr[] = {
 	"[0]", "[1]", "[2]", "[3]", "[4]", "[5]", "[6]", "[7]", "[8]", "[9]",
 	"[10]", "[11]", "[12]", "[13]", "[14]", "[15]", "[16]", "[17]", "[18]", "[19]",
+	"[20]", "[21]", "[22]", "[23]", "[24]", "[25]", "[26]", "[27]", "[28]", "[29]",
 };
 
 static void astDumpStructMember(jx_config_t* ast, const jx_cc_struct_member_t* member);
@@ -761,7 +762,7 @@ int main(int argc, char** argv)
 	uint32_t numSkipped = 0;
 	uint32_t numPass = 0;
 	uint32_t numFailed = 0;
-	for (uint32_t iTest = 1; iTest <= 150; ++iTest) {
+	for (uint32_t iTest = 1; iTest <= 170; ++iTest) {
 		++totalTests;
 
 		char sourceFile[256];
@@ -775,6 +776,9 @@ int main(int argc, char** argv)
 			|| iTest == 121 // Parsing error; complex variable/function declaration
 			|| iTest == 123 // Floating point
 			|| iTest == 140 // Call with stack arguments
+			|| iTest == 152 // #line+#error
+			|| iTest == 162 // const/static/volatile/restrict in array declaration
+			|| iTest == 170 // forward enum
 			;
 		if (skipTest) {
 			++numSkipped;
@@ -842,7 +846,7 @@ int main(int argc, char** argv)
 #else
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-	const char* sourceFile = "test/c-testsuite/00150.c";
+	const char* sourceFile = "test/c-testsuite/00164.c";
 //	const char* sourceFile = "test/pointer_arithmetic.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
