@@ -1028,6 +1028,17 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 			}
 		}
 
+		const bool isVariadic = (funcType->m_Flags & JCC_TYPE_FLAGS_IS_VARIADIC_Msk) != 0;
+		uint32_t numFuncArgs = 0;
+		// Count function arguments
+		{
+			jx_cc_type_t* arg = funcType->m_FuncParams;
+			while (arg) {
+				++numFuncArgs;
+				arg = arg->m_Next;
+			}
+		}
+
 		const uint32_t numArgs = funcCallNode->m_NumArgs;
 		for (uint32_t iArg = 0; iArg < numArgs; ++iArg) {
 			jx_cc_ast_expr_t* argExpr = funcCallNode->m_Args[iArg];
@@ -1052,6 +1063,22 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 //				JX_NOT_IMPLEMENTED();
 			} else if (ccArgType->m_Kind == JCC_TYPE_FUNC) {
 //				JX_NOT_IMPLEMENTED();
+			}
+
+			// default argument promotions
+			if (isVariadic && iArg >= numFuncArgs) {
+				const bool convertInt = false
+					|| argVal->m_Type->m_Kind == JIR_TYPE_BOOL
+					|| argVal->m_Type->m_Kind == JIR_TYPE_I8
+					|| argVal->m_Type->m_Kind == JIR_TYPE_U8
+					|| argVal->m_Type->m_Kind == JIR_TYPE_I16
+					|| argVal->m_Type->m_Kind == JIR_TYPE_U16
+					;
+				if (convertInt) {
+					argVal = jirgenConvertType(ctx, argVal, jx_ir_typeGetPrimitive(irctx, jx_ir_typeIsUnsigned(argVal->m_Type) ? JIR_TYPE_U32 : JIR_TYPE_I32));
+				} else if (argVal->m_Kind == JIR_TYPE_F32) {
+					JX_NOT_IMPLEMENTED();
+				}
 			}
 
 			jx_array_push_back(argValsArr, argVal);

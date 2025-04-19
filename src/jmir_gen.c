@@ -1170,7 +1170,7 @@ static jx_mir_operand_t* jmirgen_instrBuild_sext(jx_mirgen_context_t* ctx, jx_ir
 	JX_CHECK(jx_ir_typeIsInteger(instrVal->m_Type), "Expected integer target type!");
 
 	jx_ir_value_t* operandVal = irInstr->super.m_OperandArr[0]->m_Value;
-	JX_CHECK(jx_ir_typeIsInteger(operandVal->m_Type), "Expected integer operand!");
+	JX_CHECK(jx_ir_typeIsIntegral(operandVal->m_Type), "Expected integer operand!");
 	jx_mir_operand_t* operand = jmirgen_getOperand(ctx, operandVal);
 
 	jx_mir_type_kind targetType = jmirgen_convertType(instrVal->m_Type);
