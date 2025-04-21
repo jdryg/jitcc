@@ -743,6 +743,23 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 		jx_cc_ast_expr_binary_t* binExpr = (jx_cc_ast_expr_binary_t*)expr;
 		jx_ir_value_t* lhs = jirgenGenExpression(ctx, binExpr->m_ExprLHS);
 		jx_ir_value_t* rhs = jirgenGenExpression(ctx, binExpr->m_ExprRHS);
+
+		if (expr->super.m_Kind != JCC_NODE_EXPR_LSHIFT && expr->super.m_Kind != JCC_NODE_EXPR_RSHIFT) {
+			jx_ir_type_t* commonType = jirgenUsualArithmeticConversions(ctx, lhs->m_Type, rhs->m_Type);
+			if (commonType) {
+				if (commonType != lhs->m_Type) {
+					lhs = jirgenConvertType(ctx, lhs, commonType);
+				}
+				if (commonType != rhs->m_Type) {
+					rhs = jirgenConvertType(ctx, rhs, commonType);
+				}
+			}
+		} else {
+			JX_NOT_IMPLEMENTED();
+//			lhs = jirgenIntegerPromotion(ctx, lhs);
+//			rhs = jirgenIntegerPromotion(ctx, rhs);
+		}
+
 		jx_ir_instruction_t* binInstr = kIRBinaryOps[expr->super.m_Kind](irctx, lhs, rhs);
 		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, binInstr);
 		val = jx_ir_instrToValue(binInstr);

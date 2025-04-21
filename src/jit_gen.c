@@ -127,12 +127,10 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
 						jx64_imul(jitCtx, dst, src);
 					} break;
-					case JMIR_OP_IDIV: {
+					case JMIR_OP_IDIV:
+					case JMIR_OP_DIV: {
 						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
 						jx64_idiv(jitCtx, src);
-					} break;
-					case JMIR_OP_DIV: {
-						JX_NOT_IMPLEMENTED();
 					} break;
 					case JMIR_OP_ADD: {
 						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
