@@ -1797,7 +1797,13 @@ static jx_ir_type_t* jir_getIndexedType(jx_ir_type_t* ptr, uint32_t numIndices, 
 				return NULL;
 			}
 
-			if (index->m_Type->m_Kind != JIR_TYPE_I32 && index->m_Type->m_Kind != JIR_TYPE_I64) {
+			const bool isValidIndexType = false
+				|| index->m_Type->m_Kind == JIR_TYPE_I32
+				|| index->m_Type->m_Kind == JIR_TYPE_I64
+				|| index->m_Type->m_Kind == JIR_TYPE_U32
+				|| index->m_Type->m_Kind == JIR_TYPE_U64
+				;
+			if (!isValidIndexType) {
 				return NULL;
 			}
 
