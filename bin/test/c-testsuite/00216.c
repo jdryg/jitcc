@@ -124,7 +124,8 @@ struct Wrap global_wrap[] = {
     inc_global,
 };
 
-#include <stdio.h>
+//#include <stdio.h>
+int printf(const char* str, ...);
 void print_ (const char *name, const u8 *p, long size)
 {
   printf ("%s:", name);

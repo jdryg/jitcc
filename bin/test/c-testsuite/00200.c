@@ -7,7 +7,8 @@ each of the operands. The type of the result is that of the promoted
 left operand."
 */
 
-#include <stdio.h>
+//#include <stdio.h>
+int printf(const char* str, ...);
 
 #define PTYPE(M) ((M) < 0 || -(M) < 0 ? -1 : 1) * (int) sizeof((M)+0)
 #define CHECK(X,T) check(#X, PTYPE(X), PTYPE((X) << (T) 1))
@@ -42,9 +43,10 @@ static void check (const char *s, int arg1, int shift)
   nfailed += failed;
 }
 
-int main (int argc, char **argv)
+//int main (int argc, char **argv)
+int main(void)
 {
-  debug = argc > 1;
+//  debug = argc > 1;
   TEST4(1);
   TEST4(-1);
   printf ("%d test(s) failed\n", nfailed);

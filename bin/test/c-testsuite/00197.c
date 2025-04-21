@@ -1,4 +1,5 @@
-#include <stdio.h>
+//#include <stdio.h>
+int printf(const char* str, ...);
 
 static int fred = 1234;
 static int joe;

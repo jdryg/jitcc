@@ -763,7 +763,7 @@ int main(int argc, char** argv)
 	uint32_t numSkipped = 0;
 	uint32_t numPass = 0;
 	uint32_t numFailed = 0;
-	for (uint32_t iTest = 1; iTest <= 190; ++iTest) {
+	for (uint32_t iTest = 1; iTest <= 220; ++iTest) {
 		++totalTests;
 
 		char sourceFile[256];
@@ -787,6 +787,20 @@ int main(int argc, char** argv)
 			|| iTest == 180 // string.h functions
 			|| iTest == 187 // file functions
 			|| iTest == 189 // fprintf/stdout
+			|| iTest == 195 // Floating point
+			|| iTest == 204 // Floating point
+			|| iTest == 205 // BUG: Wrong output; only 1st entry is correct
+			|| iTest == 206 // #pragma
+			|| iTest == 207 // VLA
+			|| iTest == 209 // BUG? cannot parse
+			|| iTest == 210 // __attribute__
+			|| iTest == 212 // Predefined macros
+			|| iTest == 213 // Statement expressions
+			|| iTest == 214 // __builtin_expect
+			|| iTest == 216 // BUG? Parser: missing braces from inner struct initializer
+			|| iTest == 218 // Bitfields
+			|| iTest == 219 // BUG? Parser: _Generic
+			|| iTest == 220 // Unicode
 			;
 		if (skipTest) {
 			++numSkipped;
@@ -854,7 +868,7 @@ int main(int argc, char** argv)
 #else
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-	const char* sourceFile = "test/c-testsuite/00190.c";
+	const char* sourceFile = "test/c-testsuite/00220.c";
 //	const char* sourceFile = "test/pointer_arithmetic.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
