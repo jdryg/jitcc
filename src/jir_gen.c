@@ -65,7 +65,7 @@ static irBinaryOpFunc kIRBinaryOps[] = {
 static jx_ir_basic_block_t* jirgenSwitchBasicBlock(jx_irgen_context_t* ctx, jx_ir_basic_block_t* newBB);
 static jx_ir_basic_block_t* jirgenGetOrCreateLabeledBB(jx_irgen_context_t* ctx, jx_cc_label_t lbl);
 static jx_ir_constant_t* jirgenGlobalVarInitializer(jx_irgen_context_t* ctx, jx_cc_type_t* type, const uint8_t* data, uint64_t offset, const jx_cc_relocation_t** relocations);
-static void jirgenGenStatement(jx_irgen_context_t* ctx, jx_cc_ast_stmt_t* stmt);
+static bool jirgenGenStatement(jx_irgen_context_t* ctx, jx_cc_ast_stmt_t* stmt);
 static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_expr_t* expr);
 static jx_ir_value_t* jirgenGenAddress(jx_irgen_context_t* ctx, jx_cc_ast_expr_t* expr);
 static jx_ir_value_t* jirgenGenLoad(jx_irgen_context_t* ctx, jx_ir_value_t* ptr, jx_cc_type_t* ccType);
@@ -117,23 +117,43 @@ bool jx_irgen_moduleGen(jx_irgen_context_t* ctx, const char* moduleName, jx_cc_t
 
 	ctx->m_Module = mod;
 
-	jx_cc_object_t* global = tu->m_Globals;
-	while (global) {
-		const bool isFunction = (global->m_Flags & JCC_OBJECT_FLAGS_IS_FUNCTION_Msk) != 0;
-		if (isFunction) {
-			const bool funcIsDefinition = (global->m_Flags & JCC_OBJECT_FLAGS_IS_DEFINITION_Msk) != 0;
-			const bool funcIsLive = (global->m_Flags & JCC_OBJECT_FLAGS_IS_LIVE_Msk) != 0;
-			if (funcIsLive) {
-				if (funcIsDefinition) {
+	// Declarations
+	{
+		jx_cc_object_t* global = tu->m_Globals;
+		while (global) {
+			const bool isLive = (global->m_Flags & JCC_OBJECT_FLAGS_IS_LIVE_Msk) != 0;
+//			if (isLive) 
+			{
+				const char* name = global->m_Name;
+				const bool isStatic = (global->m_Flags & JCC_OBJECT_FLAGS_IS_STATIC_Msk) != 0;
+				jx_ir_type_t* type = jccTypeToIRType(ctx, global->m_Type);
+
+				if (!jx_ir_moduleDeclareGlobalVal(irctx, mod, name, type, isStatic ? JIR_LINKAGE_INTERNAL : JIR_LINKAGE_EXTERNAL)) {
+					goto error;
+				}
+			}
+
+			global = global->m_Next;
+		}
+	}
+
+	// Definitions
+	{
+		jx_cc_object_t* global = tu->m_Globals;
+		while (global) {
+			const bool isFunction = (global->m_Flags & JCC_OBJECT_FLAGS_IS_FUNCTION_Msk) != 0;
+			if (isFunction) {
+				const bool funcIsDefinition = (global->m_Flags & JCC_OBJECT_FLAGS_IS_DEFINITION_Msk) != 0;
+				const bool funcIsLive = (global->m_Flags & JCC_OBJECT_FLAGS_IS_LIVE_Msk) != 0;
+				if (funcIsLive && funcIsDefinition) {
 					// Generate IR for the function body.
-					const char* funcName = global->m_Name;
-					const bool funcIsStatic = (global->m_Flags & JCC_OBJECT_FLAGS_IS_STATIC_Msk) != 0;
-					jx_ir_type_t* funcType = jccTypeToIRType(ctx, global->m_Type);
+					jx_ir_function_t* func = jx_ir_moduleGetFunc(irctx, mod, global->m_Name);
+					if (!func) {
+						JX_CHECK(false, "Function not declared!");
+						goto error;
+					}
 
-					jx_ir_function_t* func = jx_ir_funcBegin(irctx, funcType, funcIsStatic ? JIR_LINKAGE_INTERNAL : JIR_LINKAGE_EXTERNAL, funcName);
-					if (func) {
-						jx_ir_moduleAddFunc(irctx, mod, func);
-
+					if (jx_ir_funcBegin(irctx, func)) {
 						ctx->m_Func = func;
 						ctx->m_LocalVarMap = jx_hashmapCreate(ctx->m_Allocator, sizeof(jccObj_to_irVal_item_t), 64, 0, 0, jccObjHashCallback, jccObjCompareCallback, NULL, NULL);
 						ctx->m_LabeledBBMap = jx_hashmapCreate(ctx->m_Allocator, sizeof(jccLabel_to_irBB_item_t), 64, 0, 0, jccLabelHashCallback, jccLabelCompareCallback, NULL, NULL);
@@ -190,7 +210,7 @@ bool jx_irgen_moduleGen(jx_irgen_context_t* ctx, const char* moduleName, jx_cc_t
 								jccObj_to_irVal_item_t* hashItem = (jccObj_to_irVal_item_t*)jx_hashmapGet(ctx->m_LocalVarMap, &(jccObj_to_irVal_item_t){.m_ccObj = ccArg });
 								JX_CHECK(hashItem, "Function argument not found in hashmap.");
 								jx_ir_bbAppendInstr(irctx, bbEntry, jx_ir_instrStore(irctx, hashItem->m_irVal, jx_ir_argToValue(arg)));
-
+								
 								ccArg = ccArg->m_Next;
 								++argID;
 							}
@@ -203,14 +223,16 @@ bool jx_irgen_moduleGen(jx_irgen_context_t* ctx, const char* moduleName, jx_cc_t
 						jx_ir_bbAppendInstr(irctx, bbEntry, jx_ir_instrBranch(irctx, bbNext));
 
 						jirgenSwitchBasicBlock(ctx, bbNext);
-						jirgenGenStatement(ctx, global->m_FuncBody);
+						if (!jirgenGenStatement(ctx, global->m_FuncBody)) {
+							return false;
+						}
 
 						if (ctx->m_BasicBlock && (ctx->m_BasicBlock->m_InstrListHead || ctx->m_BasicBlock->super.m_Name)) {
 							jx_ir_instruction_t* lastInstr = jx_ir_bbGetLastInstr(irctx, ctx->m_BasicBlock);
 							if (!lastInstr || !jx_ir_opcodeIsTerminator(lastInstr->m_OpCode)) {
 								// Make sure the function does not return a value, otherwise we cannot automatically
 								// append a ret instruction.
-								jx_ir_type_function_t* typeFunc = jx_ir_typeToFunction(funcType);
+								jx_ir_type_function_t* typeFunc = jx_ir_funcGetType(irctx, func);
 								JX_CHECK(typeFunc, "Expected a function type!");
 								if (typeFunc->m_RetType->m_Kind == JIR_TYPE_VOID) {
 									jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, jx_ir_instrRet(irctx, NULL));
@@ -231,60 +253,43 @@ bool jx_irgen_moduleGen(jx_irgen_context_t* ctx, const char* moduleName, jx_cc_t
 
 						jx_hashmapDestroy(ctx->m_LabeledBBMap);
 						ctx->m_LabeledBBMap = NULL;
-
+							
 						jx_hashmapDestroy(ctx->m_LocalVarMap);
 						ctx->m_LocalVarMap = NULL;
 					} else {
 						goto error;
 					}
-				} else {
-					// Function forward declaration
-					const char* funcName = global->m_Name;
-					const bool funcIsStatic = (global->m_Flags & JCC_OBJECT_FLAGS_IS_STATIC_Msk) != 0;
-					jx_ir_type_t* funcType = jccTypeToIRType(ctx, global->m_Type);
-
-					jx_ir_function_t* func = jx_ir_funcBegin(irctx, funcType, funcIsStatic ? JIR_LINKAGE_INTERNAL : JIR_LINKAGE_EXTERNAL, funcName);
-					if (func) {
-						jx_ir_funcEnd(irctx, func);
-						jx_ir_moduleAddFunc(irctx, mod, func);
-					} else {
+				}
+			} else {
+				// Global variable
+				jx_ir_global_variable_t* gv = jx_ir_moduleGetGlobalVar(irctx, mod, global->m_Name);
+				if (gv) {
+					uint8_t* initData = (uint8_t*)JX_ALLOC(ctx->m_Allocator, global->m_Type->m_Size);
+					if (!initData) {
 						goto error;
 					}
+
+					jx_memset(initData, 0, global->m_Type->m_Size);
+					if (global->m_GlobalInitData) {
+						jx_memcpy(initData, global->m_GlobalInitData, global->m_Type->m_Size);
+					}
+
+					const jx_cc_relocation_t* gvReloc = global->m_GlobalRelocations;
+					jx_ir_constant_t* gvInitializer = jirgenGlobalVarInitializer(ctx, global->m_Type, initData, 0, &gvReloc);
+
+					JX_FREE(ctx->m_Allocator, initData);
+
+					const bool isConst = false; // TODO: 
+					jx_ir_globalVarDefine(irctx, gv, isConst, gvInitializer);
+				} else {
+					goto error;
 				}
 			}
-		} else {
-			// Global variable
-			const char* gvName = global->m_Name;
-			const bool gvIsConstant = false; // TODO: 
-			const bool gvIsStatic = (global->m_Flags & JCC_OBJECT_FLAGS_IS_STATIC_Msk) != 0;
-			const jx_cc_relocation_t* gvReloc = global->m_GlobalRelocations;
-			jx_ir_type_t* gvType = jccTypeToIRType(ctx, global->m_Type);
 
-			uint8_t* initData = (uint8_t*)JX_ALLOC(ctx->m_Allocator, global->m_Type->m_Size);
-			if (!initData) {
-				goto error;
-			}
-			
-			jx_memset(initData, 0, global->m_Type->m_Size);
-			if (global->m_GlobalInitData) {
-				jx_memcpy(initData, global->m_GlobalInitData, global->m_Type->m_Size);
-			}
-
-			jx_ir_constant_t* gvInitializer = jirgenGlobalVarInitializer(ctx, global->m_Type, initData, 0, &gvReloc);
-
-			JX_FREE(ctx->m_Allocator, initData);
-
-			jx_ir_global_variable_t* gv = jx_ir_globalVarDeclare(irctx, gvType, gvIsConstant, gvIsStatic ? JIR_LINKAGE_INTERNAL : JIR_LINKAGE_EXTERNAL, gvInitializer, gvName);
-			if (gv) {
-				jx_ir_moduleAddGlobalVar(irctx, mod, gv);
-			} else {
-				goto error;
-			}
+			global = global->m_Next;
 		}
-
-		global = global->m_Next;
 	}
-
+	
 	jx_ir_moduleEnd(irctx, mod);
 	ctx->m_Module = NULL;
 
@@ -496,7 +501,7 @@ static jx_ir_constant_t* jirgenGlobalVarInitializer(jx_irgen_context_t* ctx, jx_
 	return c;
 }
 
-static void jirgenGenStatement(jx_irgen_context_t* ctx, jx_cc_ast_stmt_t* stmt)
+static bool jirgenGenStatement(jx_irgen_context_t* ctx, jx_cc_ast_stmt_t* stmt)
 {
 	jx_ir_context_t* irctx = ctx->m_IRCtx;
 
@@ -561,7 +566,9 @@ static void jirgenGenStatement(jx_irgen_context_t* ctx, jx_cc_ast_stmt_t* stmt)
 
 		// Generate then basic block statement and branch to end
 		jirgenSwitchBasicBlock(ctx, bbThen);
-		jirgenGenStatement(ctx, ifNode->m_ThenStmt);
+		if (!jirgenGenStatement(ctx, ifNode->m_ThenStmt)) {
+			return false;
+		}
 		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, jx_ir_instrBranch(irctx, bbEnd));
 
 		if (ifNode->m_ElseStmt) {
@@ -675,7 +682,9 @@ static void jirgenGenStatement(jx_irgen_context_t* ctx, jx_cc_ast_stmt_t* stmt)
 		jx_cc_ast_stmt_block_t* blockNode = (jx_cc_ast_stmt_block_t*)stmt;
 		const uint32_t numChildren = blockNode->m_NumChildren;
 		for (uint32_t iChild = 0; iChild < numChildren; ++iChild) {
-			jirgenGenStatement(ctx, blockNode->m_Children[iChild]);
+			if (!jirgenGenStatement(ctx, blockNode->m_Children[iChild])) {
+				return false;
+			}
 		}
 	} break;
 	case JCC_NODE_STMT_GOTO: {
@@ -692,7 +701,9 @@ static void jirgenGenStatement(jx_irgen_context_t* ctx, jx_cc_ast_stmt_t* stmt)
 	} break;
 	case JCC_NODE_STMT_EXPR: {
 		jx_cc_ast_stmt_expr_t* exprNode = (jx_cc_ast_stmt_expr_t*)stmt;
-		jirgenGenExpression(ctx, exprNode->m_Expr);
+		if (!jirgenGenExpression(ctx, exprNode->m_Expr)) {
+			return false;
+		}
 	} break;
 	case JCC_NODE_STMT_ASM: {
 		JX_NOT_IMPLEMENTED();
@@ -701,6 +712,8 @@ static void jirgenGenStatement(jx_irgen_context_t* ctx, jx_cc_ast_stmt_t* stmt)
 		JX_CHECK(false, "Unknown statement node");
 	} break;
 	}
+
+	return true;
 }
 
 static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_expr_t* expr)
@@ -1085,6 +1098,9 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 		}
 
 		jx_ir_value_t* funcVal = jirgenGenExpression(ctx, funcCallNode->m_FuncExpr);
+		if (!funcVal) {
+			return NULL;
+		}
 		jx_ir_instruction_t* callInstr = jx_ir_instrCall(irctx, funcVal, (uint32_t)jx_array_sizeu(argValsArr), argValsArr);
 		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, callInstr);
 		val = addHiddenRetArg 
