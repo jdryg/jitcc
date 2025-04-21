@@ -362,8 +362,8 @@ jx_mir_global_variable_t* jx_mir_globalVarBegin(jx_mir_context_t* ctx, const cha
 		return NULL;
 	}
 
-	gv->m_Relocations = (jx_mir_relocation_t*)jx_array_create(ctx->m_Allocator);
-	if (!gv->m_Relocations) {
+	gv->m_RelocationsArr = (jx_mir_relocation_t*)jx_array_create(ctx->m_Allocator);
+	if (!gv->m_RelocationsArr) {
 		jmir_globalVarFree(ctx, gv);
 		return NULL;
 	}
@@ -393,7 +393,7 @@ uint32_t jx_mir_globalVarAppendData(jx_mir_context_t* ctx, jx_mir_global_variabl
 
 void jx_mir_globalVarAddRelocation(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv, uint32_t dataOffset, const char* symbolName)
 {
-	jx_array_push_back(gv->m_Relocations, (jx_mir_relocation_t){
+	jx_array_push_back(gv->m_RelocationsArr, (jx_mir_relocation_t){
 		.m_SymbolName = jx_strdup(symbolName, ctx->m_Allocator),
 		.m_Offset = dataOffset
 	});
@@ -1422,6 +1422,12 @@ static void jmir_funcFree(jx_mir_context_t* ctx, jx_mir_function_t* func)
 static void jmir_globalVarFree(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv)
 {
 	jx_allocator_i* allocator = ctx->m_Allocator;
+	const uint32_t numRelocs = (uint32_t)jx_array_sizeu(gv->m_RelocationsArr);
+	for (uint32_t iReloc = 0; iReloc < numRelocs; ++iReloc) {
+		jx_mir_relocation_t* reloc = &gv->m_RelocationsArr[iReloc];
+		JX_FREE(allocator, reloc->m_SymbolName);
+	}
+	jx_array_free(gv->m_RelocationsArr);
 	JX_FREE(allocator, gv->m_Name);
 	jx_array_free(gv->m_DataArr);
 	JX_FREE(allocator, gv);

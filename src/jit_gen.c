@@ -267,9 +267,9 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 		const uint32_t dataSize = (uint32_t)jx_array_sizeu(mirGV->m_DataArr);
 		jx64_globalVarDefine(jitCtx, jitGVs[iGV], mirGV->m_DataArr, dataSize, mirGV->m_Alignment);
 
-		const uint32_t numRelocations = (uint32_t)jx_array_sizeu(mirGV->m_Relocations);
+		const uint32_t numRelocations = (uint32_t)jx_array_sizeu(mirGV->m_RelocationsArr);
 		for (uint32_t iReloc = 0; iReloc < numRelocations; ++iReloc) {
-			jx_mir_relocation_t* mirReloc = &mirGV->m_Relocations[iReloc];
+			jx_mir_relocation_t* mirReloc = &mirGV->m_RelocationsArr[iReloc];
 			jx64_symbolAddRelocation(jitCtx, jitGVs[iGV], JX64_RELOC_ADDR64, mirReloc->m_Offset, mirReloc->m_SymbolName);
 		}
 	}

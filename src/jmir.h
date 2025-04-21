@@ -275,7 +275,7 @@ typedef struct jx_mir_global_variable_t
 {
 	char* m_Name;
 	uint8_t* m_DataArr;
-	jx_mir_relocation_t* m_Relocations;
+	jx_mir_relocation_t* m_RelocationsArr;
 	uint32_t m_Alignment;
 	JX_PAD(4);
 } jx_mir_global_variable_t;

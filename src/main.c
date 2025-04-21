@@ -762,7 +762,7 @@ int main(int argc, char** argv)
 	uint32_t numSkipped = 0;
 	uint32_t numPass = 0;
 	uint32_t numFailed = 0;
-	for (uint32_t iTest = 1; iTest <= 180; ++iTest) {
+	for (uint32_t iTest = 1; iTest <= 181; ++iTest) {
 		++totalTests;
 
 		char sourceFile[256];
@@ -851,7 +851,7 @@ int main(int argc, char** argv)
 #else
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-	const char* sourceFile = "test/c-testsuite/00164.c";
+	const char* sourceFile = "test/c-testsuite/00181.c";
 //	const char* sourceFile = "test/pointer_arithmetic.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
@@ -899,63 +899,64 @@ int main(int argc, char** argv)
 		jx_ir_context_t* irCtx = jx_ir_createContext(allocator);
 		jx_irgen_context_t* genCtx = jx_irgen_createContext(irCtx, allocator);
 
-		jx_irgen_moduleGen(genCtx, sourceFile, tu);
+		if (!jx_irgen_moduleGen(genCtx, sourceFile, tu)) {
+			JX_SYS_LOG_ERROR(NULL, "Failed to generate module IR\n");
+		} else {
+			jx_irgen_destroyContext(genCtx);
 
-		jx_irgen_destroyContext(genCtx);
-
-		jx_string_buffer_t* sb = jx_strbuf_create(allocator);
-		jx_ir_print(irCtx, sb);
-		jx_strbuf_nullTerminate(sb);
-		JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
-		jx_strbuf_destroy(sb);
-
-		{
-			jx_mir_context_t* mirCtx = jx_mir_createContext(allocator);
-			jx_mirgen_context_t* mirGenCtx = jx_mirgen_createContext(irCtx, mirCtx, allocator);
-
-			jx_ir_module_t* irMod = jx_ir_getModule(irCtx, 0);
-			if (irMod) {
-				jx_mirgen_moduleGen(mirGenCtx, irMod);
-			}
-
-			jx_mirgen_destroyContext(mirGenCtx);
-
-			sb = jx_strbuf_create(allocator);
-			jx_mir_print(mirCtx, sb);
+			jx_string_buffer_t* sb = jx_strbuf_create(allocator);
+			jx_ir_print(irCtx, sb);
 			jx_strbuf_nullTerminate(sb);
 			JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
 			jx_strbuf_destroy(sb);
 
-			jx_x64_context_t* jitCtx = jx_x64_createContext(allocator);
+			{
+				jx_mir_context_t* mirCtx = jx_mir_createContext(allocator);
+				jx_mirgen_context_t* mirGenCtx = jx_mirgen_createContext(irCtx, mirCtx, allocator);
 
-			if (jx_x64_emitCode(jitCtx, mirCtx, allocator)) {
-				sb = jx_strbuf_create(allocator);
-
-				uint32_t bufferSize = 0;
-				const uint8_t* buffer = jx64_getBuffer(jitCtx, &bufferSize);
-				for (uint32_t i = 0; i < bufferSize; ++i) {
-					jx_strbuf_printf(sb, "%02X", buffer[i]);
+				jx_ir_module_t* irMod = jx_ir_getModule(irCtx, 0);
+				if (irMod) {
+					jx_mirgen_moduleGen(mirGenCtx, irMod);
 				}
 
+				jx_mirgen_destroyContext(mirGenCtx);
+
+				sb = jx_strbuf_create(allocator);
+				jx_mir_print(mirCtx, sb);
 				jx_strbuf_nullTerminate(sb);
-				JX_SYS_LOG_INFO(NULL, "\n%s\n\n", jx_strbuf_getString(sb, NULL));
+				JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
 				jx_strbuf_destroy(sb);
 
-				typedef int32_t (*pfnMain)(void);
-				jx_x64_symbol_t* symMain = jx64_symbolGetByName(jitCtx, "main");
-				if (symMain) {
-					pfnMain mainFunc = (pfnMain)((uint8_t*)buffer + jx64_labelGetOffset(jitCtx, symMain->m_Label));
-					int32_t ret = mainFunc();
-					JX_SYS_LOG_DEBUG(NULL, "main() returned %d\n", ret);
-				} else {
-					JX_SYS_LOG_ERROR(NULL, "main() not found!\n");
+				jx_x64_context_t* jitCtx = jx_x64_createContext(allocator);
+
+				if (jx_x64_emitCode(jitCtx, mirCtx, allocator)) {
+					sb = jx_strbuf_create(allocator);
+
+					uint32_t bufferSize = 0;
+					const uint8_t* buffer = jx64_getBuffer(jitCtx, &bufferSize);
+					for (uint32_t i = 0; i < bufferSize; ++i) {
+						jx_strbuf_printf(sb, "%02X", buffer[i]);
+					}
+
+					jx_strbuf_nullTerminate(sb);
+					JX_SYS_LOG_INFO(NULL, "\n%s\n\n", jx_strbuf_getString(sb, NULL));
+					jx_strbuf_destroy(sb);
+
+					typedef int32_t(*pfnMain)(void);
+					jx_x64_symbol_t* symMain = jx64_symbolGetByName(jitCtx, "main");
+					if (symMain) {
+						pfnMain mainFunc = (pfnMain)((uint8_t*)buffer + jx64_labelGetOffset(jitCtx, symMain->m_Label));
+						int32_t ret = mainFunc();
+						JX_SYS_LOG_DEBUG(NULL, "main() returned %d\n", ret);
+					} else {
+						JX_SYS_LOG_ERROR(NULL, "main() not found!\n");
+					}
 				}
+
+				jx_x64_destroyContext(jitCtx);
+				jx_mir_destroyContext(mirCtx);
 			}
-
-			jx_x64_destroyContext(jitCtx);
-			jx_mir_destroyContext(mirCtx);
 		}
-
 		jx_ir_destroyContext(irCtx);
 	}
 
