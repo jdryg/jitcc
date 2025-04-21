@@ -127,12 +127,10 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
 						jx64_imul(jitCtx, dst, src);
 					} break;
-					case JMIR_OP_IDIV: {
+					case JMIR_OP_IDIV:
+					case JMIR_OP_DIV: {
 						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
 						jx64_idiv(jitCtx, src);
-					} break;
-					case JMIR_OP_DIV: {
-						JX_NOT_IMPLEMENTED();
 					} break;
 					case JMIR_OP_ADD: {
 						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
@@ -267,9 +265,9 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 		const uint32_t dataSize = (uint32_t)jx_array_sizeu(mirGV->m_DataArr);
 		jx64_globalVarDefine(jitCtx, jitGVs[iGV], mirGV->m_DataArr, dataSize, mirGV->m_Alignment);
 
-		const uint32_t numRelocations = (uint32_t)jx_array_sizeu(mirGV->m_Relocations);
+		const uint32_t numRelocations = (uint32_t)jx_array_sizeu(mirGV->m_RelocationsArr);
 		for (uint32_t iReloc = 0; iReloc < numRelocations; ++iReloc) {
-			jx_mir_relocation_t* mirReloc = &mirGV->m_Relocations[iReloc];
+			jx_mir_relocation_t* mirReloc = &mirGV->m_RelocationsArr[iReloc];
 			jx64_symbolAddRelocation(jitCtx, jitGVs[iGV], JX64_RELOC_ADDR64, mirReloc->m_Offset, mirReloc->m_SymbolName);
 		}
 	}
@@ -299,6 +297,11 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 		jx_x64_symbol_t* memcpySymbol = jx64_symbolGetByName(jitCtx, "memcpy");
 		if (memcpySymbol) {
 			jx64_symbolSetExternalAddress(jitCtx, memcpySymbol, (void*)memcpy);
+		}
+
+		jx_x64_symbol_t* sprintfSymbol = jx64_symbolGetByName(jitCtx, "sprintf");
+		if (sprintfSymbol) {
+			jx64_symbolSetExternalAddress(jitCtx, sprintfSymbol, (void*)sprintf);
 		}
 	}
 

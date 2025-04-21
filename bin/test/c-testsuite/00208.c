@@ -1,4 +1,6 @@
-#include <stdio.h>
+//#include <stdio.h>
+int printf(const char* str, ...);
+
 struct wchar {
     char *data; char mem[1];
 };

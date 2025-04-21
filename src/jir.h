@@ -166,6 +166,16 @@ typedef enum jx_ir_condition_code
 	JIR_CC_NE,
 } jx_ir_condition_code;
 
+typedef enum jx_ir_intrinsic_func
+{
+	JIR_INTRINSIC_MEMCPY_P0_P0_I32,
+	JIR_INTRINSIC_MEMCPY_P0_P0_I64,
+	JIR_INTRINSIC_MEMSET_P0_I32,
+	JIR_INTRINSIC_MEMSET_P0_I64,
+
+	JIR_INTRINSIC_COUNT
+} jx_ir_intrinsic_func;
+
 #define JIR_TYPE_FLAGS_IS_SIGNED_Pos     1
 #define JIR_TYPE_FLAGS_IS_SIGNED_Msk     (1u << JIR_TYPE_FLAGS_IS_SIGNED_Pos)
 #define JIR_TYPE_FLAGS_IS_UNSIGNED_Pos   2
@@ -187,8 +197,8 @@ typedef struct jx_ir_module_t
 	jx_ir_module_t* m_Next;
 	jx_ir_global_variable_t* m_GlobalVarListHead;
 	jx_ir_function_t* m_FunctionListHead;
-	jx_ir_symbol_table_t* m_SymbolTable;
 	const char* m_Name;
+	jx_ir_value_t* m_IntrinsicFuncs[JIR_INTRINSIC_COUNT];
 } jx_ir_module_t;
 
 typedef struct jx_ir_use_t
@@ -366,14 +376,13 @@ jx_ir_generic_value_t jx_ir_vmExecFunc(jx_ir_context_t* ctx, jx_ir_vm_t* vm, jx_
 
 jx_ir_module_t* jx_ir_moduleBegin(jx_ir_context_t* ctx, const char* name);
 void jx_ir_moduleEnd(jx_ir_context_t* ctx, jx_ir_module_t* mod);
-bool jx_ir_moduleAddFunc(jx_ir_context_t* ctx, jx_ir_module_t* mod, jx_ir_function_t* func);
-bool jx_ir_moduleAddGlobalVar(jx_ir_context_t* ctx, jx_ir_module_t* mod, jx_ir_global_variable_t* gv);
+jx_ir_global_value_t* jx_ir_moduleDeclareGlobalVal(jx_ir_context_t* ctx, jx_ir_module_t* mod, const char* name, jx_ir_type_t* type, jx_ir_linkage_kind linkage);
+jx_ir_global_value_t* jx_ir_moduleGetGlobalVal(jx_ir_context_t* ctx, jx_ir_module_t* mod, const char* name);
 jx_ir_function_t* jx_ir_moduleGetFunc(jx_ir_context_t* ctx, jx_ir_module_t* mod, const char* name);
 jx_ir_global_variable_t* jx_ir_moduleGetGlobalVar(jx_ir_context_t* ctx, jx_ir_module_t* mod, const char* name);
-jx_ir_global_value_t* jx_ir_moduleGetGlobalVal(jx_ir_context_t* ctx, jx_ir_module_t* mod, const char* name);
 void jx_ir_modulePrint(jx_ir_context_t* ctx, jx_ir_module_t* mod, jx_string_buffer_t* sb);
 
-jx_ir_function_t* jx_ir_funcBegin(jx_ir_context_t* ctx, jx_ir_type_t* type, jx_ir_linkage_kind linkageKind, const char* name);
+bool jx_ir_funcBegin(jx_ir_context_t* ctx, jx_ir_function_t* func);
 void jx_ir_funcEnd(jx_ir_context_t* ctx, jx_ir_function_t* func);
 jx_ir_argument_t* jx_ir_funcGetArgument(jx_ir_context_t* ctx, jx_ir_function_t* func, uint32_t argID);
 void jx_ir_funcAppendBasicBlock(jx_ir_context_t* ctx, jx_ir_function_t* func, jx_ir_basic_block_t* bb);
@@ -382,8 +391,7 @@ jx_ir_type_function_t* jx_ir_funcGetType(jx_ir_context_t* ctx, jx_ir_function_t*
 void jx_ir_funcPrint(jx_ir_context_t* ctx, jx_ir_function_t* func, jx_string_buffer_t* sb);
 bool jx_ir_funcCheck(jx_ir_context_t* ctx, jx_ir_function_t* func);
 
-jx_ir_global_variable_t* jx_ir_globalVarDeclare(jx_ir_context_t* ctx, jx_ir_type_t* type, bool isConstant, jx_ir_linkage_kind linkageKind, jx_ir_constant_t* initializer, const char* name);
-jx_ir_global_variable_t* jx_ir_globalVarDeclareCStr(jx_ir_context_t* ctx, jx_ir_linkage_kind linkageKind, const char* str, const char* name);
+bool jx_ir_globalVarDefine(jx_ir_context_t* ctx, jx_ir_global_variable_t* gv, bool isConst, jx_ir_constant_t* initializer);
 void jx_ir_globalVarPrint(jx_ir_context_t* ctx, jx_ir_global_variable_t* gv, jx_string_buffer_t* sb);
 
 jx_ir_basic_block_t* jx_ir_bbAlloc(jx_ir_context_t* ctx, const char* name);

@@ -28,8 +28,9 @@ cursor to a previous line.
 
 
 
-#include <stdlib.h>
-#include <stdio.h>
+//#include <stdlib.h>
+//#include <stdio.h>
+int printf(const char* str, ...);
 
 #define MAX_DIGITS 32
 #define NO_MAIN

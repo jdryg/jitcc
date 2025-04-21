@@ -18,16 +18,6 @@
 #define JX_IR_CONFIG_APPLY_PASSES            1
 #define JX_IR_CONFIG_FORCE_VALUE_NAMES       1
 
-typedef enum jx_ir_intrinsic_func
-{
-	JIR_INTRINSIC_MEMCPY_P0_P0_I32,
-	JIR_INTRINSIC_MEMCPY_P0_P0_I64,
-	JIR_INTRINSIC_MEMSET_P0_I32,
-	JIR_INTRINSIC_MEMSET_P0_I64,
-
-	JIR_INTRINSIC_COUNT
-} jx_ir_intrinsic_func;
-
 typedef struct jir_vm_stack_frame_t
 {
 	jx_ir_function_t* m_Func;
@@ -56,7 +46,6 @@ typedef struct jx_ir_context_t
 	jx_ir_type_t* m_BuildinTypes[JIR_TYPE_NUM_PRIMITIVE_TYPES];
 	jx_ir_constant_t* m_ConstBool[2]; // { false, true }
 	jx_ir_module_t* m_ModuleListHead;
-	jx_ir_value_t* m_IntrinsicFuncs[JIR_INTRINSIC_COUNT];
 	jx_ir_function_pass_t* m_OnFuncEndPasses;
 } jx_ir_context_t;
 
@@ -279,74 +268,6 @@ jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator)
 		ctx->m_ConstBool[iConst] = cb;
 	}
 
-	// Initialize intrinsic function
-	// TODO: Should those be part of the module?
-	{
-		// memcpy.p0.p0.i32
-		{
-			jx_ir_type_t* args[] = {
-				jx_ir_typeGetPointer(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID)),
-				jx_ir_typeGetPointer(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID)),
-				jx_ir_typeGetPrimitive(ctx, JIR_TYPE_I32)
-			};
-			jx_ir_type_t* memcpyType = jx_ir_typeGetFunction(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID), JX_COUNTOF(args), args, false);
-			jx_ir_function_t* func = jx_ir_funcBegin(ctx, memcpyType, JIR_LINKAGE_EXTERNAL, "jir.memcpy.p0.p0.i32");
-			if (!func) {
-				return NULL;
-			}
-			jx_ir_funcEnd(ctx, func);
-			ctx->m_IntrinsicFuncs[JIR_INTRINSIC_MEMCPY_P0_P0_I32] = jx_ir_funcToValue(func);
-		}
-
-		// memcpy.p0.p0.i64
-		{
-			jx_ir_type_t* args[] = {
-				jx_ir_typeGetPointer(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID)),
-				jx_ir_typeGetPointer(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID)),
-				jx_ir_typeGetPrimitive(ctx, JIR_TYPE_I64)
-			};
-			jx_ir_type_t* memcpyType = jx_ir_typeGetFunction(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID), JX_COUNTOF(args), args, false);
-			jx_ir_function_t* func = jx_ir_funcBegin(ctx, memcpyType, JIR_LINKAGE_EXTERNAL, "jir.memcpy.p0.p0.i64");
-			if (!func) {
-				return NULL;
-			}
-			jx_ir_funcEnd(ctx, func);
-			ctx->m_IntrinsicFuncs[JIR_INTRINSIC_MEMCPY_P0_P0_I64] = jx_ir_funcToValue(func);
-		}
-
-		// memset.p0.i32
-		{
-			jx_ir_type_t* args[] = {
-				jx_ir_typeGetPointer(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID)),
-				jx_ir_typeGetPrimitive(ctx, JIR_TYPE_I8),
-				jx_ir_typeGetPrimitive(ctx, JIR_TYPE_I32)
-			};
-			jx_ir_type_t* memcpyType = jx_ir_typeGetFunction(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID), JX_COUNTOF(args), args, false);
-			jx_ir_function_t* func = jx_ir_funcBegin(ctx, memcpyType, JIR_LINKAGE_EXTERNAL, "jir.memset.p0.i32");
-			if (!func) {
-				return NULL;
-			}
-			jx_ir_funcEnd(ctx, func);
-			ctx->m_IntrinsicFuncs[JIR_INTRINSIC_MEMSET_P0_I32] = jx_ir_funcToValue(func);
-		}
-
-		// memset.p0.i64
-		{
-			jx_ir_type_t* args[] = {
-				jx_ir_typeGetPointer(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID)),
-				jx_ir_typeGetPrimitive(ctx, JIR_TYPE_I8),
-				jx_ir_typeGetPrimitive(ctx, JIR_TYPE_I64)
-			};
-			jx_ir_type_t* memcpyType = jx_ir_typeGetFunction(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID), JX_COUNTOF(args), args, false);
-			jx_ir_function_t* func = jx_ir_funcBegin(ctx, memcpyType, JIR_LINKAGE_EXTERNAL, "jir.memset.p0.i64");
-			if (!func) {
-				return NULL;
-			}
-			jx_ir_funcEnd(ctx, func);
-			ctx->m_IntrinsicFuncs[JIR_INTRINSIC_MEMSET_P0_I64] = jx_ir_funcToValue(func);
-		}
-	}
-
 	// Initialize function passes to be executed when funcEnd is called
 	{
 		jx_ir_function_pass_t head = { 0 };
@@ -442,6 +363,15 @@ void jx_ir_destroyContext(jx_ir_context_t* ctx)
 	jx_ir_module_t* mod = ctx->m_ModuleListHead;
 	while (mod) {
 		jx_ir_module_t* next = mod->m_Next;
+
+		// Free intrinsics
+		for (uint32_t iFunc = 0; iFunc < JIR_INTRINSIC_COUNT; ++iFunc) {
+			if (mod->m_IntrinsicFuncs[iFunc]) {
+				jir_funcDtor(ctx, jx_ir_valueToFunc(mod->m_IntrinsicFuncs[iFunc]));
+				mod->m_IntrinsicFuncs[iFunc] = NULL;
+			}
+		}
+
 		jir_moduleDtor(ctx, mod);
 		mod = next;
 	}
@@ -484,14 +414,6 @@ void jx_ir_destroyContext(jx_ir_context_t* ctx)
 		if (ctx->m_BuildinTypes[iType]) {
 			jir_typeDtor(ctx, ctx->m_BuildinTypes[iType]);
 			ctx->m_BuildinTypes[iType] = NULL;
-		}
-	}
-
-	// Free intrinsics
-	for (uint32_t iFunc = 0; iFunc < JIR_INTRINSIC_COUNT; ++iFunc) {
-		if (ctx->m_IntrinsicFuncs[iFunc]) {
-			jir_funcDtor(ctx, jx_ir_valueToFunc(ctx->m_IntrinsicFuncs[iFunc]));
-			ctx->m_IntrinsicFuncs[iFunc] = NULL;
 		}
 	}
 
@@ -561,6 +483,69 @@ jx_ir_module_t* jx_ir_moduleBegin(jx_ir_context_t* ctx, const char* name)
 		return NULL;
 	}
 
+	// Initialize intrinsic function
+	{
+		// memcpy.p0.p0.i32
+		{
+			jx_ir_type_t* args[] = {
+				jx_ir_typeGetPointer(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID)),
+				jx_ir_typeGetPointer(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID)),
+				jx_ir_typeGetPrimitive(ctx, JIR_TYPE_I32)
+			};
+			jx_ir_type_t* memcpyType = jx_ir_typeGetFunction(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID), JX_COUNTOF(args), args, false);
+			jx_ir_global_value_t* gv = jx_ir_moduleDeclareGlobalVal(ctx, mod, "jir.memcpy.p0.p0.i32", memcpyType, JIR_LINKAGE_EXTERNAL);
+			if (!gv) {
+				return NULL;
+			}
+			mod->m_IntrinsicFuncs[JIR_INTRINSIC_MEMCPY_P0_P0_I32] = jx_ir_globalValToValue(gv);
+		}
+
+		// memcpy.p0.p0.i64
+		{
+			jx_ir_type_t* args[] = {
+				jx_ir_typeGetPointer(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID)),
+				jx_ir_typeGetPointer(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID)),
+				jx_ir_typeGetPrimitive(ctx, JIR_TYPE_I64)
+			};
+			jx_ir_type_t* memcpyType = jx_ir_typeGetFunction(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID), JX_COUNTOF(args), args, false);
+			jx_ir_global_value_t* gv = jx_ir_moduleDeclareGlobalVal(ctx, mod, "jir.memcpy.p0.p0.i64", memcpyType, JIR_LINKAGE_EXTERNAL);
+			if (!gv) {
+				return NULL;
+			}
+			mod->m_IntrinsicFuncs[JIR_INTRINSIC_MEMCPY_P0_P0_I64] = jx_ir_globalValToValue(gv);
+		}
+
+		// memset.p0.i32
+		{
+			jx_ir_type_t* args[] = {
+				jx_ir_typeGetPointer(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID)),
+				jx_ir_typeGetPrimitive(ctx, JIR_TYPE_I8),
+				jx_ir_typeGetPrimitive(ctx, JIR_TYPE_I32)
+			};
+			jx_ir_type_t* memcpyType = jx_ir_typeGetFunction(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID), JX_COUNTOF(args), args, false);
+			jx_ir_global_value_t* gv = jx_ir_moduleDeclareGlobalVal(ctx, mod, "jir.memset.p0.i32", memcpyType, JIR_LINKAGE_EXTERNAL);
+			if (!gv) {
+				return NULL;
+			}
+			mod->m_IntrinsicFuncs[JIR_INTRINSIC_MEMSET_P0_I32] = jx_ir_globalValToValue(gv);
+		}
+
+		// memset.p0.i64
+		{
+			jx_ir_type_t* args[] = {
+				jx_ir_typeGetPointer(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID)),
+				jx_ir_typeGetPrimitive(ctx, JIR_TYPE_I8),
+				jx_ir_typeGetPrimitive(ctx, JIR_TYPE_I64)
+			};
+			jx_ir_type_t* memcpyType = jx_ir_typeGetFunction(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID), JX_COUNTOF(args), args, false);
+			jx_ir_global_value_t* gv = jx_ir_moduleDeclareGlobalVal(ctx, mod, "jir.memset.p0.i64", memcpyType, JIR_LINKAGE_EXTERNAL);
+			if (!gv) {
+				return NULL;
+			}
+			mod->m_IntrinsicFuncs[JIR_INTRINSIC_MEMSET_P0_I64] = jx_ir_globalValToValue(gv);
+		}
+	}
+
 	// Insert into context's module list
 	// NOTE: Insert new modules at the head of the list
 	if (ctx->m_ModuleListHead) {
@@ -576,50 +561,70 @@ void jx_ir_moduleEnd(jx_ir_context_t* ctx, jx_ir_module_t* mod)
 {
 }
 
-bool jx_ir_moduleAddFunc(jx_ir_context_t* ctx, jx_ir_module_t* mod, jx_ir_function_t* func)
+jx_ir_global_value_t* jx_ir_moduleDeclareGlobalVal(jx_ir_context_t* ctx, jx_ir_module_t* mod, const char* name, jx_ir_type_t* type, jx_ir_linkage_kind linkageKind)
 {
-	if (func->super.m_ParentModule) {
-		JX_CHECK(false, "Function already in a module!");
-		return false;
+	jx_ir_global_value_t* existingDecl = jx_ir_moduleGetGlobalVal(ctx, mod, name);
+	if (existingDecl) {
+		return type == jx_ir_globalValToValue(existingDecl)->m_Type
+			? existingDecl
+			: NULL
+			;
 	}
 
-	if (!mod->m_FunctionListHead) {
-		mod->m_FunctionListHead = func;
-	} else {
-		jx_ir_function_t* tail = mod->m_FunctionListHead;
-		while (tail->m_Next) {
-			tail = tail->m_Next;
+	jx_ir_global_value_t* decl = NULL;
+
+	jx_ir_type_function_t* funcType = jx_ir_typeToFunction(type);
+	if (funcType) {
+		jx_ir_function_t* func = (jx_ir_function_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_ir_function_t));
+		if (!func) {
+			return NULL;
 		}
-		tail->m_Next = func;
-		func->m_Prev = tail;
-	}
 
-	func->super.m_ParentModule = mod;
-
-	return true;
-}
-
-bool jx_ir_moduleAddGlobalVar(jx_ir_context_t* ctx, jx_ir_module_t* mod, jx_ir_global_variable_t* gv)
-{
-	if (gv->super.m_ParentModule) {
-		JX_CHECK(false, "Global variable already in a module!");
-		return false;
-	}
-
-	if (!mod->m_GlobalVarListHead) {
-		mod->m_GlobalVarListHead = gv;
-	} else {
-		jx_ir_global_variable_t* tail = mod->m_GlobalVarListHead;
-		while (tail->m_Next) {
-			tail = tail->m_Next;
+		if (!jir_funcCtor(ctx, func, type, linkageKind, name)) {
+			return NULL;
 		}
-		tail->m_Next = gv;
-		gv->m_Prev = tail;
+
+		if (!mod->m_FunctionListHead) {
+			mod->m_FunctionListHead = func;
+		} else {
+			jx_ir_function_t* tail = mod->m_FunctionListHead;
+			while (tail->m_Next) {
+				tail = tail->m_Next;
+			}
+			tail->m_Next = func;
+			func->m_Prev = tail;
+		}
+
+		func->super.m_ParentModule = mod;
+
+		decl = &func->super;
+	} else {
+		jx_ir_global_variable_t* gv = (jx_ir_global_variable_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_ir_global_variable_t));
+		if (!gv) {
+			return NULL;
+		}
+
+		if (!jir_globalVarCtor(ctx, gv, type, false, linkageKind, NULL, name)) {
+			return NULL;
+		}
+
+		if (!mod->m_GlobalVarListHead) {
+			mod->m_GlobalVarListHead = gv;
+		} else {
+			jx_ir_global_variable_t* tail = mod->m_GlobalVarListHead;
+			while (tail->m_Next) {
+				tail = tail->m_Next;
+			}
+			tail->m_Next = gv;
+			gv->m_Prev = tail;
+		}
+
+		gv->super.m_ParentModule = mod;
+
+		decl = &gv->super;
 	}
 
-	gv->super.m_ParentModule = mod;
-
-	return true;
+	return decl;
 }
 
 jx_ir_function_t* jx_ir_moduleGetFunc(jx_ir_context_t* ctx, jx_ir_module_t* mod, const char* name)
@@ -687,18 +692,10 @@ void jx_ir_modulePrint(jx_ir_context_t* ctx, jx_ir_module_t* mod, jx_string_buff
 	}
 }
 
-jx_ir_function_t* jx_ir_funcBegin(jx_ir_context_t* ctx, jx_ir_type_t* type, jx_ir_linkage_kind linkageKind, const char* name)
+bool jx_ir_funcBegin(jx_ir_context_t* ctx, jx_ir_function_t* func)
 {
-	jx_ir_function_t* func = (jx_ir_function_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_ir_function_t));
-	if (!func) {
-		return NULL;
-	}
-
-	if (!jir_funcCtor(ctx, func, type, linkageKind, name)) {
-		return NULL;
-	}
-
-	return func;
+	JX_CHECK(jx_ir_funcGetType(ctx, func), "Expected function type!");
+	return true;
 }
 
 void jx_ir_funcEnd(jx_ir_context_t* ctx, jx_ir_function_t* func)
@@ -1058,44 +1055,15 @@ bool jx_ir_funcCheck(jx_ir_context_t* ctx, jx_ir_function_t* func)
 	return true;
 }
 
-jx_ir_global_variable_t* jx_ir_globalVarDeclare(jx_ir_context_t* ctx, jx_ir_type_t* type, bool isConstant, jx_ir_linkage_kind linkageKind, jx_ir_constant_t* initializer, const char* name)
+bool jx_ir_globalVarDefine(jx_ir_context_t* ctx, jx_ir_global_variable_t* gv, bool isConst, jx_ir_constant_t* initializer)
 {
-	jx_ir_global_variable_t* gv = (jx_ir_global_variable_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_ir_global_variable_t));
-	if (!gv) {
-		return NULL;
+	gv->m_IsConstantGlobal = isConst;
+	
+	if (initializer) {
+		jir_userAddOperand(ctx, jx_ir_globalVarToUser(gv), jx_ir_constToValue(initializer));
 	}
 
-	if (!jir_globalVarCtor(ctx, gv, type, isConstant, linkageKind, initializer, name)) {
-		return NULL;
-	}
-
-	return gv;
-}
-
-jx_ir_global_variable_t* jx_ir_globalVarDeclareCStr(jx_ir_context_t* ctx, jx_ir_linkage_kind linkageKind, const char* str, const char* name)
-{
-	const uint32_t len = jx_strlen(str);
-
-	jx_ir_type_t* type_i8 = jx_ir_typeGetPrimitive(ctx, JIR_TYPE_I8);
-	jx_ir_type_t* strType = jx_ir_typeGetArray(ctx, type_i8, len + 1);
-
-	jx_ir_constant_t** strVals = (jx_ir_constant_t**)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_constant_t*) * (len + 1));
-	if (!strVals) {
-		return NULL;
-	}
-
-	for (uint32_t i = 0;i < len;++i) {
-		strVals[i] = jx_ir_constGetI8(ctx, str[i]);
-	};
-	strVals[len] = jx_ir_constGetI8(ctx, '\0');
-
-	jx_ir_constant_t* initializer = jx_ir_constArray(ctx, strType, len + 1, strVals);
-
-	jx_ir_global_variable_t* gv = jx_ir_globalVarDeclare(ctx, strType, true, linkageKind, initializer, name);
-
-	JX_FREE(ctx->m_Allocator, strVals);
-
-	return gv;
+	return true;
 }
 
 void jx_ir_globalVarPrint(jx_ir_context_t* ctx, jx_ir_global_variable_t* gv, jx_string_buffer_t* sb)
@@ -1829,7 +1797,13 @@ static jx_ir_type_t* jir_getIndexedType(jx_ir_type_t* ptr, uint32_t numIndices, 
 				return NULL;
 			}
 
-			if (index->m_Type->m_Kind != JIR_TYPE_I32 && index->m_Type->m_Kind != JIR_TYPE_I64) {
+			const bool isValidIndexType = false
+				|| index->m_Type->m_Kind == JIR_TYPE_I32
+				|| index->m_Type->m_Kind == JIR_TYPE_I64
+				|| index->m_Type->m_Kind == JIR_TYPE_U32
+				|| index->m_Type->m_Kind == JIR_TYPE_U64
+				;
+			if (!isValidIndexType) {
 				return NULL;
 			}
 
@@ -1874,6 +1848,9 @@ jx_ir_instruction_t* jx_ir_instrPhi(jx_ir_context_t* ctx, jx_ir_type_t* type)
 
 jx_ir_instruction_t* jx_ir_instrMemCopy(jx_ir_context_t* ctx, jx_ir_value_t* dstPtr, jx_ir_value_t* srcPtr, jx_ir_value_t* size)
 {
+	jx_ir_module_t* mod = ctx->m_ModuleListHead;
+	JX_CHECK(mod, "moduleBegin() not called yet!");
+
 	if (!jx_ir_typeToPointer(dstPtr->m_Type)) {
 		JX_CHECK(false, "memcpy destination operand expected to be a pointer.");
 		return NULL;
@@ -1889,11 +1866,10 @@ jx_ir_instruction_t* jx_ir_instrMemCopy(jx_ir_context_t* ctx, jx_ir_value_t* dst
 		srcPtr,
 		size
 	};
-
 	if (size->m_Type->m_Kind == JIR_TYPE_I32) {
-		return jx_ir_instrCall(ctx, ctx->m_IntrinsicFuncs[JIR_INTRINSIC_MEMCPY_P0_P0_I32], JX_COUNTOF(args), args);
+		return jx_ir_instrCall(ctx, mod->m_IntrinsicFuncs[JIR_INTRINSIC_MEMCPY_P0_P0_I32], JX_COUNTOF(args), args);
 	} else if (size->m_Type->m_Kind == JIR_TYPE_I64) {
-		return jx_ir_instrCall(ctx, ctx->m_IntrinsicFuncs[JIR_INTRINSIC_MEMCPY_P0_P0_I64], JX_COUNTOF(args), args);
+		return jx_ir_instrCall(ctx, mod->m_IntrinsicFuncs[JIR_INTRINSIC_MEMCPY_P0_P0_I64], JX_COUNTOF(args), args);
 	}
 
 	JX_CHECK(false, "memcpy size operand expected to be either i32 or i64.");
@@ -1903,6 +1879,9 @@ jx_ir_instruction_t* jx_ir_instrMemCopy(jx_ir_context_t* ctx, jx_ir_value_t* dst
 
 jx_ir_instruction_t* jx_ir_instrMemSet(jx_ir_context_t* ctx, jx_ir_value_t* dstPtr, jx_ir_value_t* i8Val, jx_ir_value_t* size)
 {
+	jx_ir_module_t* mod = ctx->m_ModuleListHead;
+	JX_CHECK(mod, "moduleBegin() not called yet!");
+
 	if (!jx_ir_typeToPointer(dstPtr->m_Type)) {
 		JX_CHECK(false, "memset destination operand expected to be a pointer.");
 		return NULL;
@@ -1919,9 +1898,9 @@ jx_ir_instruction_t* jx_ir_instrMemSet(jx_ir_context_t* ctx, jx_ir_value_t* dstP
 		size
 	};
 	if (size->m_Type->m_Kind == JIR_TYPE_I32) {
-		return jx_ir_instrCall(ctx, ctx->m_IntrinsicFuncs[JIR_INTRINSIC_MEMSET_P0_I32], JX_COUNTOF(args), args);
+		return jx_ir_instrCall(ctx, mod->m_IntrinsicFuncs[JIR_INTRINSIC_MEMSET_P0_I32], JX_COUNTOF(args), args);
 	} else if (size->m_Type->m_Kind == JIR_TYPE_I64) {
-		return jx_ir_instrCall(ctx, ctx->m_IntrinsicFuncs[JIR_INTRINSIC_MEMSET_P0_I64], JX_COUNTOF(args), args);
+		return jx_ir_instrCall(ctx, mod->m_IntrinsicFuncs[JIR_INTRINSIC_MEMSET_P0_I64], JX_COUNTOF(args), args);
 	}
 
 	JX_CHECK(false, "memset size operand expected to be either i32 or i64.");

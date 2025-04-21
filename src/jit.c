@@ -198,6 +198,11 @@ void jx_x64_destroyContext(jx_x64_context_t* ctx)
 {
 	jx_allocator_i* allocator = ctx->m_Allocator;
 
+	for (uint32_t iSec = 0; iSec < JX64_SECTION_COUNT; ++iSec) {
+		jx_x64_section_t* sec = &ctx->m_Section[iSec];
+		JX_FREE(allocator, sec->m_Buffer);
+	}
+
 	const uint32_t numSymbols = (uint32_t)jx_array_sizeu(ctx->m_SymbolArr);
 	for (uint32_t iSym = 0; iSym < numSymbols; ++iSym) {
 		jx_x64_symbol_t* sym = ctx->m_SymbolArr[iSym];
@@ -1357,6 +1362,11 @@ static jx_x64_symbol_t* jx64_symbolAlloc(jx_x64_context_t* ctx, jx_x64_symbol_ki
 
 static void jx64_symbolFree(jx_x64_context_t* ctx, jx_x64_symbol_t* sym)
 {
+	const uint32_t numRelocations = (uint32_t)jx_array_sizeu(sym->m_RelocArr);
+	for (uint32_t iReloc = 0; iReloc < numRelocations; ++iReloc) {
+		jx_x64_relocation_t* reloc = &sym->m_RelocArr[iReloc];
+		JX_FREE(ctx->m_Allocator, reloc->m_SymbolName);
+	}
 	jx_array_free(sym->m_RelocArr);
 	JX_FREE(ctx->m_Allocator, sym->m_Name);
 	if (sym->m_Label) {

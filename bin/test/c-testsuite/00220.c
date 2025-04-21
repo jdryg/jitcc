@@ -1,6 +1,7 @@
 // this file contains BMP chars encoded in UTF-8
-#include <stdio.h>
-#include <wchar.h>
+//#include <stdio.h>
+//#include <wchar.h>
+int printf(const char* str, ...);
 
 int main()
 {

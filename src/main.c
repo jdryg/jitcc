@@ -128,6 +128,7 @@ static const char* kNodeKindName[] = {
 static const char* kIndexToStr[] = {
 	"[0]", "[1]", "[2]", "[3]", "[4]", "[5]", "[6]", "[7]", "[8]", "[9]",
 	"[10]", "[11]", "[12]", "[13]", "[14]", "[15]", "[16]", "[17]", "[18]", "[19]",
+	"[20]", "[21]", "[22]", "[23]", "[24]", "[25]", "[26]", "[27]", "[28]", "[29]",
 };
 
 static void astDumpStructMember(jx_config_t* ast, const jx_cc_struct_member_t* member);
@@ -318,6 +319,7 @@ static void astDumpExpression(jx_config_t* ast, const char* name, const jx_cc_as
 	case JCC_NODE_EXPR_SUB:
 	case JCC_NODE_EXPR_MUL: 
 	case JCC_NODE_EXPR_DIV: 
+	case JCC_NODE_EXPR_MOD:
 	case JCC_NODE_EXPR_EQUAL:
 	case JCC_NODE_EXPR_NOT_EQUAL:
 	case JCC_NODE_EXPR_LESS_THAN:
@@ -761,7 +763,7 @@ int main(int argc, char** argv)
 	uint32_t numSkipped = 0;
 	uint32_t numPass = 0;
 	uint32_t numFailed = 0;
-	for (uint32_t iTest = 1; iTest <= 150; ++iTest) {
+	for (uint32_t iTest = 1; iTest <= 220; ++iTest) {
 		++totalTests;
 
 		char sourceFile[256];
@@ -775,6 +777,30 @@ int main(int argc, char** argv)
 			|| iTest == 121 // Parsing error; complex variable/function declaration
 			|| iTest == 123 // Floating point
 			|| iTest == 140 // Call with stack arguments
+			|| iTest == 152 // #line+#error
+			|| iTest == 162 // const/static/volatile/restrict in array declaration
+			|| iTest == 170 // forward enum
+			|| iTest == 174 // Floating point; math functions
+			|| iTest == 175 // Floating point
+			|| iTest == 176 // BUG: Register allocation fails
+			|| iTest == 179 // string.h functions
+			|| iTest == 180 // string.h functions
+			|| iTest == 187 // file functions
+			|| iTest == 189 // fprintf/stdout
+			|| iTest == 195 // Floating point
+			|| iTest == 204 // Floating point
+			|| iTest == 205 // BUG: Wrong output; only 1st entry is correct
+			|| iTest == 206 // #pragma
+			|| iTest == 207 // VLA
+			|| iTest == 209 // BUG? cannot parse
+			|| iTest == 210 // __attribute__
+			|| iTest == 212 // Predefined macros
+			|| iTest == 213 // Statement expressions
+			|| iTest == 214 // __builtin_expect
+			|| iTest == 216 // BUG? Parser: missing braces from inner struct initializer
+			|| iTest == 218 // Bitfields
+			|| iTest == 219 // BUG? Parser: _Generic
+			|| iTest == 220 // Unicode
 			;
 		if (skipTest) {
 			++numSkipped;
@@ -842,7 +868,7 @@ int main(int argc, char** argv)
 #else
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-	const char* sourceFile = "test/c-testsuite/00150.c";
+	const char* sourceFile = "test/c-testsuite/00220.c";
 //	const char* sourceFile = "test/pointer_arithmetic.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
@@ -890,63 +916,64 @@ int main(int argc, char** argv)
 		jx_ir_context_t* irCtx = jx_ir_createContext(allocator);
 		jx_irgen_context_t* genCtx = jx_irgen_createContext(irCtx, allocator);
 
-		jx_irgen_moduleGen(genCtx, sourceFile, tu);
+		if (!jx_irgen_moduleGen(genCtx, sourceFile, tu)) {
+			JX_SYS_LOG_ERROR(NULL, "Failed to generate module IR\n");
+		} else {
+			jx_irgen_destroyContext(genCtx);
 
-		jx_irgen_destroyContext(genCtx);
-
-		jx_string_buffer_t* sb = jx_strbuf_create(allocator);
-		jx_ir_print(irCtx, sb);
-		jx_strbuf_nullTerminate(sb);
-		JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
-		jx_strbuf_destroy(sb);
-
-		{
-			jx_mir_context_t* mirCtx = jx_mir_createContext(allocator);
-			jx_mirgen_context_t* mirGenCtx = jx_mirgen_createContext(irCtx, mirCtx, allocator);
-
-			jx_ir_module_t* irMod = jx_ir_getModule(irCtx, 0);
-			if (irMod) {
-				jx_mirgen_moduleGen(mirGenCtx, irMod);
-			}
-
-			jx_mirgen_destroyContext(mirGenCtx);
-
-			sb = jx_strbuf_create(allocator);
-			jx_mir_print(mirCtx, sb);
+			jx_string_buffer_t* sb = jx_strbuf_create(allocator);
+			jx_ir_print(irCtx, sb);
 			jx_strbuf_nullTerminate(sb);
 			JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
 			jx_strbuf_destroy(sb);
 
-			jx_x64_context_t* jitCtx = jx_x64_createContext(allocator);
+			{
+				jx_mir_context_t* mirCtx = jx_mir_createContext(allocator);
+				jx_mirgen_context_t* mirGenCtx = jx_mirgen_createContext(irCtx, mirCtx, allocator);
 
-			if (jx_x64_emitCode(jitCtx, mirCtx, allocator)) {
-				sb = jx_strbuf_create(allocator);
-
-				uint32_t bufferSize = 0;
-				const uint8_t* buffer = jx64_getBuffer(jitCtx, &bufferSize);
-				for (uint32_t i = 0; i < bufferSize; ++i) {
-					jx_strbuf_printf(sb, "%02X", buffer[i]);
+				jx_ir_module_t* irMod = jx_ir_getModule(irCtx, 0);
+				if (irMod) {
+					jx_mirgen_moduleGen(mirGenCtx, irMod);
 				}
 
+				jx_mirgen_destroyContext(mirGenCtx);
+
+				sb = jx_strbuf_create(allocator);
+				jx_mir_print(mirCtx, sb);
 				jx_strbuf_nullTerminate(sb);
-				JX_SYS_LOG_INFO(NULL, "\n%s\n\n", jx_strbuf_getString(sb, NULL));
+				JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
 				jx_strbuf_destroy(sb);
 
-				typedef int32_t (*pfnMain)(void);
-				jx_x64_symbol_t* symMain = jx64_symbolGetByName(jitCtx, "main");
-				if (symMain) {
-					pfnMain mainFunc = (pfnMain)((uint8_t*)buffer + jx64_labelGetOffset(jitCtx, symMain->m_Label));
-					int32_t ret = mainFunc();
-					JX_SYS_LOG_DEBUG(NULL, "main() returned %d\n", ret);
-				} else {
-					JX_SYS_LOG_ERROR(NULL, "main() not found!\n");
+				jx_x64_context_t* jitCtx = jx_x64_createContext(allocator);
+
+				if (jx_x64_emitCode(jitCtx, mirCtx, allocator)) {
+					sb = jx_strbuf_create(allocator);
+
+					uint32_t bufferSize = 0;
+					const uint8_t* buffer = jx64_getBuffer(jitCtx, &bufferSize);
+					for (uint32_t i = 0; i < bufferSize; ++i) {
+						jx_strbuf_printf(sb, "%02X", buffer[i]);
+					}
+
+					jx_strbuf_nullTerminate(sb);
+					JX_SYS_LOG_INFO(NULL, "\n%s\n\n", jx_strbuf_getString(sb, NULL));
+					jx_strbuf_destroy(sb);
+
+					typedef int32_t(*pfnMain)(void);
+					jx_x64_symbol_t* symMain = jx64_symbolGetByName(jitCtx, "main");
+					if (symMain) {
+						pfnMain mainFunc = (pfnMain)((uint8_t*)buffer + jx64_labelGetOffset(jitCtx, symMain->m_Label));
+						int32_t ret = mainFunc();
+						JX_SYS_LOG_DEBUG(NULL, "main() returned %d\n", ret);
+					} else {
+						JX_SYS_LOG_ERROR(NULL, "main() not found!\n");
+					}
 				}
+
+				jx_x64_destroyContext(jitCtx);
+				jx_mir_destroyContext(mirCtx);
 			}
-
-			jx_x64_destroyContext(jitCtx);
-			jx_mir_destroyContext(mirCtx);
 		}
-
 		jx_ir_destroyContext(irCtx);
 	}
 

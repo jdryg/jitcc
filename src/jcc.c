@@ -6495,43 +6495,6 @@ static bool jcc_parseFunction(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, 
 		jcc_tuLeaveScope(ctx, tu);
 
 		jcc_resolveGotoLabels(tu);
-
-		// Rearrange globals so the function appears last in the list.
-		// The function might have created additional globals (e.g. static variables or strings),
-		// and they must appear before the function definition to simplify code generation.
-		{
-			if (funcPtr != tu->m_GlobalsTail) {
-				bool found = false;
-
-				if (funcPtr == tu->m_GlobalsHead) {
-					tu->m_GlobalsHead = tu->m_GlobalsHead->m_Next;
-
-					tu->m_GlobalsTail->m_Next = funcPtr;
-					tu->m_GlobalsTail = funcPtr;
-					funcPtr->m_Next = NULL;
-
-					found = true;
-				} else {
-					jx_cc_object_t* ptr = tu->m_GlobalsHead;
-					while (ptr) {
-						if (ptr->m_Next == funcPtr) {
-							ptr->m_Next = funcPtr->m_Next;
-
-							tu->m_GlobalsTail->m_Next = funcPtr;
-							tu->m_GlobalsTail = funcPtr;
-							funcPtr->m_Next = NULL;
-
-							found = true;
-							break;
-						}
-
-						ptr = ptr->m_Next;
-					}
-				}
-
-				JX_CHECK(found, "Previous global tail not found!");
-			}
-		}
 	}
 
 	*tokenListPtr = tok;
