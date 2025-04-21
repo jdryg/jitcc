@@ -298,6 +298,11 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 		if (memcpySymbol) {
 			jx64_symbolSetExternalAddress(jitCtx, memcpySymbol, (void*)memcpy);
 		}
+
+		jx_x64_symbol_t* sprintfSymbol = jx64_symbolGetByName(jitCtx, "sprintf");
+		if (sprintfSymbol) {
+			jx64_symbolSetExternalAddress(jitCtx, sprintfSymbol, (void*)sprintf);
+		}
 	}
 
 	jx64_finalize(jitCtx);

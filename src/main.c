@@ -758,12 +758,12 @@ int main(int argc, char** argv)
 
 	jx_allocator_i* allocator = allocator_api->createAllocator("jcc");
 
-#if 0
+#if 1
 	uint32_t totalTests = 0;
 	uint32_t numSkipped = 0;
 	uint32_t numPass = 0;
 	uint32_t numFailed = 0;
-	for (uint32_t iTest = 1; iTest <= 182; ++iTest) {
+	for (uint32_t iTest = 1; iTest <= 190; ++iTest) {
 		++totalTests;
 
 		char sourceFile[256];
@@ -785,6 +785,8 @@ int main(int argc, char** argv)
 			|| iTest == 176 // BUG: Register allocation fails
 			|| iTest == 179 // string.h functions
 			|| iTest == 180 // string.h functions
+			|| iTest == 187 // file functions
+			|| iTest == 189 // fprintf/stdout
 			;
 		if (skipTest) {
 			++numSkipped;
@@ -852,7 +854,7 @@ int main(int argc, char** argv)
 #else
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-	const char* sourceFile = "test/c-testsuite/00182.c";
+	const char* sourceFile = "test/c-testsuite/00190.c";
 //	const char* sourceFile = "test/pointer_arithmetic.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);

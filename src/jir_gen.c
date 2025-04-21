@@ -755,9 +755,14 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 				}
 			}
 		} else {
-			JX_NOT_IMPLEMENTED();
-//			lhs = jirgenIntegerPromotion(ctx, lhs);
-//			rhs = jirgenIntegerPromotion(ctx, rhs);
+			jx_ir_type_t* promotedLhsType = jirgenIntegerPromotion(ctx, lhs->m_Type);
+			if (promotedLhsType != lhs->m_Type) {
+				lhs = jirgenConvertType(ctx, lhs, promotedLhsType);
+			}
+			jx_ir_type_t* promotedRhsType = jirgenIntegerPromotion(ctx, rhs->m_Type);
+			if (promotedRhsType != rhs->m_Type) {
+				rhs = jirgenConvertType(ctx, rhs, promotedRhsType);
+			}
 		}
 
 		jx_ir_instruction_t* binInstr = kIRBinaryOps[expr->super.m_Kind](irctx, lhs, rhs);
@@ -1490,7 +1495,9 @@ static jx_ir_type_t* jirgenUsualArithmeticConversions(jx_irgen_context_t* ctx, j
 		return lhsType;
 	}
 
-	JX_CHECK(jx_ir_typeIsInteger(lhsType) && jx_ir_typeIsInteger(rhsType), "Both operands expected to have integer types at this point!");
+	if (!jx_ir_typeIsInteger(lhsType) || !jx_ir_typeIsInteger(rhsType)) {
+		return NULL;
+	}
 
 	const bool lhsIsUnsigned = jx_ir_typeIsUnsigned(lhsType);
 	const bool rhsIsUnsigned = jx_ir_typeIsUnsigned(rhsType);
