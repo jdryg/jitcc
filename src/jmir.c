@@ -471,13 +471,18 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 		jx_mir_bbPrependInstr(ctx, entryBlock, jx_mir_mov(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_BP), jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_SP)));
 		jx_mir_bbPrependInstr(ctx, entryBlock, jx_mir_push(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_BP)));
 
-		// TODO: Maybe remove ret from exit block and jump to new exit block?
-		// TODO: Maybe support multiple exit blocks? Each block can know if it's an exit block once a ret instruction is appended.
-		jx_mir_basic_block_t* exitBlock = jx_mir_funcGetExitBlock(ctx, func);
-		jx_mir_instruction_t* firstTerminator = jx_mir_bbGetFirstTerminatorInstr(ctx, exitBlock);
-		JX_CHECK(firstTerminator && !firstTerminator->m_Next && firstTerminator->m_OpCode == JMIR_OP_RET, "Expected ret as the only terminator in exit block.");
-		jx_mir_bbInsertInstrBefore(ctx, exitBlock, firstTerminator, jx_mir_mov(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_SP), jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_BP)));
-		jx_mir_bbInsertInstrBefore(ctx, exitBlock, firstTerminator, jx_mir_pop(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_BP)));
+		// Add epilogue code to each exit block.
+		jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
+		while (bb) {
+			jx_mir_instruction_t* firstTerminator = jx_mir_bbGetFirstTerminatorInstr(ctx, bb);
+			if (firstTerminator && firstTerminator->m_OpCode == JMIR_OP_RET) {
+				JX_CHECK(!firstTerminator->m_Next, "Unexpected instruction after ret!");
+				jx_mir_bbInsertInstrBefore(ctx, bb, firstTerminator, jx_mir_mov(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_SP), jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_BP)));
+				jx_mir_bbInsertInstrBefore(ctx, bb, firstTerminator, jx_mir_pop(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_BP)));
+			}
+
+			bb = bb->m_Next;
+		}
 	}
 }
 
@@ -553,18 +558,6 @@ bool jx_mir_funcRemoveBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func,
 	bb->m_ID = UINT32_MAX;
 
 	return true;
-}
-
-jx_mir_basic_block_t* jx_mir_funcGetExitBlock(jx_mir_context_t* ctx, jx_mir_function_t* func)
-{
-	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
-	while (bb->m_Next) {
-		bb = bb->m_Next;
-	}
-
-	JX_CHECK(jx_mir_bbGetFirstTerminatorInstr(ctx, bb)->m_OpCode == JMIR_OP_RET, "Not an exit block?");
-
-	return bb;
 }
 
 void jx_mir_funcAllocStackForCall(jx_mir_context_t* ctx, jx_mir_function_t* func, uint32_t numArguments)
