@@ -7371,6 +7371,7 @@ static jx_cc_token_t* jcc_allocToken(jx_cc_context_t* ctx, jcc_translation_unit_
 {
 	jx_cc_token_t* tok = JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_cc_token_t));
 	if (!tok) {
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Failed to allocate memory for token.");
 		return NULL;
 	}
 
@@ -7422,7 +7423,6 @@ static jx_cc_token_t* jcc_copyLine(jx_cc_context_t* ctx, jcc_translation_unit_t*
 
 	cur->m_Next = jcc_allocToken(ctx, tu, JCC_TOKEN_EOF, tok->m_String, tok->m_String);
 	if (!cur->m_Next) {
-		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 		return NULL;
 	}
 
@@ -7433,22 +7433,25 @@ static jx_cc_token_t* jcc_copyLine(jx_cc_context_t* ctx, jcc_translation_unit_t*
 
 // Read an identifier and returns the length of it.
 // If p does not point to a valid identifier, 0 is returned.
-static uint32_t jcc_readIdentifier(const char* str)
+static uint32_t jcc_readIdentifier(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* str)
 {
 	uint32_t cp = UINT32_MAX;
 	uint32_t n = 0;
 	if (!jx_utf8to_codepoint(&cp, &str[0], UINT32_MAX, &n)) {
-		return 0; // ERROR: 
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "UTF-8 to codepoint conversion failed");
+		return 0;
 	}
 
 	if (!jcc_isIdentifierCodepoint1(cp)) {
-		return 0; // ERROR: 
+		// Not an identifier. Let the caller handle it.
+		return 0;
 	}
 
 	uint32_t identifierLen = n;
 	while (str[identifierLen] != '\0') {
 		if (!jx_utf8to_codepoint(&cp, &str[identifierLen], UINT32_MAX, &n)) {
-			return 0; // ERROR: 
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "UTF-8 to codepoint conversion failed");
+			return 0;
 		}
 
 		if (!jcc_isIdentifierCodepoint2(cp)) {
@@ -7461,7 +7464,7 @@ static uint32_t jcc_readIdentifier(const char* str)
 	return identifierLen;
 }
 
-static uint32_t jcc_readEscapedChar(const char** new_pos, const char* p)
+static uint32_t jcc_readEscapedChar(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char** new_pos, const char* p)
 {
 	uint32_t c = 0;
 
@@ -7479,7 +7482,8 @@ static uint32_t jcc_readEscapedChar(const char** new_pos, const char* p)
 		// Read a hexadecimal number.
 		p++;
 		if (!jx_isxdigit(p[0])) {
-			return UINT32_MAX; // ERROR: invalid hex escape sequence
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Invalid hex escape sequence");
+			return UINT32_MAX;
 		}
 
 		for (; jx_isxdigit(p[0]); p++) {
@@ -7520,11 +7524,12 @@ static uint32_t jcc_readEscapedChar(const char** new_pos, const char* p)
 }
 
 // Find a closing double-quote.
-static const char* jcc_findStringLiteralEnd(const char* p)
+static const char* jcc_findStringLiteralEnd(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* p)
 {
 	for (; *p != '"'; p++) {
 		if (*p == '\n' || *p == '\0') {
-			return NULL; // ERROR: unclosed string literal
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Unclosed string literal");
+			return NULL;
 		}
 
 		if (*p == '\\') {
@@ -7537,14 +7542,16 @@ static const char* jcc_findStringLiteralEnd(const char* p)
 
 static jx_cc_token_t* jcc_readStringLiteral(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* start, const char* quote)
 {
-	const char* end = jcc_findStringLiteralEnd(quote + 1);
+	const char* end = jcc_findStringLiteralEnd(ctx, tu, quote + 1);
 	if (!end) {
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Failed to find string literal end");
 		return NULL;
 	}
 
 	const size_t sz = end - quote;
 	char* buf = (char*)JX_ALLOC(ctx->m_Allocator, sz);
 	if (!buf) {
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Failed to allocate memory for string (%u bytes)", sz);
 		return NULL;
 	}
 	jx_memset(buf, 0, sz);
@@ -7552,8 +7559,9 @@ static jx_cc_token_t* jcc_readStringLiteral(jx_cc_context_t* ctx, jcc_translatio
 	int len = 0;
 	for (const char* p = quote + 1; p < end;) {
 		if (*p == '\\') {
-			uint32_t c = jcc_readEscapedChar(&p, p + 1);
+			uint32_t c = jcc_readEscapedChar(ctx, tu, &p, p + 1);
 			if (c == UINT32_MAX) {
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Failed to read escaped character");
 				return NULL;
 			}
 
@@ -7589,14 +7597,16 @@ static jx_cc_token_t* jcc_readStringLiteral(jx_cc_context_t* ctx, jcc_translatio
 // is called a "surrogate pair".
 static jx_cc_token_t* jcc_readUTF16StringLiteral(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* start, const char* quote)
 {
-	const char* end = jcc_findStringLiteralEnd(quote + 1);
+	const char* end = jcc_findStringLiteralEnd(ctx, tu, quote + 1);
 	if (!end) {
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Failed to find UTF-16 string literal end");
 		return NULL;
 	}
 
 	const size_t sz = sizeof(uint16_t) * (end - start);
 	uint16_t* buf = (uint16_t*)JX_ALLOC(ctx->m_Allocator, sz);
 	if (!buf) {
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Failed to allocate memory for UTF-16 string (%u bytes)", sz);
 		return NULL;
 	}
 	jx_memset(buf, 0, sz);
@@ -7604,8 +7614,9 @@ static jx_cc_token_t* jcc_readUTF16StringLiteral(jx_cc_context_t* ctx, jcc_trans
 	int len = 0;
 	for (const char* p = quote + 1; p < end;) {
 		if (*p == '\\') {
-			uint32_t c = jcc_readEscapedChar(&p, p + 1);
+			uint32_t c = jcc_readEscapedChar(ctx, tu, &p, p + 1);
 			if (c == UINT32_MAX) {
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Failed to read escaped character");
 				return NULL;
 			}
 
@@ -7653,14 +7664,16 @@ static jx_cc_token_t* jcc_readUTF16StringLiteral(jx_cc_context_t* ctx, jcc_trans
 // encoded in 4 bytes.
 static jx_cc_token_t* jcc_readUTF32StringLiteral(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* start, const char* quote, jx_cc_type_t* ty)
 {
-	const char* end = jcc_findStringLiteralEnd(quote + 1);
+	const char* end = jcc_findStringLiteralEnd(ctx, tu, quote + 1);
 	if (!end) {
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Failed to find UTF-32 string literal end");
 		return NULL;
 	}
 
 	const size_t sz = sizeof(uint32_t) * (end - quote);
 	uint32_t* buf = (uint32_t*)JX_ALLOC(ctx->m_Allocator, sz);
 	if (!buf) {
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Failed to allocate memory for UTF-32 string (%u bytes)", sz);
 		return NULL;
 	}
 	jx_memset(buf, 0, sz);
@@ -7668,10 +7681,12 @@ static jx_cc_token_t* jcc_readUTF32StringLiteral(jx_cc_context_t* ctx, jcc_trans
 	int len = 0;
 	for (const char* p = quote + 1; p < end;) {
 		if (*p == '\\') {
-			uint32_t c = jcc_readEscapedChar(&p, p + 1);
+			uint32_t c = jcc_readEscapedChar(ctx, tu, &p, p + 1);
 			if (c == UINT32_MAX) {
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Failed to read escaped character");
 				return NULL;
 			}
+
 			buf[len++] = c;
 		} else {
 			uint32_t n = 0;
@@ -7705,15 +7720,21 @@ static jx_cc_token_t* jcc_readCharLiteral(jx_cc_context_t* ctx, jcc_translation_
 {
 	const char* p = quote + 1;
 	if (*p == '\0') {
-		return NULL; // ERROR: unclosed char literal
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Unclosed char literal");
+		return NULL;
 	}
 
 	uint32_t c = UINT32_MAX;
 	if (*p == '\\') {
-		c = jcc_readEscapedChar(&p, p + 1);
+		c = jcc_readEscapedChar(ctx, tu, &p, p + 1);
+		if (c == UINT32_MAX) {
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Failed to read escaped character");
+			return NULL;
+		}
 	} else {
 		uint32_t n = 0;
 		if (!jx_utf8to_codepoint(&c, p, UINT32_MAX, &n)) {
+			jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "UTF-8 to codepoint conversion failed");
 			return NULL;
 		}
 	
@@ -7722,7 +7743,8 @@ static jx_cc_token_t* jcc_readCharLiteral(jx_cc_context_t* ctx, jcc_translation_
 
 	const char* end = jx_strchr(p, '\'');
 	if (!end) {
-		return NULL; // ERROR: unclosed char literal
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Unclosed char literal");
+		return NULL;
 	}
 
 	jx_cc_token_t* tok = jcc_allocToken(ctx, tu, JCC_TOKEN_NUMBER, start, end + 1);
@@ -7740,7 +7762,7 @@ static jx_cc_token_t* jcc_readKnownTokenOrIdentifier(jx_cc_context_t* ctx, jcc_t
 {
 	jx_cc_token_t* token = NULL;
 
-	const uint32_t identifierLen = jcc_readIdentifier(str);
+	const uint32_t identifierLen = jcc_readIdentifier(ctx, tu, str);
 	if (identifierLen) {
 		jx_cc_token_kind kind = JCC_TOKEN_IDENTIFIER;
 
@@ -8111,7 +8133,6 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 
 			cur->m_Next = jcc_allocToken(ctx, tu, JCC_TOKEN_PREPROC_NUMBER, q, p);
 			if (!cur->m_Next) {
-				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return NULL;
 			}
 			cur = cur->m_Next;
@@ -8165,7 +8186,6 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 			// Character literal
 			cur->m_Next = jcc_readCharLiteral(ctx, tu, p, p, kType_int);
 			if (!cur->m_Next) {
-				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return NULL;
 			}
 			cur = cur->m_Next;
@@ -8175,7 +8195,6 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 			// UTF-16 character literal
 			cur->m_Next = jcc_readCharLiteral(ctx, tu, p, p + 1, kType_ushort);
 			if (!cur->m_Next) {
-				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return NULL;
 			}
 			cur = cur->m_Next;
@@ -8185,7 +8204,6 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 			// Wide character literal
 			cur->m_Next = jcc_readCharLiteral(ctx, tu, p, p + 1, kType_int);
 			if (!cur->m_Next) {
-				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return NULL;
 			}
 			cur = cur->m_Next;
@@ -8194,7 +8212,6 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 			// UTF-32 character literal
 			cur->m_Next = jcc_readCharLiteral(ctx, tu, p, p + 1, kType_uint);
 			if (!cur->m_Next) {
-				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return NULL;
 			}
 			cur = cur->m_Next;
@@ -8203,7 +8220,7 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 			// Keyword, punctuator or identifier
 			cur->m_Next = jcc_readKnownTokenOrIdentifier(ctx, tu, p);
 			if (!cur->m_Next) {
-				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+				jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Expected keyword, punctuator or identifier");
 				return NULL;
 			}
 			cur = cur->m_Next;
@@ -8218,7 +8235,6 @@ static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_u
 
 	cur->m_Next = jcc_allocToken(ctx, tu, JCC_TOKEN_EOF, p, p);
 	if (!cur->m_Next) {
-		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 		return NULL;
 	}
 	cur = cur->m_Next;
@@ -8901,7 +8917,6 @@ static jcc_macro_arg_t* jcc_ppReadMacroArg(jx_cc_context_t* ctx, jcc_translation
 
 	cur->m_Next = jcc_allocToken(ctx, tu, JCC_TOKEN_EOF, tok->m_String, tok->m_String);
 	if (!cur->m_Next) {
-		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 		return NULL;
 	}
 
