@@ -2072,6 +2072,33 @@ static jx_cc_type_t* jcc_parsePointers(jx_cc_context_t* ctx, jcc_translation_uni
 	return ty;
 }
 
+static jx_cc_token_t* jcc_skipParen(jx_cc_context_t* ctx, jx_cc_token_t* tok)
+{
+	uint32_t level = 0;
+
+	jx_cc_token_t* start = tok;
+	for (;;) {
+		if (level == 0 && jcc_tokIs(tok, JCC_TOKEN_CLOSE_PAREN)) {
+			break;
+		}
+
+		if (jcc_tokIs(tok, JCC_TOKEN_EOF)) {
+			jcc_logError(ctx, &start->m_Loc, "Unexpected end of file found.");
+			return NULL;
+		}
+
+		if (jcc_tokIs(tok, JCC_TOKEN_OPEN_PAREN)) {
+			level++;
+		} else if (jcc_tokIs(tok, JCC_TOKEN_CLOSE_PAREN)) {
+			level--;
+		}
+
+		tok = tok->m_Next;
+	}
+
+	return tok->m_Next;
+}
+
 // declarator = pointers ("(" ident ")" | "(" declarator ")" | ident) type-suffix
 static jx_cc_type_t* jcc_parseDeclarator(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr, jx_cc_type_t* ty)
 {
@@ -2084,6 +2111,34 @@ static jx_cc_type_t* jcc_parseDeclarator(jx_cc_context_t* ctx, jcc_translation_u
 	}
 	
 	if (jcc_tokExpect(&tok, JCC_TOKEN_OPEN_PAREN)) {
+#if 1
+		if (jcc_tuIsTypename(ctx, tu, tok) || jcc_tokIs(tok, JCC_TOKEN_CLOSE_PAREN)) {
+			ty = jcc_parseFunctionParameters(ctx, tu, &tok, ty);
+			if (!ty) {
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse function parameters.");
+				return NULL;
+			}
+		} else {
+			jx_cc_token_t* start = tok;
+
+			tok = jcc_skipParen(ctx, tok);
+			if (!tok) {
+				return NULL;
+			}
+
+			ty = jcc_parseTypeSuffix(ctx, tu, &tok, ty);
+			if (!ty) {
+				jcc_logError(ctx, &tok->m_Loc, "Expected type suffix after '('");
+				return NULL;
+			}
+
+			ty = jcc_parseDeclarator(ctx, tu, &start, ty);
+			if (!ty) {
+				jcc_logError(ctx, &tok->m_Loc, "Expected declarator after type suffix");
+				return NULL;
+			}
+		}
+#else
 		jx_cc_token_t* start = tok;
 
 		jx_cc_type_t dummy = { 0 };
@@ -2105,6 +2160,7 @@ static jx_cc_type_t* jcc_parseDeclarator(jx_cc_context_t* ctx, jcc_translation_u
 			jcc_logError(ctx, &tok->m_Loc, "Expected declarator after type suffix");
 			return NULL;
 		}
+#endif
 	} else {
 		jx_cc_token_t* name = NULL;
 		jx_cc_token_t* name_pos = tok;
@@ -3168,6 +3224,7 @@ static bool jcc_parseInitializer2(jx_cc_context_t* ctx, jcc_translation_unit_t* 
 					return false;
 				}
 
+				tok = start;
 				if (!jcc_parseStructInitializer2(ctx, tu, &tok, init, init->m_Type->m_StructMembers)) {
 					jcc_logError(ctx, &tok->m_Loc, "Failed to parse struct initializer");
 					return false;
@@ -3203,7 +3260,10 @@ static bool jcc_parseInitializer2(jx_cc_context_t* ctx, jcc_translation_unit_t* 
 
 				init->m_Members = init->m_Type->m_StructMembers;
 				tok = start;
-				jcc_parseInitializer2(ctx, tu, &tok, init->m_Children[0]);
+				if (!jcc_parseInitializer2(ctx, tu, &tok, init->m_Children[0])) {
+					jcc_logError(ctx, &tok->m_Loc, "Failed to parse union initializer");
+					return false;
+				}
 			}
 		}
 	} else {
@@ -4266,15 +4326,13 @@ static jx_cc_ast_stmt_t* jcc_parseCompoundStatement(jx_cc_context_t* ctx, jcc_tr
 				}
 			}
 
-			if (!child) {
-				goto err;
-			}
+			if (child) {
+				jx_array_push_back(childArr, &child->super);
 
-			jx_array_push_back(childArr, &child->super);
-
-			if (!jcc_astAddType(ctx, &child->super)) {
-				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Failed to add type to node.");
-				goto err;
+				if (!jcc_astAddType(ctx, &child->super)) {
+					jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Failed to add type to node.");
+					goto err;
+				}
 			}
 		}
 	}
@@ -6491,7 +6549,7 @@ static bool jcc_parseFunction(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, 
 
 			fn->m_FuncBody = jcc_parseCompoundStatement(ctx, tu, &tok);
 			if (!fn->m_FuncBody) {
-				jcc_logError(ctx, &tok->m_Loc, "Expected compound statement");
+				jcc_logError(ctx, &tok->m_Loc, "Failed to parse function body");
 				jcc_tuLeaveScope(ctx, tu);
 				return false;
 			}
