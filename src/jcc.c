@@ -324,6 +324,8 @@ typedef struct jx_cc_context_t
 	jx_string_table_t* m_StringTable;
 	jx_cc_translation_unit_t** m_TranslationUnitsArr;
 	jx_logger_i* m_Logger;
+	uint32_t m_NumErrors;
+	uint32_t m_NumWarnings;
 } jx_cc_context_t;
 
 static jx_cc_token_t* jcc_tokenizeString(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, char* source, uint64_t sourceLen);
@@ -498,6 +500,8 @@ jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_d
 	}
 
 	jx_memset(unit, 0, sizeof(jx_cc_translation_unit_t));
+	ctx->m_NumErrors = 0;
+	ctx->m_NumWarnings = 0;
 
 	jcc_translation_unit_t* tu = &(jcc_translation_unit_t){ 0 };
 
@@ -561,6 +565,8 @@ end:
 	}
 
 	unit->m_Globals = tu->m_GlobalsHead;
+	unit->m_NumErrors = ctx->m_NumErrors;
+	unit->m_NumWarnings = ctx->m_NumWarnings;
 
 	jx_array_push_back(ctx->m_TranslationUnitsArr, unit);
 
@@ -598,6 +604,7 @@ static bool jcc_tuEnterScope(jx_cc_context_t* ctx, jcc_translation_unit_t* tu)
 {
 	jcc_scope_t* sc = (jcc_scope_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jcc_scope_t));
 	if (!sc) {
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Failed to allocate memory for new scope.");
 		return false;
 	}
 	
@@ -609,6 +616,7 @@ static bool jcc_tuEnterScope(jx_cc_context_t* ctx, jcc_translation_unit_t* tu)
 	sc->m_Tags = jx_hashmapCreate(ctx->m_Allocator, sizeof(jcc_scope_entry_t), 64, 0, 0, jcc_scopeEntryHashCallback, jcc_scopeEntryCompareCallback, NULL, ctx);
 
 	if (!sc->m_Vars || !sc->m_Tags) {
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Failed to allocate memory for new scope.");
 		jcc_tuLeaveScope(ctx, tu);
 		return false;
 	}
@@ -2235,6 +2243,19 @@ static jx_cc_type_t* jcc_parseEnum(jx_cc_context_t* ctx, jcc_translation_unit_t*
 	}
 	
 	if (tag && !jcc_tokIs(tok, JCC_TOKEN_OPEN_CURLY_BRACKET)) {
+#if 1
+		jx_cc_type_t* ty2 = jcc_tuFindTag(tu, tag);
+		if (ty2) {
+			if (ty2->m_Kind == JCC_TYPE_STRUCT || ty2->m_Kind == JCC_TYPE_UNION) {
+				jcc_logError(ctx, &tag->m_Loc, "'%s' is not an enum tag", tag->m_String);
+				return NULL;
+			}
+
+			*tokenListPtr = tok;
+
+			return ty2;
+		}
+#else
 		jx_cc_type_t* ty = jcc_tuFindTag(tu, tag);
 		if (!ty) {
 			jcc_logError(ctx, &tok->m_Loc, "Unknown enum tag '%s'", tag->m_String);
@@ -2245,6 +2266,7 @@ static jx_cc_type_t* jcc_parseEnum(jx_cc_context_t* ctx, jcc_translation_unit_t*
 			jcc_logError(ctx, &tok->m_Loc, "'%s' is not an enum tag", tag->m_String);
 			return NULL;
 		}
+#endif
 	} else {
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_OPEN_CURLY_BRACKET)) {
 			jcc_logError(ctx, &tok->m_Loc, "Expected '{'");
@@ -4193,12 +4215,12 @@ static jx_cc_ast_stmt_t* jcc_parseCompoundStatement(jx_cc_context_t* ctx, jcc_tr
 
 	jx_cc_ast_node_t** childArr = (jx_cc_ast_node_t**)jx_array_create(ctx->m_Allocator);
 	if (!childArr) {
-		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Failed to allocate memory for compound statement.");
 		return NULL;
 	}
 
 	if (!jcc_tuEnterScope(ctx, tu)) {
-		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_MAKE(tu->m_CurFilename, tu->m_CurLineNumber), "Failed to create new scope for compound statement.");
 		jx_array_free(childArr);
 		return NULL;
 	}
@@ -4210,67 +4232,49 @@ static jx_cc_ast_stmt_t* jcc_parseCompoundStatement(jx_cc_context_t* ctx, jcc_tr
 				jcc_var_attr_t attr = { 0 };
 				jx_cc_type_t* basety = jcc_parseDeclarationSpecifiers(ctx, tu, &tok, &attr);
 				if (!basety) {
-					jcc_logError(ctx, &tok->m_Loc, "Expected declaration specifiers");
-					jx_array_free(childArr);
-					return NULL;
+					jcc_logError(ctx, &tok->m_Loc, "Failed to parse declaration specifiers");
+					goto err;
 				}
 
 				if ((attr.m_Flags & JCC_VAR_ATTR_IS_TYPEDEF_Msk) != 0) {
 					if (!jcc_parseTypedef(ctx, tu, &tok, basety)) {
 						jcc_logError(ctx, &tok->m_Loc, "Failed to parse typedef");
-						jx_array_free(childArr);
-						return NULL;
+						goto err;
 					}
-
-					continue;
-				}
-
-				if (jcc_isFunction(ctx, tu, tok)) {
+				} else if (jcc_isFunction(ctx, tu, tok)) {
 					if (!jcc_parseFunction(ctx, tu, &tok, basety, &attr)) {
 						jcc_logError(ctx, &tok->m_Loc, "Failed to parse function");
-						jx_array_free(childArr);
-						return NULL;
+						goto err;
 					}
-
-					continue;
-				}
-
-				if ((attr.m_Flags & JCC_VAR_ATTR_IS_EXTERN_Msk) != 0) {
+				} else if ((attr.m_Flags & JCC_VAR_ATTR_IS_EXTERN_Msk) != 0) {
 					if (!jcc_parseGlobalVariable(ctx, tu, &tok, basety, &attr)) {
 						jcc_logError(ctx, &tok->m_Loc, "Failed to parse global variable");
-						jx_array_free(childArr);
-						return NULL;
+						goto err;
 					}
-
-					continue;
-				}
-
-				child = jcc_parseDeclaration(ctx, tu, &tok, basety, &attr);
-				if (!child) {
-					jcc_logError(ctx, &tok->m_Loc, "Expected declaration");
-					jx_array_free(childArr);
-					return NULL;
+				} else {
+					child = jcc_parseDeclaration(ctx, tu, &tok, basety, &attr);
+					if (!child) {
+						jcc_logError(ctx, &tok->m_Loc, "Failed to parse declaration");
+						goto err;
+					}
 				}
 			} else {
 				child = jcc_parseStatement(ctx, tu, &tok);
 				if (!child) {
-					jcc_logError(ctx, &tok->m_Loc, "Expected statement");
-					jx_array_free(childArr);
-					return NULL;
+					jcc_logError(ctx, &tok->m_Loc, "Failed to parse statement");
+					goto err;
 				}
 			}
 
 			if (!child) {
-				jx_array_free(childArr);
-				return NULL;
+				goto err;
 			}
 
 			jx_array_push_back(childArr, &child->super);
 
 			if (!jcc_astAddType(ctx, &child->super)) {
 				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Failed to add type to node.");
-				jx_array_free(childArr);
-				return NULL;
+				goto err;
 			}
 		}
 	}
@@ -4283,6 +4287,11 @@ static jx_cc_ast_stmt_t* jcc_parseCompoundStatement(jx_cc_context_t* ctx, jcc_tr
 	*tokenListPtr = tok;
 	
 	return block;
+
+err:
+	jcc_tuLeaveScope(ctx, tu);
+	jx_array_free(childArr);
+	return NULL;
 }
 
 // expr-stmt = expr? ";"
@@ -6147,6 +6156,7 @@ static jx_cc_ast_expr_t* jcc_parsePrimaryExpression(jx_cc_context_t* ctx, jcc_tr
 #endif
 	} else if (jcc_tokIs(tok, JCC_TOKEN_IDENTIFIER)) {
 		// Variable or enum constant
+		jx_cc_token_t* start = tok;
 		jcc_var_scope_t* sc = jcc_tuFindVariable(tu, tok);
 		tok = tok->m_Next;
 
@@ -6168,11 +6178,7 @@ static jx_cc_ast_expr_t* jcc_parsePrimaryExpression(jx_cc_context_t* ctx, jcc_tr
 		}
 		
 		if (!node) {
-			if (jcc_tokIs(tok, JCC_TOKEN_OPEN_PAREN)) {
-				jcc_logError(ctx, &tok->m_Loc, "Implicit declaration of a function");
-			} else {
-				jcc_logError(ctx, &tok->m_Loc, "Undefined variable");
-			}
+			jcc_logError(ctx, &start->m_Loc, "Undeclared identifier '%s'", start->m_String);
 			return NULL;
 		}
 	} else if (jcc_tokIs(tok, JCC_TOKEN_STRING_LITERAL)) {
@@ -8379,6 +8385,8 @@ static bool jcc_isIdentifierCodepoint2(uint32_t c)
 
 static void jcc_logError(jx_cc_context_t* ctx, const jx_cc_source_loc_t* loc, const char* fmt, ...)
 {
+	ctx->m_NumErrors++;
+
 	char str[1024];
 
 	va_list argList;
