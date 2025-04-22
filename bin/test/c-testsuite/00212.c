@@ -34,6 +34,6 @@ main()
 		(void)printf("KO __ILP32__\n");
 	}
 #else
-	(void)printf("KO no __*LP*__ defined.\n");
+	printf("KO no __*LP*__ defined.\n");
 #endif
 }
