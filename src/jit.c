@@ -2698,7 +2698,7 @@ static bool jx64_movsx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, j
 		;
 
 	jx64_instrEnc_operandSize(enc, dst_r_sz == JX64_SIZE_16);
-	jx64_instrEnc_rex(enc, needsREX, dst_r_sz == JX64_SIZE_64, JX64_REG_HI(src_r), 0, JX64_REG_HI(dst_r));
+	jx64_instrEnc_rex(enc, needsREX, dst_r_sz == JX64_SIZE_64, JX64_REG_HI(dst_r), 0, JX64_REG_HI(src_r));
 	if (src_r_sz == JX64_SIZE_8) {
 		jx64_instrEnc_opcode2(enc, 0x0F, 0xBE);
 	} else if (src_r_sz == JX64_SIZE_16) {
@@ -2706,7 +2706,7 @@ static bool jx64_movsx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, j
 	} else if (src_r_sz == JX64_SIZE_32) {
 		jx64_instrEnc_opcode1(enc, 0x63);
 	}
-	jx64_instrEnc_modrm(enc, 0b11, JX64_REG_LO(src_r), JX64_REG_LO(dst_r));
+	jx64_instrEnc_modrm(enc, 0b11, JX64_REG_LO(dst_r), JX64_REG_LO(src_r));
 
 	return true;
 }
@@ -2735,7 +2735,7 @@ static bool jx64_movzx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, j
 		;
 
 	jx64_instrEnc_operandSize(enc, dst_r_sz == JX64_SIZE_16);
-	jx64_instrEnc_rex(enc, needsREX, dst_r_sz == JX64_SIZE_64, JX64_REG_HI(src_r), 0, JX64_REG_HI(dst_r));
+	jx64_instrEnc_rex(enc, needsREX, dst_r_sz == JX64_SIZE_64, JX64_REG_HI(dst_r), 0, JX64_REG_HI(src_r));
 	if (src_r_sz == JX64_SIZE_8) {
 		jx64_instrEnc_opcode2(enc, 0x0F, 0xB6);
 	} else if (src_r_sz == JX64_SIZE_16) {
@@ -2743,7 +2743,7 @@ static bool jx64_movzx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, j
 	} else if (src_r_sz == JX64_SIZE_32) {
 		JX_CHECK(false, "Use mov reg, reg instead!");
 	}
-	jx64_instrEnc_modrm(enc, 0b11, JX64_REG_LO(src_r), JX64_REG_LO(dst_r));
+	jx64_instrEnc_modrm(enc, 0b11, JX64_REG_LO(dst_r), JX64_REG_LO(src_r));
 
 	return true;
 }
