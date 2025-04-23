@@ -2691,7 +2691,7 @@ static bool jx64_movsx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, j
 	}
 
 	const bool needsREX = false
-		|| (dst_r_sz == JX64_SIZE_8 && (JX64_REG_GET_ID(dst_r) >= JX64_REG_ID_RSP || JX64_REG_GET_ID(src_r) >= JX64_REG_ID_RSP))
+		|| (src_r_sz == JX64_SIZE_8 && (JX64_REG_GET_ID(dst_r) >= JX64_REG_ID_RSP || JX64_REG_GET_ID(src_r) >= JX64_REG_ID_RSP))
 		|| dst_r_sz == JX64_SIZE_64
 		|| JX64_REG_IS_HI(dst_r)
 		|| JX64_REG_IS_HI(src_r)
@@ -2728,7 +2728,7 @@ static bool jx64_movzx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, j
 	}
 
 	const bool needsREX = false
-		|| (dst_r_sz == JX64_SIZE_8 && (JX64_REG_GET_ID(dst_r) >= JX64_REG_ID_RSP || JX64_REG_GET_ID(src_r) >= JX64_REG_ID_RSP))
+		|| (src_r_sz == JX64_SIZE_8 && (JX64_REG_GET_ID(dst_r) >= JX64_REG_ID_RSP || JX64_REG_GET_ID(src_r) >= JX64_REG_ID_RSP))
 		|| dst_r_sz == JX64_SIZE_64
 		|| JX64_REG_IS_HI(dst_r)
 		|| JX64_REG_IS_HI(src_r)
