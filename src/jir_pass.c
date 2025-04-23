@@ -704,8 +704,12 @@ static jx_ir_value_t* jir_simpleSSA_tryRemoveTrivialPhi(jir_func_pass_simple_ssa
 
 	if (!same) {
 		// NOTE: This can happen when using uninitialized variables.
-		JX_NOT_IMPLEMENTED(); // TODO: Requires Undef.
-		return phiInstrVal;
+		// E.g. c-testsuite/00141.c
+		// 
+		// Proper handling requires Undef() but this will complicate things more
+		// down the line. Simply replace with 0 for now.
+		// TODO: Warn the user?
+		same = jx_ir_constToValue(jx_ir_constGetZero(pass->m_Ctx, phiInstrVal->m_Type));
 	}
 
 	// Remove self-reference in phi
