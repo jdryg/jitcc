@@ -1764,6 +1764,7 @@ static void jmir_regAlloc_combineNodes(jmir_func_pass_regalloc_t* pass, jmir_gra
 		uint32_t d = t->m_Degree;
 		jmir_regAlloc_addEdge(pass, t, u);
 		if (d < pass->m_NumHWRegs && t->m_Degree >= pass->m_NumHWRegs) {
+			JX_CHECK(jmir_nodeIs(t, JMIR_NODE_STATE_FREEZE), "Node expected to be in freeze state.");
 			jmir_regAlloc_nodeSetState(pass, t, JMIR_NODE_STATE_SPILL);
 		}
 		jmir_regAlloc_nodeDecrementDegree(pass, t);
