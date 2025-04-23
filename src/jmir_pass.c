@@ -1333,6 +1333,7 @@ static void jmir_regAlloc_replaceRegs(jmir_func_pass_regalloc_t* pass)
 					if (jmir_nodeIs(node, JMIR_NODE_STATE_COLORED)) {
 						uint32_t hwReg = jmir_regAlloc_getHWRegWithColor(pass, node->m_Color);
 						if (hwReg != JMIR_MEMORY_REG_NONE) {
+							pass->m_Func->m_UsedHWIRegs |= 1u << (uint32_t)hwReg;
 							operand->u.m_RegID = hwReg;
 						}
 					}
@@ -1344,6 +1345,7 @@ static void jmir_regAlloc_replaceRegs(jmir_func_pass_regalloc_t* pass)
 						if (jmir_nodeIs(node, JMIR_NODE_STATE_COLORED)) {
 							uint32_t hwReg = jmir_regAlloc_getHWRegWithColor(pass, node->m_Color);
 							if (hwReg != JMIR_MEMORY_REG_NONE) {
+								pass->m_Func->m_UsedHWIRegs |= 1u << (uint32_t)hwReg;
 								memRef->m_BaseRegID = hwReg;
 							}
 						}
@@ -1354,6 +1356,7 @@ static void jmir_regAlloc_replaceRegs(jmir_func_pass_regalloc_t* pass)
 						if (jmir_nodeIs(node, JMIR_NODE_STATE_COLORED)) {
 							uint32_t hwReg = jmir_regAlloc_getHWRegWithColor(pass, node->m_Color);
 							if (hwReg != JMIR_MEMORY_REG_NONE) {
+								pass->m_Func->m_UsedHWIRegs |= 1u << (uint32_t)hwReg;
 								memRef->m_IndexRegID = hwReg;
 							}
 						}

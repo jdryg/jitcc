@@ -183,6 +183,17 @@ static const jx_mir_hw_reg kMIRFuncCallerSavedIReg[] = {
 	JMIR_HWREG_R11,
 };
 
+static const jx_mir_hw_reg kMIRFuncCalleeSavedIReg[] = {
+	JMIR_HWREG_B,
+//	JMIR_HWREG_BP, // Always saved by the function if needed; never used by the register allocator.
+	JMIR_HWREG_SI,
+	JMIR_HWREG_DI,
+	JMIR_HWREG_R12,
+	JMIR_HWREG_R13,
+	JMIR_HWREG_R14,
+	JMIR_HWREG_R15,
+};
+
 typedef enum jx_mir_operand_kind
 {
 	JMIR_OPERAND_REGISTER = 0,
@@ -261,7 +272,7 @@ typedef struct jx_mir_function_t
 	uint32_t m_NextBasicBlockID;
 	uint32_t m_NextVirtualRegID;
 	uint32_t m_Flags;
-	JX_PAD(4);
+	uint32_t m_UsedHWIRegs;
 } jx_mir_function_t;
 
 typedef struct jx_mir_relocation_t
