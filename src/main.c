@@ -782,19 +782,16 @@ int main(int argc, char** argv)
 			|| iTest == 170 // forward enum
 			|| iTest == 174 // Floating point; math functions
 			|| iTest == 175 // Floating point
-			|| iTest == 176 // BUG: Register allocation fails
 			|| iTest == 179 // string.h functions
 			|| iTest == 180 // string.h functions
 			|| iTest == 187 // file functions
 			|| iTest == 189 // fprintf/stdout
 			|| iTest == 195 // Floating point
 			|| iTest == 204 // Floating point
-			|| iTest == 205 // BUG: Wrong output; only 1st entry is correct
 			|| iTest == 206 // #pragma
 			|| iTest == 207 // VLA
-			|| iTest == 209 // BUG? cannot parse
 			|| iTest == 210 // __attribute__
-			|| iTest == 212 // Predefined macros
+//			|| iTest == 212 // Predefined macros
 			|| iTest == 213 // Statement expressions
 			|| iTest == 214 // __builtin_expect
 			|| iTest == 216 // BUG? Parser: missing braces from inner struct initializer
@@ -810,7 +807,7 @@ int main(int argc, char** argv)
 
 		jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 		jx_cc_translation_unit_t* tu = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_INSTALL, sourceFile);
-		if (tu) {
+		if (tu && tu->m_NumErrors == 0) {
 			jx_ir_context_t* irCtx = jx_ir_createContext(allocator);
 			jx_irgen_context_t* genCtx = jx_irgen_createContext(irCtx, allocator);
 
@@ -868,12 +865,12 @@ int main(int argc, char** argv)
 #else
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-	const char* sourceFile = "test/c-testsuite/00220.c";
+	const char* sourceFile = "test/c-testsuite/00205.c";
 //	const char* sourceFile = "test/pointer_arithmetic.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
 	jx_cc_translation_unit_t* tu = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_INSTALL, sourceFile);
-	if (!tu) {
+	if (!tu || tu->m_NumErrors != 0) {
 		JX_SYS_LOG_INFO(NULL, "Failed to compile \"%s\"\n", sourceFile);
 		goto end;
 	}

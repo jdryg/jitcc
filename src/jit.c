@@ -963,6 +963,70 @@ bool jx64_imul(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src
 		if (!jx64_binary_op_reg_reg(enc, opcode, JX_COUNTOF(opcode), src.u.m_Reg, dst.u.m_Reg)) {
 			return false;
 		}
+	} else if (src.m_Type == JX64_OPERAND_IMM) {
+		return jx64_imul3(ctx, dst, dst, src);
+	} else {
+		return false;
+	}
+
+	jx_x64_instr_buffer_t* instr = &(jx_x64_instr_buffer_t) { 0 };
+	if (!jx64_encodeInstr(instr, enc)) {
+		return false;
+	}
+
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr->m_Buffer, instr->m_Size);
+}
+
+bool jx64_imul3(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src1, jx_x64_operand_t src2)
+{
+	JX_CHECK(dst.m_Type != JX64_OPERAND_SYM && src1.m_Type != JX64_OPERAND_SYM && src2.m_Type != JX64_OPERAND_SYM, "TODO");
+	const bool invalidOperands = false
+		|| dst.m_Type != JX64_OPERAND_REG  // Destination operand should always be a register
+		|| dst.m_Size == JX64_SIZE_8       // Destination cannot be an 8-bit register
+		|| src2.m_Type != JX64_OPERAND_IMM // Second source operand should always be an immediate value.
+		;
+	if (invalidOperands) {
+		return false;
+	}
+
+	jx_x64_instr_encoding_t* enc = &(jx_x64_instr_encoding_t) { 0 };
+
+	if (src1.m_Type == JX64_OPERAND_MEM) {
+		JX_NOT_IMPLEMENTED();
+	} else if (src1.m_Type == JX64_OPERAND_REG) {
+		if (src2.m_Size == JX64_SIZE_8 || (src2.u.m_ImmI64 >= INT8_MIN && src2.u.m_ImmI64 <= INT8_MAX)) {
+			jx_x64_reg dst_r = dst.u.m_Reg;
+			jx_x64_reg src_r = src1.u.m_Reg;
+
+			int8_t imm8 = (int8_t)src2.u.m_ImmI64;
+
+			const bool invalidOperands = false
+				|| dst_r == JX64_REG_NONE
+				|| src_r == JX64_REG_NONE
+				|| JX64_REG_IS_RIP(dst_r)
+				|| JX64_REG_IS_RIP(src_r)
+				|| JX64_REG_GET_SIZE(dst_r) != JX64_REG_GET_SIZE(src_r)
+				;
+			if (invalidOperands) {
+				return false;
+			}
+
+			const jx_x64_size reg_sz = JX64_REG_GET_SIZE(dst_r);
+
+			const bool needsREX = false
+				|| reg_sz == JX64_SIZE_64
+				|| JX64_REG_IS_HI(dst_r)
+				|| JX64_REG_IS_HI(src_r)
+				;
+
+			jx64_instrEnc_operandSize(enc, reg_sz == JX64_SIZE_16);
+			jx64_instrEnc_rex(enc, needsREX, reg_sz == JX64_SIZE_64, JX64_REG_HI(dst_r), 0, JX64_REG_HI(src_r));
+			jx64_instrEnc_opcode1(enc, 0x6B);
+			jx64_instrEnc_modrm(enc, 0b11, JX64_REG_LO(dst_r), JX64_REG_LO(src_r));
+			jx64_instrEnc_imm(enc, true, JX64_SIZE_8, imm8);
+		} else {
+			JX_NOT_IMPLEMENTED();
+		}
 	} else {
 		return false;
 	}
@@ -2691,14 +2755,14 @@ static bool jx64_movsx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, j
 	}
 
 	const bool needsREX = false
-		|| (dst_r_sz == JX64_SIZE_8 && (JX64_REG_GET_ID(dst_r) >= JX64_REG_ID_RSP || JX64_REG_GET_ID(src_r) >= JX64_REG_ID_RSP))
+		|| (src_r_sz == JX64_SIZE_8 && (JX64_REG_GET_ID(dst_r) >= JX64_REG_ID_RSP || JX64_REG_GET_ID(src_r) >= JX64_REG_ID_RSP))
 		|| dst_r_sz == JX64_SIZE_64
 		|| JX64_REG_IS_HI(dst_r)
 		|| JX64_REG_IS_HI(src_r)
 		;
 
 	jx64_instrEnc_operandSize(enc, dst_r_sz == JX64_SIZE_16);
-	jx64_instrEnc_rex(enc, needsREX, dst_r_sz == JX64_SIZE_64, JX64_REG_HI(src_r), 0, JX64_REG_HI(dst_r));
+	jx64_instrEnc_rex(enc, needsREX, dst_r_sz == JX64_SIZE_64, JX64_REG_HI(dst_r), 0, JX64_REG_HI(src_r));
 	if (src_r_sz == JX64_SIZE_8) {
 		jx64_instrEnc_opcode2(enc, 0x0F, 0xBE);
 	} else if (src_r_sz == JX64_SIZE_16) {
@@ -2706,7 +2770,7 @@ static bool jx64_movsx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, j
 	} else if (src_r_sz == JX64_SIZE_32) {
 		jx64_instrEnc_opcode1(enc, 0x63);
 	}
-	jx64_instrEnc_modrm(enc, 0b11, JX64_REG_LO(src_r), JX64_REG_LO(dst_r));
+	jx64_instrEnc_modrm(enc, 0b11, JX64_REG_LO(dst_r), JX64_REG_LO(src_r));
 
 	return true;
 }
@@ -2728,14 +2792,14 @@ static bool jx64_movzx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, j
 	}
 
 	const bool needsREX = false
-		|| (dst_r_sz == JX64_SIZE_8 && (JX64_REG_GET_ID(dst_r) >= JX64_REG_ID_RSP || JX64_REG_GET_ID(src_r) >= JX64_REG_ID_RSP))
+		|| (src_r_sz == JX64_SIZE_8 && (JX64_REG_GET_ID(dst_r) >= JX64_REG_ID_RSP || JX64_REG_GET_ID(src_r) >= JX64_REG_ID_RSP))
 		|| dst_r_sz == JX64_SIZE_64
 		|| JX64_REG_IS_HI(dst_r)
 		|| JX64_REG_IS_HI(src_r)
 		;
 
 	jx64_instrEnc_operandSize(enc, dst_r_sz == JX64_SIZE_16);
-	jx64_instrEnc_rex(enc, needsREX, dst_r_sz == JX64_SIZE_64, JX64_REG_HI(src_r), 0, JX64_REG_HI(dst_r));
+	jx64_instrEnc_rex(enc, needsREX, dst_r_sz == JX64_SIZE_64, JX64_REG_HI(dst_r), 0, JX64_REG_HI(src_r));
 	if (src_r_sz == JX64_SIZE_8) {
 		jx64_instrEnc_opcode2(enc, 0x0F, 0xB6);
 	} else if (src_r_sz == JX64_SIZE_16) {
@@ -2743,7 +2807,7 @@ static bool jx64_movzx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, j
 	} else if (src_r_sz == JX64_SIZE_32) {
 		JX_CHECK(false, "Use mov reg, reg instead!");
 	}
-	jx64_instrEnc_modrm(enc, 0b11, JX64_REG_LO(src_r), JX64_REG_LO(dst_r));
+	jx64_instrEnc_modrm(enc, 0b11, JX64_REG_LO(dst_r), JX64_REG_LO(src_r));
 
 	return true;
 }

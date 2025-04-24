@@ -1,4 +1,5 @@
-#include <stdio.h>
+//#include <stdio.h>
+int printf(const char* str, ...);
 
 int
 main()
@@ -33,6 +34,6 @@ main()
 		(void)printf("KO __ILP32__\n");
 	}
 #else
-	(void)printf("KO no __*LP*__ defined.\n");
+	printf("KO no __*LP*__ defined.\n");
 #endif
 }

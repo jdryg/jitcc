@@ -9,6 +9,7 @@
 #include <jlib/array.h>
 #include <jlib/dbg.h>
 #include <jlib/hashmap.h>
+#include <jlib/logger.h>
 #include <jlib/math.h>
 #include <jlib/memory.h>
 #include <jlib/os.h>
@@ -309,7 +310,7 @@ jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator)
 			}
 		}
 
-#if 0
+#if 1
 		// Simple SSA
 		{
 			jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));
@@ -705,6 +706,16 @@ void jx_ir_funcEnd(jx_ir_context_t* ctx, jx_ir_function_t* func)
 		JX_CHECK(jx_ir_funcCheck(ctx, func), "Function's IR and/or CFG is invalid!");
 		jx_ir_function_pass_t* pass = ctx->m_OnFuncEndPasses;
 		while (pass) {
+#if 0
+			{
+				jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
+				jx_ir_funcPrint(ctx, func, sb);
+				jx_strbuf_nullTerminate(sb);
+				JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
+				jx_strbuf_destroy(sb);
+			}
+#endif
+
 			bool funcModified = pass->run(pass->m_Inst, ctx, func);
 			JX_UNUSED(funcModified);
 			JX_CHECK(jx_ir_funcCheck(ctx, func), "Function's IR and/or CFG is invalid!");
@@ -942,6 +953,11 @@ bool jx_ir_funcCheck(jx_ir_context_t* ctx, jx_ir_function_t* func)
 							return false;
 						}
 
+						// NOTE: Removed because it seems to be valid as long as the phis do not
+						// have cyclic dependencies. Because phis are assumed to be evaluated 
+						// simultaneously, having a phi reference another phi means that the second
+						// phi will get the value from the previous evaluation of the first phi.
+#if 0
 						// If it's a phi instruction, make sure it comes from another basic block.
 						if (predValInstr->m_OpCode == JIR_OP_PHI) {
 							if (predValInstr->m_ParentBB == lastInstr->m_ParentBB) {
@@ -949,6 +965,7 @@ bool jx_ir_funcCheck(jx_ir_context_t* ctx, jx_ir_function_t* func)
 								return false;
 							}
 						}
+#endif
 					}
 				}
 			} else {

@@ -461,6 +461,17 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 		pass = pass->m_Next;
 	}
 
+	// Store all callee-saved registers used by the function on the stack.
+	jx_mir_operand_t* regStackSlot[JX_COUNTOF(kMIRFuncCalleeSavedIReg)] = { 0 };
+	for (uint32_t iReg = 0; iReg < JX_COUNTOF(kMIRFuncCalleeSavedIReg); ++iReg) {
+		jx_mir_hw_reg reg = kMIRFuncCalleeSavedIReg[iReg];
+		if ((func->m_UsedHWIRegs & (1u << (uint32_t)reg)) != 0) {
+			jx_mir_operand_t* stackSlot = jx_mir_opStackObj(ctx, func, JMIR_TYPE_I64, 8, 8);
+			jx_mir_bbPrependInstr(ctx, func->m_BasicBlockListHead, jx_mir_mov(ctx, stackSlot, jx_mir_opHWReg(ctx, func, JMIR_TYPE_I64, reg)));
+			regStackSlot[iReg] = stackSlot;
+		}
+	}
+
 	// Insert prologue/epilogue
 	jx_mir_frame_info_t* frameInfo = func->m_FrameInfo;
 	jmir_frameFinalize(ctx, frameInfo);
@@ -477,6 +488,15 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 			jx_mir_instruction_t* firstTerminator = jx_mir_bbGetFirstTerminatorInstr(ctx, bb);
 			if (firstTerminator && firstTerminator->m_OpCode == JMIR_OP_RET) {
 				JX_CHECK(!firstTerminator->m_Next, "Unexpected instruction after ret!");
+
+				// Restore all callee-saved registers from the stack.
+				for (uint32_t iReg = 0; iReg < JX_COUNTOF(kMIRFuncCalleeSavedIReg); ++iReg) {
+					if (regStackSlot[iReg]) {
+						jx_mir_hw_reg reg = kMIRFuncCalleeSavedIReg[iReg];
+						jx_mir_bbInsertInstrBefore(ctx, bb, firstTerminator, jx_mir_mov(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_I64, reg), regStackSlot[iReg]));
+					}
+				}
+
 				jx_mir_bbInsertInstrBefore(ctx, bb, firstTerminator, jx_mir_mov(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_SP), jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_BP)));
 				jx_mir_bbInsertInstrBefore(ctx, bb, firstTerminator, jx_mir_pop(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, JMIR_HWREG_BP)));
 			}
@@ -762,6 +782,8 @@ jx_mir_operand_t* jx_mir_opHWReg(jx_mir_context_t* ctx, jx_mir_function_t* func,
 
 	operand->u.m_RegID = (uint32_t)reg;
 
+	func->m_UsedHWIRegs |= 1u << (uint32_t)reg;
+
 	return operand;
 }
 
@@ -918,6 +940,32 @@ static void jmir_regPrint(jx_mir_context_t* ctx, uint32_t regID, jx_mir_type_kin
 			case JMIR_TYPE_I64:
 			case JMIR_TYPE_PTR:
 				jx_strbuf_pushCStr(sb, "$rbp");
+				break;
+			default:
+				jx_strbuf_printf(sb, "$r%u%s", regID, kRegPostfix[type]);
+				break;
+			}
+		} else if (regID == JMIR_HWREG_SI) {
+			switch (type) {
+			case JMIR_TYPE_I8: jx_strbuf_pushCStr(sb, "$sil"); break;
+			case JMIR_TYPE_I16: jx_strbuf_pushCStr(sb, "$si"); break;
+			case JMIR_TYPE_I32: jx_strbuf_pushCStr(sb, "$esi"); break;
+			case JMIR_TYPE_I64:
+			case JMIR_TYPE_PTR:
+				jx_strbuf_pushCStr(sb, "$rsi");
+				break;
+			default:
+				jx_strbuf_printf(sb, "$r%u%s", regID, kRegPostfix[type]);
+				break;
+			}
+		} else if (regID == JMIR_HWREG_DI) {
+			switch (type) {
+			case JMIR_TYPE_I8: jx_strbuf_pushCStr(sb, "$dil"); break;
+			case JMIR_TYPE_I16: jx_strbuf_pushCStr(sb, "$di"); break;
+			case JMIR_TYPE_I32: jx_strbuf_pushCStr(sb, "$edi"); break;
+			case JMIR_TYPE_I64:
+			case JMIR_TYPE_PTR:
+				jx_strbuf_pushCStr(sb, "$rdi");
 				break;
 			default:
 				jx_strbuf_printf(sb, "$r%u%s", regID, kRegPostfix[type]);

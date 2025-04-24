@@ -558,6 +558,8 @@ typedef struct jx_cc_struct_member_t
 typedef struct jx_cc_translation_unit_t
 {
 	jx_cc_object_t* m_Globals;
+	uint32_t m_NumErrors;
+	uint32_t m_NumWarnings;
 } jx_cc_translation_unit_t;
 
 typedef struct jx_cc_context_t jx_cc_context_t;

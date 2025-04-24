@@ -251,17 +251,16 @@ static bool jmir_funcPass_fixMemMemOpsRun(jx_mir_function_pass_o* inst, jx_mir_c
 			switch (instr->m_OpCode) {
 			case JMIR_OP_MOV:
 			case JMIR_OP_MOVSX:
-			case JMIR_OP_MOVZX: {
-				jx_mir_operand_t* dst = instr->m_Operands[0];
-				jx_mir_operand_t* src = instr->m_Operands[1];
-				const bool isDstMem = dst->m_Kind == JMIR_OPERAND_MEMORY_REF || dst->m_Kind == JMIR_OPERAND_STACK_OBJECT;
-				const bool isSrcMem = src->m_Kind == JMIR_OPERAND_MEMORY_REF || src->m_Kind == JMIR_OPERAND_STACK_OBJECT;
-				if (isDstMem && isSrcMem) {
-					jx_mir_operand_t* vreg = jx_mir_opVirtualReg(ctx, func, dst->m_Type);
-					jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, vreg, src));
-					jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, dst, vreg));
-					jx_mir_bbRemoveInstr(ctx, bb, instr);
-					jx_mir_instrFree(ctx, instr);
+			case JMIR_OP_MOVZX:
+			case JMIR_OP_CMP: {
+				jx_mir_operand_t* lhs = instr->m_Operands[0];
+				jx_mir_operand_t* rhs = instr->m_Operands[1];
+				const bool isLhsMem = lhs->m_Kind == JMIR_OPERAND_MEMORY_REF || lhs->m_Kind == JMIR_OPERAND_STACK_OBJECT;
+				const bool isRhsMem = rhs->m_Kind == JMIR_OPERAND_MEMORY_REF || rhs->m_Kind == JMIR_OPERAND_STACK_OBJECT;
+				if (isLhsMem && isRhsMem) {
+					jx_mir_operand_t* vreg = jx_mir_opVirtualReg(ctx, func, rhs->m_Type);
+					jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, vreg, rhs));
+					instr->m_Operands[1] = vreg;
 				}
 			} break;
 			}
@@ -1333,6 +1332,7 @@ static void jmir_regAlloc_replaceRegs(jmir_func_pass_regalloc_t* pass)
 					if (jmir_nodeIs(node, JMIR_NODE_STATE_COLORED)) {
 						uint32_t hwReg = jmir_regAlloc_getHWRegWithColor(pass, node->m_Color);
 						if (hwReg != JMIR_MEMORY_REG_NONE) {
+							pass->m_Func->m_UsedHWIRegs |= 1u << (uint32_t)hwReg;
 							operand->u.m_RegID = hwReg;
 						}
 					}
@@ -1344,6 +1344,7 @@ static void jmir_regAlloc_replaceRegs(jmir_func_pass_regalloc_t* pass)
 						if (jmir_nodeIs(node, JMIR_NODE_STATE_COLORED)) {
 							uint32_t hwReg = jmir_regAlloc_getHWRegWithColor(pass, node->m_Color);
 							if (hwReg != JMIR_MEMORY_REG_NONE) {
+								pass->m_Func->m_UsedHWIRegs |= 1u << (uint32_t)hwReg;
 								memRef->m_BaseRegID = hwReg;
 							}
 						}
@@ -1354,6 +1355,7 @@ static void jmir_regAlloc_replaceRegs(jmir_func_pass_regalloc_t* pass)
 						if (jmir_nodeIs(node, JMIR_NODE_STATE_COLORED)) {
 							uint32_t hwReg = jmir_regAlloc_getHWRegWithColor(pass, node->m_Color);
 							if (hwReg != JMIR_MEMORY_REG_NONE) {
+								pass->m_Func->m_UsedHWIRegs |= 1u << (uint32_t)hwReg;
 								memRef->m_IndexRegID = hwReg;
 							}
 						}
@@ -1761,7 +1763,12 @@ static void jmir_regAlloc_combineNodes(jmir_func_pass_regalloc_t* pass, jmir_gra
 	uint32_t adjIter = 0;
 	jmir_graph_node_t* t = jmir_regAlloc_nodeAdjacentIterNext(v, &adjIter);
 	while (t) {
+		uint32_t d = t->m_Degree;
 		jmir_regAlloc_addEdge(pass, t, u);
+		if (d < pass->m_NumHWRegs && t->m_Degree >= pass->m_NumHWRegs) {
+			JX_CHECK(jmir_nodeIs(t, JMIR_NODE_STATE_FREEZE), "Node expected to be in freeze state.");
+			jmir_regAlloc_nodeSetState(pass, t, JMIR_NODE_STATE_SPILL);
+		}
 		jmir_regAlloc_nodeDecrementDegree(pass, t);
 
 		t = jmir_regAlloc_nodeAdjacentIterNext(v, &adjIter);
@@ -1981,132 +1988,6 @@ static void jmir_regAlloc_nodeSetState(jmir_func_pass_regalloc_t* pass, jmir_gra
 	}
 
 	pass->m_NodeList[state] = node;
-}
-
-static void jmir_regAlloc_nodeAddToSpillWorklist(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node)
-{
-	JX_CHECK(node->m_State == JMIR_NODE_STATE_ALLOCATED && !node->m_Next && !node->m_Prev, "Node already in a list!");
-
-	node->m_State = JMIR_NODE_STATE_SPILL;
-
-	if (pass->m_NodeList[JMIR_NODE_STATE_SPILL]) {
-		pass->m_NodeList[JMIR_NODE_STATE_SPILL]->m_Prev = node;
-		node->m_Next = pass->m_NodeList[JMIR_NODE_STATE_SPILL];
-	}
-
-	pass->m_NodeList[JMIR_NODE_STATE_SPILL] = node;
-}
-
-static void jmir_regAlloc_nodeAddToFreezeWorklist(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node)
-{
-	JX_CHECK(node->m_State == JMIR_NODE_STATE_ALLOCATED && !node->m_Next && !node->m_Prev, "Node already in a list!");
-
-	node->m_State = JMIR_NODE_STATE_FREEZE;
-
-	if (pass->m_NodeList[JMIR_NODE_STATE_FREEZE]) {
-		pass->m_NodeList[JMIR_NODE_STATE_FREEZE]->m_Prev = node;
-		node->m_Next = pass->m_NodeList[JMIR_NODE_STATE_FREEZE];
-	}
-
-	pass->m_NodeList[JMIR_NODE_STATE_FREEZE] = node;
-}
-
-static void jmir_regAlloc_nodeAddToSimplifyWorklist(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node)
-{
-	JX_CHECK(node->m_State == JMIR_NODE_STATE_ALLOCATED && !node->m_Next && !node->m_Prev, "Node already in a list!");
-
-	node->m_State = JMIR_NODE_STATE_SIMPLIFY;
-
-	if (pass->m_NodeList[JMIR_NODE_STATE_SIMPLIFY]) {
-		pass->m_NodeList[JMIR_NODE_STATE_SIMPLIFY]->m_Prev = node;
-		node->m_Next = pass->m_NodeList[JMIR_NODE_STATE_SIMPLIFY];
-	}
-
-	pass->m_NodeList[JMIR_NODE_STATE_SIMPLIFY] = node;
-}
-
-static void jmir_regAlloc_nodeAddToSelectStack(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node)
-{
-	JX_CHECK(node->m_State == JMIR_NODE_STATE_ALLOCATED && !node->m_Next && !node->m_Prev, "Node already in a list!");
-
-	node->m_State = JMIR_NODE_STATE_SELECT;
-
-	if (pass->m_NodeList[JMIR_NODE_STATE_SELECT]) {
-		pass->m_NodeList[JMIR_NODE_STATE_SELECT]->m_Prev = node;
-		node->m_Next = pass->m_NodeList[JMIR_NODE_STATE_SELECT];
-	}
-
-	pass->m_NodeList[JMIR_NODE_STATE_SELECT] = node;
-}
-
-static void jmir_regAlloc_nodeAddToCoalesced(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node)
-{
-	JX_CHECK(node->m_State == JMIR_NODE_STATE_ALLOCATED && !node->m_Next && !node->m_Prev, "Node already in a list!");
-
-	node->m_State = JMIR_NODE_STATE_COALESCED;
-
-	if (pass->m_NodeList[JMIR_NODE_STATE_COALESCED]) {
-		pass->m_NodeList[JMIR_NODE_STATE_COALESCED]->m_Prev = node;
-		node->m_Next = pass->m_NodeList[JMIR_NODE_STATE_COALESCED];
-	}
-
-	pass->m_NodeList[JMIR_NODE_STATE_COALESCED] = node;
-}
-
-static void jmir_regAlloc_nodeAddToPrecolored(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node)
-{
-	JX_CHECK(node->m_State == JMIR_NODE_STATE_ALLOCATED && !node->m_Next && !node->m_Prev, "Node already in a list!");
-
-	node->m_State = JMIR_NODE_STATE_PRECOLORED;
-
-	if (pass->m_NodeList[JMIR_NODE_STATE_PRECOLORED]) {
-		pass->m_NodeList[JMIR_NODE_STATE_PRECOLORED]->m_Prev = node;
-		node->m_Next = pass->m_NodeList[JMIR_NODE_STATE_PRECOLORED];
-	}
-
-	pass->m_NodeList[JMIR_NODE_STATE_PRECOLORED] = node;
-}
-
-static void jmir_regAlloc_nodeAddToInitial(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node)
-{
-	JX_CHECK(node->m_State == JMIR_NODE_STATE_ALLOCATED && !node->m_Next && !node->m_Prev, "Node already in a list!");
-
-	node->m_State = JMIR_NODE_STATE_INITIAL;
-
-	if (pass->m_NodeList[JMIR_NODE_STATE_INITIAL]) {
-		pass->m_NodeList[JMIR_NODE_STATE_INITIAL]->m_Prev = node;
-		node->m_Next = pass->m_NodeList[JMIR_NODE_STATE_INITIAL];
-	}
-
-	pass->m_NodeList[JMIR_NODE_STATE_INITIAL] = node;
-}
-
-static void jmir_regAlloc_nodeAddToSpilled(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node)
-{
-	JX_CHECK(node->m_State == JMIR_NODE_STATE_ALLOCATED && !node->m_Next && !node->m_Prev, "Node already in a list!");
-
-	node->m_State = JMIR_NODE_STATE_SPILLED;
-
-	if (pass->m_NodeList[JMIR_NODE_STATE_SPILLED]) {
-		pass->m_NodeList[JMIR_NODE_STATE_SPILLED]->m_Prev = node;
-		node->m_Next = pass->m_NodeList[JMIR_NODE_STATE_SPILLED];
-	}
-
-	pass->m_NodeList[JMIR_NODE_STATE_SPILLED] = node;
-}
-
-static void jmir_regAlloc_nodeAddToColored(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node)
-{
-	JX_CHECK(node->m_State == JMIR_NODE_STATE_ALLOCATED && !node->m_Next && !node->m_Prev, "Node already in a list!");
-
-	node->m_State = JMIR_NODE_STATE_COLORED;
-
-	if (pass->m_NodeList[JMIR_NODE_STATE_COLORED]) {
-		pass->m_NodeList[JMIR_NODE_STATE_COLORED]->m_Prev = node;
-		node->m_Next = pass->m_NodeList[JMIR_NODE_STATE_COLORED];
-	}
-
-	pass->m_NodeList[JMIR_NODE_STATE_COLORED] = node;
 }
 
 static inline bool jmir_nodeIs(const jmir_graph_node_t* node, jmir_graph_node_state state)

@@ -302,6 +302,7 @@ bool jx64_idiv(jx_x64_context_t* ctx, jx_x64_operand_t op);  // Signed Devide AL
 bool jx64_inc(jx_x64_context_t* ctx, jx_x64_operand_t op);
 bool jx64_dec(jx_x64_context_t* ctx, jx_x64_operand_t op);
 bool jx64_imul(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_imul3(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src1, jx_x64_operand_t src2);
 bool jx64_lea(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
 bool jx64_test(jx_x64_context_t* ctx, jx_x64_operand_t op1, jx_x64_operand_t op2);
 bool jx64_std(jx_x64_context_t* ctx); // Set Direction Flag
