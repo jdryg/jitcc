@@ -173,11 +173,11 @@ static bool jir_funcPass_simplifyCFGRun(jx_ir_function_pass_o* inst, jx_ir_conte
 
 		// Always skip the entry block
 		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead->m_Next;
-		while (bb) {
+		while (bb && !cfgChanged) {
 			jx_ir_basic_block_t* bbNext = bb->m_Next;
 
 			const uint32_t numPred = (uint32_t)jx_array_sizeu(bb->m_PredArr);
-			if (!numPred) {
+			if (numPred == 0 || (numPred == 1 && bb->m_PredArr[0] == bb)) {
 				// Remove the block if it has no predecessors
 				jx_ir_funcRemoveBasicBlock(ctx, func, bb);
 				jx_ir_bbFree(ctx, bb);
@@ -629,7 +629,7 @@ static jx_ir_value_t* jir_simpleSSA_readVariable_r(jir_func_pass_simple_ssa_t* p
 		val = jx_ir_instrToValue(phiInstr);
 
 		jir_simpleSSA_addIncompletePhi(pass, bb, addr, val);
-	} else if (jx_array_sizeu(bb->m_PredArr) == 1) {
+	} else if (jx_array_sizeu(bb->m_PredArr) == 1 && bb->m_PredArr[0] != bb) {
 		// Optimize the common case of 1 predecessor. No phi needed.
 		val = jir_simpleSSA_readVariable(pass, bb->m_PredArr[0], addr);
 	} else {
