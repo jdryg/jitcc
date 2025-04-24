@@ -251,17 +251,16 @@ static bool jmir_funcPass_fixMemMemOpsRun(jx_mir_function_pass_o* inst, jx_mir_c
 			switch (instr->m_OpCode) {
 			case JMIR_OP_MOV:
 			case JMIR_OP_MOVSX:
-			case JMIR_OP_MOVZX: {
-				jx_mir_operand_t* dst = instr->m_Operands[0];
-				jx_mir_operand_t* src = instr->m_Operands[1];
-				const bool isDstMem = dst->m_Kind == JMIR_OPERAND_MEMORY_REF || dst->m_Kind == JMIR_OPERAND_STACK_OBJECT;
-				const bool isSrcMem = src->m_Kind == JMIR_OPERAND_MEMORY_REF || src->m_Kind == JMIR_OPERAND_STACK_OBJECT;
-				if (isDstMem && isSrcMem) {
-					jx_mir_operand_t* vreg = jx_mir_opVirtualReg(ctx, func, dst->m_Type);
-					jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, vreg, src));
-					jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, dst, vreg));
-					jx_mir_bbRemoveInstr(ctx, bb, instr);
-					jx_mir_instrFree(ctx, instr);
+			case JMIR_OP_MOVZX:
+			case JMIR_OP_CMP: {
+				jx_mir_operand_t* lhs = instr->m_Operands[0];
+				jx_mir_operand_t* rhs = instr->m_Operands[1];
+				const bool isLhsMem = lhs->m_Kind == JMIR_OPERAND_MEMORY_REF || lhs->m_Kind == JMIR_OPERAND_STACK_OBJECT;
+				const bool isRhsMem = rhs->m_Kind == JMIR_OPERAND_MEMORY_REF || rhs->m_Kind == JMIR_OPERAND_STACK_OBJECT;
+				if (isLhsMem && isRhsMem) {
+					jx_mir_operand_t* vreg = jx_mir_opVirtualReg(ctx, func, rhs->m_Type);
+					jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, vreg, rhs));
+					instr->m_Operands[1] = vreg;
 				}
 			} break;
 			}
