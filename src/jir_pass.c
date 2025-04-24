@@ -743,7 +743,17 @@ static jx_ir_value_t* jir_simpleSSA_tryRemoveTrivialPhi(jir_func_pass_simple_ssa
 		jx_ir_value_t* user = pass->m_PhiUsersArr[iUser];
 		jx_ir_instruction_t* userInstr = jx_ir_valueToInstr(user);
 		if (userInstr && userInstr->m_OpCode == JIR_OP_PHI) {
-			jir_simpleSSA_tryRemoveTrivialPhi(pass, userInstr);
+			// NOTE: This is not shown in the original paper.
+			// When removing trivial phis recursively, the returned value of this function (same) must
+			// change if it was the value that was removed. E.g. c-testsuite/00181.c
+			// Otherwise, the value that was just replaced ends up referencing values which are not
+			// part of the current function (they are already replaced by the recursive call to 
+			// tryRemoveTrivialPhi())
+			jx_ir_value_t* replacement = jir_simpleSSA_tryRemoveTrivialPhi(pass, userInstr);
+			same = (user == same)
+				? replacement
+				: same
+				;
 		}
 	}
 
