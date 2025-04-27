@@ -776,7 +776,7 @@ int main(int argc, char** argv)
 			|| iTest == 119 // Floating point
 			|| iTest == 121 // Parsing error; complex variable/function declaration
 			|| iTest == 123 // Floating point
-			|| iTest == 140 // Call with stack arguments
+//			|| iTest == 140 // Call with stack arguments
 			|| iTest == 152 // #line+#error
 			|| iTest == 162 // const/static/volatile/restrict in array declaration
 			|| iTest == 170 // forward enum
@@ -864,7 +864,7 @@ int main(int argc, char** argv)
 #else
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-//	const char* sourceFile = "test/c-testsuite/00218.c";
+//	const char* sourceFile = "test/c-testsuite/00140.c";
 	const char* sourceFile = "test/bitfields.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);

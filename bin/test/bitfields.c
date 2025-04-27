@@ -21,6 +21,7 @@ typedef unsigned long long int uint64_t;
 #define JX64_ADDRESS_SIZE_PREFIX 0x67
 
 void* memcpy(void* dest, const void* src, uint64_t sz);
+int printf(const char* str, ...);
 
 typedef struct jx_x64_instr_encoding_t
 {
@@ -345,12 +346,15 @@ int main(void)
 {
 	jx_x64_instr_encoding_t* enc = &(jx_x64_instr_encoding_t){ 0 };
 
-//	jx64_instrEnc_rex(enc, true, 1, 0, 0, 0); // TODO: Too many args
+#if 1
+	jx64_instrEnc_rex(enc, true, 1, 0, 0, 0); // TODO: Too many args
+#else
 	enc->m_HasREX = 1;
 	enc->m_REX_W = 1;
 	enc->m_REX_R = 0;
 	enc->m_REX_X = 0;
 	enc->m_REX_B = 0;
+#endif
 	jx64_instrEnc_opcode1(enc, 0xC7);
 	jx64_instrEnc_modrm(enc, 0b11, 0b000, 0b000);
 	jx64_instrEnc_imm(enc, true, JX64_SIZE_32, 0x12345678);
@@ -361,9 +365,16 @@ int main(void)
 
 	jx_x64_instr_buffer_t* instr = &(jx_x64_instr_buffer_t){ 0 };
 	jx64_encodeInstr(instr, enc);
+
+	for (uint32_t i = 0; i < instr->m_Size; ++i) {
+		printf("%02X ", instr->m_Buffer[i]);
+	}
+	printf("\n");
+
 	if (instr->m_Size != 7) {
 		return 2;
 	}
+
 	if (instr->m_Buffer[0] != 0x48 ||
 		instr->m_Buffer[1] != 0xC7 ||
 		instr->m_Buffer[2] != 0xC0 ||
