@@ -5535,6 +5535,76 @@ static jx_cc_type_t* jcc_parseStructDeclaration(jx_cc_context_t* ctx, jcc_transl
 	ty->m_Kind = JCC_TYPE_STRUCT;
 	
 	if (ty->m_Size >= 0) {
+#if 1
+		uint32_t gepIndex = 0;
+		uint32_t byteOffset = 0;
+		uint32_t slotSize = 0;
+		uint32_t slotOffset = 0;
+
+		jx_cc_struct_member_t* mem = ty->m_StructMembers;
+		while (mem) {
+			if (mem->m_IsBitfield) {
+				if (mem->m_BitWidth == 0) {
+					// Zero-width anonymous bitfield has a special meaning.
+					// It affects only alignment.
+					JX_NOT_IMPLEMENTED();
+				} else {
+					if (slotOffset + mem->m_BitWidth <= slotSize) {
+						// If there is still room for this member in the previously
+						// allocated slot, ignore the member's type and pack it in
+						// the current slot.
+					} else {
+						// Otherwise, skip the remaining bits in the current slot,
+						// increase the struct size by the slot size and allocate
+						// a new slot large enough to hold the current bitfield.
+						uint32_t bitWidth = jx_max_u32(jx_nextPowerOf2_u32(mem->m_BitWidth), 8);
+
+						gepIndex += slotSize != 0 ? 1 : 0;
+						byteOffset += slotSize / 8;
+						byteOffset = jcc_alignTo(byteOffset, bitWidth / 8);
+						slotOffset = 0;
+						slotSize = bitWidth;
+					}
+
+					switch (slotSize) {
+					case 8:  { mem->m_Type = (mem->m_Type->m_Flags & JCC_TYPE_FLAGS_IS_UNSIGNED_Msk) != 0 ? kType_uchar  : kType_char;  } break;
+					case 16: { mem->m_Type = (mem->m_Type->m_Flags & JCC_TYPE_FLAGS_IS_UNSIGNED_Msk) != 0 ? kType_ushort : kType_short; } break;
+					case 32: { mem->m_Type = (mem->m_Type->m_Flags & JCC_TYPE_FLAGS_IS_UNSIGNED_Msk) != 0 ? kType_uint   : kType_int;   } break;
+					case 64: { mem->m_Type = (mem->m_Type->m_Flags & JCC_TYPE_FLAGS_IS_UNSIGNED_Msk) != 0 ? kType_ulong  : kType_long;  } break;
+					default: {
+						JX_CHECK(false, "Invalid bit size");
+					} break;
+					}
+
+					mem->m_GEPIndex = gepIndex;
+					mem->m_Offset = byteOffset;
+					mem->m_BitOffset = slotOffset;
+					slotOffset += mem->m_BitWidth;
+				}
+			} else {
+				gepIndex += slotOffset != 0 ? 1 : 0;
+				byteOffset += slotSize / 8;
+				slotSize = 0;
+				slotOffset = 0;
+
+				const bool isStructPacked = (ty->m_Flags & JCC_TYPE_FLAGS_IS_PACKED_Msk) != 0;
+				if (!isStructPacked) {
+					byteOffset = jcc_alignTo(byteOffset, mem->m_Alignment);
+				}
+
+				mem->m_Offset = byteOffset;
+				mem->m_BitOffset = 0;
+				mem->m_GEPIndex = gepIndex;
+
+				byteOffset += mem->m_Type->m_Size;
+				gepIndex++;
+			}
+
+			mem = mem->m_Next;
+		}
+
+		ty->m_Size = jcc_alignTo(byteOffset, ty->m_Alignment);
+#else
 		// Assign offsets within the struct to members.
 		int bits = 0;
 		for (jx_cc_struct_member_t* mem = ty->m_StructMembers; mem; mem = mem->m_Next) {
@@ -5566,6 +5636,7 @@ static jx_cc_type_t* jcc_parseStructDeclaration(jx_cc_context_t* ctx, jcc_transl
 		}
 
 		ty->m_Size = jcc_alignTo(bits, ty->m_Alignment * 8) / 8;
+#endif
 	}
 
 	*tokenListPtr = tok;
@@ -5621,7 +5692,8 @@ static jx_cc_struct_member_t* jcc_getStructMember(jx_cc_type_t* ty, jx_cc_token_
 		}
 
 		// Regular struct member
-		if (mem->m_Name->m_String == tok->m_String) {
+		// NOTE: Check if member has a name because bitfields can be unnamed.
+		if (mem->m_Name && mem->m_Name->m_String == tok->m_String) {
 			return mem;
 		}
 	}

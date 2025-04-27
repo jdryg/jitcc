@@ -481,7 +481,6 @@ jx_ir_type_t* jx_ir_typeGetPrimitive(jx_ir_context_t* ctx, jx_ir_type_kind kind)
 jx_ir_type_t* jx_ir_typeGetFunction(jx_ir_context_t* ctx, jx_ir_type_t* retType, uint32_t numArgs, jx_ir_type_t** args, bool isVarArg);
 jx_ir_type_t* jx_ir_typeGetPointer(jx_ir_context_t* ctx, jx_ir_type_t* baseType);
 jx_ir_type_t* jx_ir_typeGetArray(jx_ir_context_t* ctx, jx_ir_type_t* baseType, uint32_t sz);
-jx_ir_type_t* jx_ir_typeGetOpaque(jx_ir_context_t* ctx);
 jx_ir_type_t* jx_ir_typeGetStruct(jx_ir_context_t* ctx, uint64_t uniqueID);
 jx_ir_type_struct_t* jx_ir_typeStructBegin(jx_ir_context_t* ctx, uint64_t uniqueID, uint32_t structFlags);
 jx_ir_type_t* jx_ir_typeStructEnd(jx_ir_context_t* ctx, jx_ir_type_struct_t* structType);

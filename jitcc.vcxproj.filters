@@ -908,6 +908,9 @@
     <ClCompile Include="bin\test\c-testsuite\00220.c">
       <Filter>bin\test\c-testsuite</Filter>
     </ClCompile>
+    <ClCompile Include="bin\test\bitfields.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="3rdparty\jlib\include\jlib\inline\atomic_win32.inl">

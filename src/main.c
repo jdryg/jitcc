@@ -758,7 +758,7 @@ int main(int argc, char** argv)
 
 	jx_allocator_i* allocator = allocator_api->createAllocator("jcc");
 
-#if 1
+#if 0
 	uint32_t totalTests = 0;
 	uint32_t numSkipped = 0;
 	uint32_t numPass = 0;
@@ -794,8 +794,7 @@ int main(int argc, char** argv)
 //			|| iTest == 212 // Predefined macros
 			|| iTest == 213 // Statement expressions
 			|| iTest == 214 // __builtin_expect
-			|| iTest == 216 // BUG? Parser: missing braces from inner struct initializer
-			|| iTest == 218 // Bitfields
+			|| iTest == 216 // BUG? Parser: missing braces from inner union initializer
 			|| iTest == 219 // BUG? Parser: _Generic
 			|| iTest == 220 // Unicode
 			;
@@ -865,8 +864,8 @@ int main(int argc, char** argv)
 #else
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-	const char* sourceFile = "test/c-testsuite/00205.c";
-//	const char* sourceFile = "test/pointer_arithmetic.c";
+//	const char* sourceFile = "test/c-testsuite/00218.c";
+	const char* sourceFile = "test/bitfields.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
 	jx_cc_translation_unit_t* tu = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_INSTALL, sourceFile);
@@ -887,7 +886,7 @@ int main(int argc, char** argv)
 	}
 #endif
 
-#if 1
+#if 0
 	JX_SYS_LOG_INFO(NULL, "Saving AST to JSON...\n");
 	{
 		jx_config_t* ast = jx_config_createConfig(allocator);

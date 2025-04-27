@@ -1791,7 +1791,13 @@ static jx_ir_type_t* jir_getIndexedType(jx_ir_type_t* ptr, uint32_t numIndices, 
 		// Check if index is valid for the current composite type
 		// and move on to the pointed type.
 		if (ptr->m_Kind == JIR_TYPE_ARRAY) {
-			if (index->m_Type->m_Kind != JIR_TYPE_I32 && index->m_Type->m_Kind != JIR_TYPE_I64) {
+			const bool isValidIndexType = false
+				|| index->m_Type->m_Kind == JIR_TYPE_I32
+				|| index->m_Type->m_Kind == JIR_TYPE_I64
+				|| index->m_Type->m_Kind == JIR_TYPE_U32
+				|| index->m_Type->m_Kind == JIR_TYPE_U64
+				;
+			if (!isValidIndexType) {
 				return NULL;
 			}
 
@@ -3489,15 +3495,27 @@ void jx_ir_constPrint(jx_ir_context_t* ctx, jx_ir_constant_t* c, jx_string_buffe
 	case JIR_TYPE_BOOL: {
 		jx_strbuf_printf(sb, "%s", c->u.m_Bool ? "true" : "false");
 	} break;
-	case JIR_TYPE_I8:
-	case JIR_TYPE_I16:
-	case JIR_TYPE_I32:
+	case JIR_TYPE_I8: {
+		jx_strbuf_printf(sb, "%d", (int8_t)c->u.m_I64);
+	} break;
+	case JIR_TYPE_I16: {
+		jx_strbuf_printf(sb, "%d", (int16_t)c->u.m_I64);
+	} break;
+	case JIR_TYPE_I32: {
+		jx_strbuf_printf(sb, "%d", (int32_t)c->u.m_I64);
+	} break;
 	case JIR_TYPE_I64: {
 		jx_strbuf_printf(sb, "%lld", c->u.m_I64);
 	} break;
-	case JIR_TYPE_U8:
-	case JIR_TYPE_U16:
-	case JIR_TYPE_U32:
+	case JIR_TYPE_U8: {
+		jx_strbuf_printf(sb, "%u", (uint8_t)c->u.m_U64);
+	} break;
+	case JIR_TYPE_U16: {
+		jx_strbuf_printf(sb, "%u", (uint16_t)c->u.m_U64);
+	} break;
+	case JIR_TYPE_U32: {
+		jx_strbuf_printf(sb, "%u", (uint32_t)c->u.m_U64);
+	} break;
 	case JIR_TYPE_U64: {
 		jx_strbuf_printf(sb, "%llu", c->u.m_U64);
 	} break;

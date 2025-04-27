@@ -988,9 +988,15 @@ void jx_mir_opPrint(jx_mir_context_t* ctx, jx_mir_operand_t* op, jx_string_buffe
 		case JMIR_TYPE_VOID: {
 			JX_CHECK(false, "void constant?");
 		} break;
-		case JMIR_TYPE_I8:
-		case JMIR_TYPE_I16:
-		case JMIR_TYPE_I32:
+		case JMIR_TYPE_I8: {
+			jx_strbuf_printf(sb, "%d", (int8_t)op->u.m_ConstI64);
+		} break;
+		case JMIR_TYPE_I16: {
+			jx_strbuf_printf(sb, "%d", (int16_t)op->u.m_ConstI64);
+		} break;
+		case JMIR_TYPE_I32: {
+			jx_strbuf_printf(sb, "%d", (int32_t)op->u.m_ConstI64);
+		} break;
 		case JMIR_TYPE_I64: {
 			jx_strbuf_printf(sb, "%lld", op->u.m_ConstI64);
 		} break;
