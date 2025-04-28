@@ -43,8 +43,16 @@ typedef enum jx_x64_lock_repeat_prefix
 	JX64_LOCK_REPEAT_NONE  = 0,
 	JX64_LOCK_REPEAT_LOCK  = 1, // LOCK, 0xF0, 
 	JX64_LOCK_REPEAT_REP   = 2, // REP, 0xF2
-	JX64_LOCK_REPEAT_REPNZ = 3, // REPNX, 0xF3
+	JX64_LOCK_REPEAT_REPNZ = 3, // REPNZ, 0xF3
 } jx_x64_lock_repeat_prefix;
+
+typedef enum jx_x64_sse_mandatory_prefix
+{
+	JX64_SSE_PREFIX_NONE = 0,
+	JX64_SSE_PREFIX_66   = 1,
+	JX64_SSE_PREFIX_F2   = 2,
+	JX64_SSE_PREFIX_F3   = 3,
+} jx_x64_sse_mandatory_prefix;
 
 typedef struct jx_x64_instr_encoding_t
 {
@@ -153,6 +161,7 @@ static bool jx64_mov_reg_imm(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, int
 static bool jx64_mov_mem_imm(jx_x64_instr_encoding_t* enc, const jx_x64_mem_t* dst_m, int64_t src_imm, jx_x64_size src_imm_sz);
 static bool jx64_movsx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, jx_x64_reg src_r);
 static bool jx64_movzx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, jx_x64_reg src_r);
+static bool jx64_sse_binary_op(jx_x64_context_t* ctx, jx_x64_sse_mandatory_prefix prefix, uint8_t opcode1, jx_x64_operand_t dst, jx_x64_operand_t src);
 static bool jx64_instrBuf_push8(jx_x64_instr_buffer_t* ib, uint8_t b);
 static bool jx64_instrBuf_push16(jx_x64_instr_buffer_t* ib, uint16_t w);
 static bool jx64_instrBuf_push32(jx_x64_instr_buffer_t* ib, uint32_t dw);
@@ -1397,6 +1406,196 @@ bool jx64_cdqe(jx_x64_context_t* ctx)
 {
 	const uint8_t instr[] = { JX64_REX(1, 0, 0, 0), 0x98 };
 	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr, JX_COUNTOF(instr));
+}
+
+bool jx64_addps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x58, dst, src);
+}
+
+bool jx64_addss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x58, dst, src);
+}
+
+bool jx64_andnps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x55, dst, src);
+}
+
+bool jx64_andps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x54, dst, src);
+}
+
+bool jx64_cmpps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src, uint8_t imm8)
+{
+#if 1
+	JX_NOT_IMPLEMENTED();
+	return false;
+#else
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0xC2, dst, src);
+#endif
+}
+
+bool jx64_cmpss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src, uint8_t imm8)
+{
+#if 1
+	JX_NOT_IMPLEMENTED();
+	return false;
+#else
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0xC2, dst, src);
+#endif
+}
+
+bool jx64_comiss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x2F, dst, src);
+}
+
+bool jx64_cvtsi2ss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+#if 1
+	JX_NOT_IMPLEMENTED();
+	return false;
+#else
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x2A, dst, src);
+#endif
+}
+
+bool jx64_cvtss2si(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+#if 1
+	JX_NOT_IMPLEMENTED();
+	return false;
+#else
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x2D, dst, src);
+#endif
+}
+
+bool jx64_cvttss2si(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+#if 1
+	JX_NOT_IMPLEMENTED();
+	return false;
+#else
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x2C, dst, src);
+#endif
+}
+
+bool jx64_divps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x5E, dst, src);
+}
+
+bool jx64_divss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x5E, dst, src);
+}
+
+bool jx64_maxps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x5F, dst, src);
+}
+
+bool jx64_maxss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x5F, dst, src);
+}
+
+bool jx64_minps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x5D, dst, src);
+}
+
+bool jx64_minss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x5D, dst, src);
+}
+
+bool jx64_mulps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x59, dst, src);
+}
+
+bool jx64_mulss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x59, dst, src);
+}
+
+bool jx64_orps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x56, dst, src);
+}
+
+bool jx64_rcpps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x53, dst, src);
+}
+
+bool jx64_rcpss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x53, dst, src);
+}
+
+bool jx64_rsqrtps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x52, dst, src);
+}
+
+bool jx64_rsqrtss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x52, dst, src);
+}
+
+bool jx64_shufps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src, uint8_t imm8)
+{
+#if 1
+	JX_NOT_IMPLEMENTED();
+	return false;
+#else
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0xC6, dst, src);
+#endif
+}
+
+bool jx64_sqrtps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x51, dst, src);
+}
+
+bool jx64_sqrtss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x51, dst, src);
+}
+
+bool jx64_subps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x5C, dst, src);
+}
+
+bool jx64_subss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x5C, dst, src);
+}
+
+bool jx64_ucomiss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x2E, dst, src);
+}
+
+bool jx64_unpckhps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x15, dst, src);
+}
+
+bool jx64_unpcklps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x14, dst, src);
+}
+
+bool jx64_xorps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x57, dst, src);
 }
 
 static jx_x64_symbol_t* jx64_symbolAlloc(jx_x64_context_t* ctx, jx_x64_symbol_kind kind, const char* name)
@@ -2812,6 +3011,190 @@ static bool jx64_movzx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, j
 	return true;
 }
 
+static bool jx64_sse_binary_op(jx_x64_context_t* ctx, jx_x64_sse_mandatory_prefix prefix, uint8_t opcode1, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	bool invalidOperands = false
+		|| dst.m_Type != JX64_OPERAND_REG
+		|| dst.m_Size != JX64_SIZE_128
+		;
+	if (invalidOperands) {
+		return false;
+	}
+
+	jx_x64_symbol_t* sym = NULL;
+	if (src.m_Type == JX64_OPERAND_SYM) {
+		sym = src.u.m_Sym;
+		src = jx64_opMem(src.m_Size, JX64_REG_RIP, JX64_REG_NONE, JX64_SCALE_1, 0);
+	}
+
+	jx_x64_instr_encoding_t* enc = &(jx_x64_instr_encoding_t) { 0 };
+
+	if (prefix == JX64_SSE_PREFIX_66) {
+		jx64_instrEnc_operandSize(enc, true);
+	} else if (prefix == JX64_SSE_PREFIX_F2) {
+		jx64_instrEnc_lock_rep(enc, JX64_LOCK_REPEAT_REP);
+	} else if (prefix == JX64_SSE_PREFIX_F3) {
+		jx64_instrEnc_lock_rep(enc, JX64_LOCK_REPEAT_REPNZ);
+	}
+	jx64_instrEnc_opcode2(enc, 0x0F, opcode1);
+
+	if (src.m_Type == JX64_OPERAND_REG) {
+		if (src.m_Size != JX64_SIZE_128) {
+			return false;
+		}
+
+		const jx_x64_reg dst_r = dst.u.m_Reg;
+		const jx_x64_reg src_r = src.u.m_Reg;
+
+		const bool needsREX = false
+			|| JX64_REG_IS_HI(dst_r)
+			|| JX64_REG_IS_HI(src_r)
+			;
+		jx64_instrEnc_rex(enc, needsREX, 0, JX64_REG_HI(dst_r), 0, JX64_REG_HI(src_r));
+		jx64_instrEnc_modrm(enc, 0b11, JX64_REG_LO(dst_r), JX64_REG_LO(src_r));
+	} else if (src.m_Type == JX64_OPERAND_MEM) {
+		jx_x64_mem_t* mem = &src.u.m_Mem;
+
+		const jx_x64_reg dst_r = dst.u.m_Reg;
+		const jx_x64_reg base_r = mem->m_Base;
+		const jx_x64_reg index_r = mem->m_Index;
+
+		if (base_r != JX64_REG_NONE && index_r != JX64_REG_NONE) {
+			// op [base + index * scale + (disp)], reg
+			// op reg, [base + index * scale + (disp)]
+			const bool invalidOperands = false
+				|| JX64_REG_GET_SIZE(base_r) < JX64_SIZE_32                // Cannot use 16-bit or 8-bit base reg
+				|| JX64_REG_GET_SIZE(index_r) < JX64_SIZE_32               // Cannot use 16-bit or 8-bit index reg
+				|| JX64_REG_GET_SIZE(base_r) != JX64_REG_GET_SIZE(index_r) // Base and index registers must be the same size
+				|| JX64_REG_GET_ID(index_r) == JX64_REG_ID_RSP             // Cannot use RSP as index register
+				|| JX64_REG_IS_RIP(base_r)                                 // Cannot use RIP as base register
+				|| JX64_REG_IS_RIP(index_r)                                // Cannot use RIP as index register
+				;
+			if (invalidOperands) {
+				return false;
+			}
+
+			const bool needsREX = false
+				|| JX64_REG_IS_HI(dst_r)
+				|| JX64_REG_IS_HI(base_r)
+				|| JX64_REG_IS_HI(index_r)
+				;
+			const bool needsDisplacement = false
+				|| mem->m_Displacement != 0
+				|| JX64_REG_IS_RBP_R13(base_r)
+				;
+			const bool forceMod01 = JX64_REG_IS_RBP_R13(base_r); // rBP/r13 requires SIB + disp8 with 0 disp
+			const uint8_t mod = mem->m_Displacement != 0
+				? (JX64_DISP_IS_8BIT(mem->m_Displacement) ? 0b01 : 0b10)
+				: (forceMod01 ? 0b01 : 0b00)
+				;
+
+			jx64_instrEnc_addrSize(enc, JX64_REG_GET_SIZE(base_r) == JX64_SIZE_32);
+			jx64_instrEnc_rex(enc, needsREX, 0, JX64_REG_HI(dst_r), JX64_REG_HI(index_r), JX64_REG_HI(base_r));
+			jx64_instrEnc_modrm(enc, mod, JX64_REG_LO(dst_r), 0b100);
+			jx64_instrEnc_sib(enc, true, mem->m_Scale, JX64_REG_LO(index_r), JX64_REG_LO(base_r));
+			jx64_instrEnc_disp(enc, needsDisplacement, JX64_DISP_IS_8BIT(mem->m_Displacement) ? JX64_SIZE_8 : JX64_SIZE_32, mem->m_Displacement);
+		} else if (base_r == JX64_REG_NONE && index_r != JX64_REG_NONE) {
+			// op [index * scale + disp], reg
+			// op reg, [index * scale + disp]
+			const bool invalidOperands = false
+				|| JX64_REG_GET_SIZE(index_r) < JX64_SIZE_32   // Cannot use 16-bit or 8-bit index reg
+				|| JX64_REG_GET_ID(index_r) == JX64_REG_ID_RSP // Cannot use RSP as index register
+				|| JX64_REG_IS_RIP(index_r)                    // Cannot use RIP as index register
+				;
+			if (invalidOperands) {
+				return false;
+			}
+
+			const bool needsREX = false
+				|| JX64_REG_IS_HI(dst_r)
+				|| JX64_REG_IS_HI(index_r)
+				;
+
+			jx64_instrEnc_addrSize(enc, JX64_REG_GET_SIZE(index_r) == JX64_SIZE_32);
+			jx64_instrEnc_rex(enc, needsREX, 0, JX64_REG_HI(dst_r), JX64_REG_HI(index_r), 0);
+			jx64_instrEnc_modrm(enc, 0b00, JX64_REG_LO(dst_r), 0b100);
+			jx64_instrEnc_sib(enc, true, mem->m_Scale, JX64_REG_LO(index_r), 0b101);
+			jx64_instrEnc_disp(enc, true, JX64_SIZE_32, mem->m_Displacement); // Displacement is always 32-bit
+		} else if (base_r != JX64_REG_NONE && index_r == JX64_REG_NONE) {
+			// op [base + (disp)], reg
+			// op reg, [base + (disp)]
+			const bool invalidOperands = false
+				|| JX64_REG_GET_SIZE(base_r) < JX64_SIZE_32 // Cannot use 16-bit or 8-bit base reg
+				;
+			if (invalidOperands) {
+				return false;
+			}
+
+			const bool needsREX = false
+				|| JX64_REG_IS_HI(dst_r)
+				|| JX64_REG_IS_HI(base_r)
+				;
+			// NOTE: Both can be true at the same time!
+			// RIP is encoded as RBP with the MSB set to 1 (all other registers have the MSB set to 0)
+			// in order to keep things a bit simpler (TODO: Find a better way!)
+			// Since isBase_rbp checks only the 3 LSBs of the register ID, it becomes true for RBP, R13 and RIP.
+			// isBase_rip can only be true if the register ID is RIP
+			const bool isBase_rbp = JX64_REG_IS_RBP_R13(base_r);
+			const bool isBase_rip = JX64_REG_IS_RIP(base_r);
+			const bool isBase_rsp = JX64_REG_LO(base_r) == JX64_REG_ID_RSP;
+			const bool needsDisplacement = false
+				|| mem->m_Displacement != 0
+				|| isBase_rbp
+				|| isBase_rip
+				;
+			const uint8_t mod = isBase_rip
+				? 0b00
+				: (isBase_rbp && mem->m_Displacement == 0
+					? 0b01
+					: (mem->m_Displacement != 0
+						? (JX64_DISP_IS_8BIT(mem->m_Displacement) ? 0b01 : 0b10)
+						: 0b00
+						)
+					)
+				;
+
+			jx64_instrEnc_addrSize(enc, JX64_REG_GET_SIZE(base_r) == JX64_SIZE_32);
+			jx64_instrEnc_rex(enc, needsREX, 0, JX64_REG_HI(dst_r), 0, JX64_REG_HI(base_r));
+			jx64_instrEnc_modrm(enc, mod, JX64_REG_LO(dst_r), JX64_REG_LO(base_r));
+			jx64_instrEnc_sib(enc, isBase_rsp, 0b00, 0b100, 0b100);
+			jx64_instrEnc_disp(enc, needsDisplacement, JX64_DISP_IS_8BIT(mem->m_Displacement) && !isBase_rip ? JX64_SIZE_8 : JX64_SIZE_32, mem->m_Displacement);
+		} else {
+			// op [disp32], reg
+			// op reg, [disp32]
+			const bool needsREX = false
+				|| JX64_REG_IS_HI(dst_r)
+				;
+
+			jx64_instrEnc_rex(enc, needsREX, 0, JX64_REG_HI(dst_r), 0, 0);
+			jx64_instrEnc_modrm(enc, 0b00, JX64_REG_LO(dst_r), 0b100);
+			jx64_instrEnc_sib(enc, true, 0b00, 0b100, 0b101);
+			jx64_instrEnc_disp(enc, true, JX64_SIZE_32, mem->m_Displacement);
+		}
+	} else {
+		JX_CHECK(false, "Invalid operands?");
+		return false;
+	}
+
+	if (sym) {
+		const uint32_t dispOffset = jx64_instrEnc_calcDispOffset(enc);
+		const uint32_t instrSize = jx64_instrEnc_calcInstrSize(enc);
+
+		const uint32_t relocDelta = (instrSize - dispOffset) - sizeof(int32_t);
+		JX_CHECK(relocDelta <= 5, "Invalid relocation type");
+		const uint32_t curFuncOffset = (uint32_t)ctx->m_CurFunc->m_Label->m_Offset;
+		const uint32_t relocOffset = ctx->m_Section[JX64_SECTION_TEXT].m_Size - curFuncOffset + dispOffset;
+		jx64_symbolAddRelocation(ctx, ctx->m_CurFunc, JX64_RELOC_REL32 + relocDelta, relocOffset, sym->m_Name);
+	}
+
+	jx_x64_instr_buffer_t* instr = &(jx_x64_instr_buffer_t) { 0 };
+	if (!jx64_encodeInstr(instr, enc)) {
+		return false;
+	}
+
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr->m_Buffer, instr->m_Size);
+}
+
 static inline bool jx64_instrBuf_push8(jx_x64_instr_buffer_t* ib, uint8_t b)
 {
 	if (ib->m_Size + 1 > JX_COUNTOF(ib->m_Buffer)) {
@@ -3043,8 +3426,21 @@ static bool jx64_encodeInstr(jx_x64_instr_buffer_t* instr, const jx_x64_instr_en
 		JX_NOT_IMPLEMENTED();
 	}
 
-	if (encoding->m_LockRepeat != JX64_LOCK_REPEAT_NONE) {
-		JX_NOT_IMPLEMENTED();
+	switch (encoding->m_LockRepeat) {
+	case JX64_LOCK_REPEAT_NONE: {
+	} break;
+	case JX64_LOCK_REPEAT_LOCK: {
+		jx64_instrBuf_push8(instr, 0xF0);
+	} break;
+	case JX64_LOCK_REPEAT_REP: {
+		jx64_instrBuf_push8(instr, 0xF2);
+	} break;
+	case JX64_LOCK_REPEAT_REPNZ: {
+		jx64_instrBuf_push8(instr, 0xF3);
+	} break;
+	default:
+		JX_CHECK(false, "Unknown lock/repeat prefix.");
+		break;
 	}
 
 	if (encoding->m_AddressSizeOverride) {
