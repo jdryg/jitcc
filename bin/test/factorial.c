@@ -11,3 +11,12 @@ int factorial(int x)
 
 	return res;
 }
+
+int main(void)
+{
+	if (factorial(5) != 120) {
+		return 1;
+	}
+
+	return 0;
+}

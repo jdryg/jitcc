@@ -13,7 +13,7 @@
 
 static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64_context_t* jitCtx, const jx_mir_operand_t* mirOp);
 static jx_x64_size jx_x64gen_convertMIRTypeToSize(jx_mir_type_kind type);
-static jx_x64_reg jx_x64gen_convertMIRReg(uint32_t mirRegID, jx_x64_size sz);
+static jx_x64_reg jx_x64gen_convertMIRReg(jx_mir_reg_t mirReg, jx_x64_size sz);
 static jx_x64_scale jx_x64gen_convertMIRScale(uint32_t mirScale);
 
 bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allocator_i* allocator)
@@ -236,6 +236,156 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 						jx_x64_condition_code cc = (jx_x64_condition_code)(mirInstr->m_OpCode - JMIR_OP_JCC_BASE);
 						jx64_jcc(jitCtx, cc, bbLabels[mirOp->u.m_BB->m_ID]);
 					} break;
+					case JMIR_OP_MOVSS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_movss(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_ADDPS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_addps(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_ADDSS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_addss(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_ANDNPS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_andnps(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_ANDPS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_andps(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_COMISS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_comiss(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_CVTSI2SS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_cvtsi2ss(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_CVTSS2SI: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_cvtss2si(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_CVTTSS2SI: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_cvttss2si(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_DIVPS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_divps(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_DIVSS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_divss(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_MAXPS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_maxps(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_MAXSS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_maxss(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_MINPS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_minps(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_MINSS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_minss(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_MULPS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_mulps(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_MULSS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_mulss(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_ORPS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_orps(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_RCPPS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_rcpps(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_RCPSS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_rcpss(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_RSQRTPS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_rsqrtps(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_RSQRTSS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_rsqrtss(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_SQRTPS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_sqrtps(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_SQRTSS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_sqrtss(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_SUBPS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_subps(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_SUBSS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_subss(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_UCOMISS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_ucomiss(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_UNPCKHPS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_unpckhps(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_UNPCKLPS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_unpcklps(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_XORPS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_xorps(jitCtx, dst, src);
+					} break;
 					default:
 						JX_CHECK(false, "Unknown mir instruction opcode");
 						break;
@@ -319,29 +469,35 @@ static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64_context_t* jitCtx, co
 
 	switch (mirOp->m_Kind) {
 	case JMIR_OPERAND_REGISTER: {
-		JX_CHECK(mirOp->u.m_RegID < JMIR_FIRST_VIRTUAL_REGISTER, "Expected hardware register!");
+		JX_CHECK(!mirOp->u.m_Reg.m_IsVirtual, "Expected hardware register!");
 		switch (mirOp->m_Type) {
 		case JMIR_TYPE_VOID: {
 			JX_CHECK(false, "Unexpected void register!");
 		} break;
 		case JMIR_TYPE_I8: {
-			op = jx64_opReg((jx_x64_reg)(JX64_REG_AL + mirOp->u.m_RegID));
+			JX_CHECK(mirOp->u.m_Reg.m_Class == JMIR_REG_CLASS_GP, "Expected GP register.");
+			op = jx64_opReg((jx_x64_reg)(JX64_REG_AL + mirOp->u.m_Reg.m_ID));
 		} break;
 		case JMIR_TYPE_I16: {
-			op = jx64_opReg((jx_x64_reg)(JX64_REG_AX + mirOp->u.m_RegID));
+			JX_CHECK(mirOp->u.m_Reg.m_Class == JMIR_REG_CLASS_GP, "Expected GP register.");
+			op = jx64_opReg((jx_x64_reg)(JX64_REG_AX + mirOp->u.m_Reg.m_ID));
 		} break;
 		case JMIR_TYPE_I32: {
-			op = jx64_opReg((jx_x64_reg)(JX64_REG_EAX + mirOp->u.m_RegID));
+			JX_CHECK(mirOp->u.m_Reg.m_Class == JMIR_REG_CLASS_GP, "Expected GP register.");
+			op = jx64_opReg((jx_x64_reg)(JX64_REG_EAX + mirOp->u.m_Reg.m_ID));
 		} break;
 		case JMIR_TYPE_I64:
 		case JMIR_TYPE_PTR: {
-			op = jx64_opReg((jx_x64_reg)(JX64_REG_RAX + mirOp->u.m_RegID));
+			JX_CHECK(mirOp->u.m_Reg.m_Class == JMIR_REG_CLASS_GP, "Expected GP register.");
+			op = jx64_opReg((jx_x64_reg)(JX64_REG_RAX + mirOp->u.m_Reg.m_ID));
 		} break;
 		case JMIR_TYPE_F32: {
-			JX_NOT_IMPLEMENTED();
+			JX_CHECK(mirOp->u.m_Reg.m_Class == JMIR_REG_CLASS_XMM, "Expected XMM register.");
+			op = jx64_opReg((jx_x64_reg)(JX64_REG_XMM0 + mirOp->u.m_Reg.m_ID));
 		} break;
 		case JMIR_TYPE_F64: {
-			JX_NOT_IMPLEMENTED();
+			JX_CHECK(mirOp->u.m_Reg.m_Class == JMIR_REG_CLASS_XMM, "Expected XMM register.");
+			op = jx64_opReg((jx_x64_reg)(JX64_REG_XMM0 + mirOp->u.m_Reg.m_ID));
 		} break;
 		default:
 			JX_CHECK(false, "Unknown mir type");
@@ -406,8 +562,8 @@ static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64_context_t* jitCtx, co
 	} break;
 	case JMIR_OPERAND_MEMORY_REF: {
 		jx_x64_size size = jx_x64gen_convertMIRTypeToSize(mirOp->m_Type);
-		jx_x64_reg baseReg = jx_x64gen_convertMIRReg(mirOp->u.m_MemRef.m_BaseRegID, JX64_SIZE_64);
-		jx_x64_reg indexReg = jx_x64gen_convertMIRReg(mirOp->u.m_MemRef.m_IndexRegID, JX64_SIZE_64);
+		jx_x64_reg baseReg = jx_x64gen_convertMIRReg(mirOp->u.m_MemRef.m_BaseReg, JX64_SIZE_64);
+		jx_x64_reg indexReg = jx_x64gen_convertMIRReg(mirOp->u.m_MemRef.m_IndexReg, JX64_SIZE_64);
 		jx_x64_scale scale = jx_x64gen_convertMIRScale(mirOp->u.m_MemRef.m_Scale);
 		int32_t disp = mirOp->u.m_MemRef.m_Displacement;
 		op = jx64_opMem(size, baseReg, indexReg, scale, disp);
@@ -434,18 +590,14 @@ static jx_x64_size jx_x64gen_convertMIRTypeToSize(jx_mir_type_kind type)
 	case JMIR_TYPE_I16: {
 		sz = JX64_SIZE_16;
 	} break;
-	case JMIR_TYPE_I32: {
+	case JMIR_TYPE_I32: 
+	case JMIR_TYPE_F32: {
 		sz = JX64_SIZE_32;
 	} break;
 	case JMIR_TYPE_I64:
-	case JMIR_TYPE_PTR: {
-		sz = JX64_SIZE_64;
-	} break;
-	case JMIR_TYPE_F32: {
-		JX_NOT_IMPLEMENTED();
-	} break;
+	case JMIR_TYPE_PTR: 
 	case JMIR_TYPE_F64: {
-		JX_NOT_IMPLEMENTED();
+		sz = JX64_SIZE_64;
 	} break;
 	default:
 		JX_CHECK(false, "Unknown mir type");
@@ -455,27 +607,35 @@ static jx_x64_size jx_x64gen_convertMIRTypeToSize(jx_mir_type_kind type)
 	return sz;
 }
 
-static jx_x64_reg jx_x64gen_convertMIRReg(uint32_t mirRegID, jx_x64_size sz)
+static jx_x64_reg jx_x64gen_convertMIRReg(jx_mir_reg_t mirReg, jx_x64_size sz)
 {
-	if (mirRegID == JMIR_MEMORY_REG_NONE) {
+	if (mirReg.m_ID == JMIR_HWREGID_NONE) {
 		return JX64_REG_NONE;
 	}
 
-	JX_CHECK(mirRegID < JMIR_FIRST_VIRTUAL_REGISTER, "Expected hardware register!");
+	JX_CHECK(!mirReg.m_IsVirtual, "Expected hardware register!");
 
 	jx_x64_reg reg = JX64_REG_NONE;
 	switch (sz) {
 	case JX64_SIZE_8: {
-		reg = (jx_x64_reg)(JX64_REG_AL + mirRegID);
+		JX_CHECK(mirReg.m_Class == JMIR_REG_CLASS_GP, "Expected GP register");
+		reg = (jx_x64_reg)(JX64_REG_AL + mirReg.m_ID);
 	} break;
 	case JX64_SIZE_16: {
-		reg = (jx_x64_reg)(JX64_REG_AX + mirRegID);
+		JX_CHECK(mirReg.m_Class == JMIR_REG_CLASS_GP, "Expected GP register");
+		reg = (jx_x64_reg)(JX64_REG_AX + mirReg.m_ID);
 	} break;
 	case JX64_SIZE_32: {
-		reg = (jx_x64_reg)(JX64_REG_EAX + mirRegID);
+		JX_CHECK(mirReg.m_Class == JMIR_REG_CLASS_GP, "Expected GP register");
+		reg = (jx_x64_reg)(JX64_REG_EAX + mirReg.m_ID);
 	} break;
 	case JX64_SIZE_64: {
-		reg = (jx_x64_reg)(JX64_REG_RAX + mirRegID);
+		JX_CHECK(mirReg.m_Class == JMIR_REG_CLASS_GP, "Expected GP register");
+		reg = (jx_x64_reg)(JX64_REG_RAX + mirReg.m_ID);
+	} break;
+	case JX64_SIZE_128: {
+		JX_CHECK(mirReg.m_Class == JMIR_REG_CLASS_XMM, "Expected XMM register");
+		reg = (jx_x64_reg)(JX64_REG_XMM0 + mirReg.m_ID);
 	} break;
 	default:
 		JX_CHECK(false, "Unknown size!");

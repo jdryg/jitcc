@@ -861,11 +861,11 @@ int main(int argc, char** argv)
 	JX_SYS_LOG_INFO(NULL, "Pass : %u\n", numPass);
 	JX_SYS_LOG_INFO(NULL, "Fail : %u\n", numFailed);
 	JX_SYS_LOG_INFO(NULL, "Skip : %u\n", numSkipped);
-#else
+#elif 1
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
 //	const char* sourceFile = "test/c-testsuite/00140.c";
-	const char* sourceFile = "test/bitfields.c";
+	const char* sourceFile = "test/floats.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
 	jx_cc_translation_unit_t* tu = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_INSTALL, sourceFile);
@@ -975,6 +975,18 @@ int main(int argc, char** argv)
 
 end:
 	jx_cc_destroyContext(ctx);
+#else
+	// JIT SSE test
+	jx_x64_context_t* jitCtx = jx_x64_createContext(allocator);
+
+	jx_x64_symbol_t* func = jx64_funcDeclare(jitCtx, "test");
+	jx64_funcBegin(jitCtx, func);
+	{
+		jx64_addss(jitCtx, jx64_opReg(JX64_REG_XMM8), jx64_opReg(JX64_REG_XMM0));
+	}
+	jx64_funcEnd(jitCtx);
+
+	jx_x64_destroyContext(jitCtx);
 #endif
 
 	allocator_api->destroyAllocator(allocator);

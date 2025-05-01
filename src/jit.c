@@ -1408,6 +1408,20 @@ bool jx64_cdqe(jx_x64_context_t* ctx)
 	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr, JX_COUNTOF(instr));
 }
 
+bool jx64_movss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	if (dst.m_Type == JX64_OPERAND_REG) {
+		return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x10, dst, src);
+	} else if (dst.m_Type == JX64_OPERAND_MEM || dst.m_Type == JX64_OPERAND_SYM) {
+		// Same encoding as reg, r/m but with different opcode and reversed
+		// operands.
+		return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x11, src, dst);
+	} else {
+		JX_NOT_IMPLEMENTED();
+	}
+	return false;
+}
+
 bool jx64_addps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x58, dst, src);
