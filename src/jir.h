@@ -110,6 +110,8 @@ typedef enum jx_ir_opcode
 	JIR_OP_PTR_TO_INT,      // OK -
 	JIR_OP_INT_TO_PTR,      // OK -
 	JIR_OP_BITCAST,         // OK -
+	JIR_OP_FPEXT,           // OK - 
+	JIR_OP_FPTRUNC,         // OK - 
 
 	JIR_OP_SET_CC_BASE = JIR_OP_SET_LE
 } jx_ir_opcode;
@@ -153,6 +155,8 @@ static const char* kOpcodeMnemonic[] = {
 	[JIR_OP_PTR_TO_INT]      = "ptrtoint",
 	[JIR_OP_INT_TO_PTR]      = "inttoptr",
 	[JIR_OP_BITCAST]         = "bitcast",
+	[JIR_OP_FPEXT]           = "fpext",
+	[JIR_OP_FPTRUNC]         = "fptrunc",
 };
 
 // NOTE: Order must match the order of JIR_OP_SET_cc opcodes above
@@ -273,7 +277,6 @@ typedef struct jx_ir_constant_t
 		bool m_Bool;
 		int64_t m_I64;
 		uint64_t m_U64;
-		float m_F32;
 		double m_F64;
 		uintptr_t m_Ptr;
 	} u;
@@ -432,6 +435,8 @@ jx_ir_instruction_t* jx_ir_instrSignExt(jx_ir_context_t* ctx, jx_ir_value_t* val
 jx_ir_instruction_t* jx_ir_instrPtrToInt(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
 jx_ir_instruction_t* jx_ir_instrIntToPtr(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
 jx_ir_instruction_t* jx_ir_instrBitcast(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
+jx_ir_instruction_t* jx_ir_instrFPExt(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
+jx_ir_instruction_t* jx_ir_instrFPTrunc(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
 jx_ir_instruction_t* jx_ir_instrCall(jx_ir_context_t* ctx, jx_ir_value_t* func, uint32_t numParams, jx_ir_value_t** params);
 jx_ir_instruction_t* jx_ir_instrAlloca(jx_ir_context_t* ctx, jx_ir_type_t* type, jx_ir_value_t* arraySize);
 jx_ir_instruction_t* jx_ir_instrLoad(jx_ir_context_t* ctx, jx_ir_type_t* type, jx_ir_value_t* ptr);
