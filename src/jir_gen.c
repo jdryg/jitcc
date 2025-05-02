@@ -1075,6 +1075,8 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 		} else {
 			const bool srcIsInteger = jx_ir_typeIsInteger(srcType);
 			const bool dstIsInteger = jx_ir_typeIsInteger(dstType);
+			const bool srcIsFP = jx_ir_typeIsFloatingPoint(srcType);
+			const bool dstIsFP = jx_ir_typeIsFloatingPoint(dstType);
 			const bool srcIsPointer = jx_ir_typeToPointer(srcType) != NULL;
 			const bool dstIsPointer = jx_ir_typeToPointer(dstType) != NULL;
 			const uint32_t srcSize = (uint32_t)jx_ir_typeGetSize(srcType);
@@ -1087,6 +1089,17 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 				castInstr = jx_ir_instrPtrToInt(irctx, originalVal, dstType);
 			} else if (srcSize == dstSize) {
 				castInstr = jx_ir_instrBitcast(irctx, originalVal, dstType);
+			} else if (srcIsFP && dstIsFP) {
+				if (srcSize < dstSize) {
+					castInstr = jx_ir_instrFPExt(irctx, originalVal, dstType);
+				} else {
+					JX_CHECK(srcSize > dstSize, "Cast between same size FP types?");
+					castInstr = jx_ir_instrFPTrunc(irctx, originalVal, dstType);
+				}
+			} else if (srcIsFP && dstIsInteger) {
+				JX_NOT_IMPLEMENTED();
+			} else if (srcIsInteger && dstIsFP) {
+				JX_NOT_IMPLEMENTED();
 			} else {
 				JX_NOT_IMPLEMENTED();
 			}
@@ -1247,11 +1260,22 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 		val = jirgenGenLoad(ctx, ptr, expr->m_Type);
 	} break;
 	case JCC_NODE_NUMBER: {
+		jx_ir_constant_t* c = NULL;
 		if (jx_cc_typeIsFloat(expr->m_Type)) {
-			JX_NOT_IMPLEMENTED();
+			jx_cc_ast_expr_fconst_t* fconstNode = (jx_cc_ast_expr_fconst_t*)expr;
+			switch (expr->m_Type->m_Kind) {
+			case JCC_TYPE_FLOAT:
+				c = jx_ir_constGetF32(irctx, (float)fconstNode->m_Value);
+				break;
+			case JCC_TYPE_DOUBLE:
+				c = jx_ir_constGetF64(irctx, fconstNode->m_Value);
+				break;
+			default:
+				JX_CHECK(false, "Unknown float constant.");
+				break;
+			}
 		} else {
 			jx_cc_ast_expr_iconst_t* iconstNode = (jx_cc_ast_expr_iconst_t*)expr;
-			jx_ir_constant_t* c = NULL;
 			switch (expr->m_Type->m_Kind) {
 			case JCC_TYPE_BOOL: {
 				c = jx_ir_constGetBool(irctx, iconstNode->m_Value != 0);
@@ -1284,6 +1308,8 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 				JX_CHECK(false, "Unknown integer constant type");
 				break;
 			}
+		}
+		if (c) {
 			val = jx_ir_constToValue(c);
 		}
 	} break;

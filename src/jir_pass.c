@@ -1140,7 +1140,9 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 				case JIR_OP_STORE:
 				case JIR_OP_PTR_TO_INT:
 				case JIR_OP_INT_TO_PTR:
-				case JIR_OP_BITCAST: {
+				case JIR_OP_BITCAST: 
+				case JIR_OP_FPEXT: 
+				case JIR_OP_FPTRUNC: {
 					// No op
 				} break;
 				default:
@@ -1175,7 +1177,7 @@ static jx_ir_constant_t* jir_constFold_cmpConst(jx_ir_context_t* ctx, jx_ir_cons
 		case JIR_TYPE_I32:  { res = (int32_t)lhs->u.m_I64  <= (int32_t)rhs->u.m_I64;  } break;
 		case JIR_TYPE_U64:  { res = lhs->u.m_U64           <= rhs->u.m_U64;           } break;
 		case JIR_TYPE_I64:  { res = lhs->u.m_I64           <= rhs->u.m_I64;           } break;
-		case JIR_TYPE_F32:  { res = lhs->u.m_F32           <= rhs->u.m_F32;           } break;
+		case JIR_TYPE_F32:
 		case JIR_TYPE_F64:  { res = lhs->u.m_F64           <= rhs->u.m_F64;           } break;
 		default:
 			JX_CHECK(false, "Invalid comparison types?");
@@ -1193,7 +1195,7 @@ static jx_ir_constant_t* jir_constFold_cmpConst(jx_ir_context_t* ctx, jx_ir_cons
 		case JIR_TYPE_I32:  { res = (int32_t)lhs->u.m_I64  >= (int32_t)rhs->u.m_I64;  } break;
 		case JIR_TYPE_U64:  { res = lhs->u.m_U64           >= rhs->u.m_U64;           } break;
 		case JIR_TYPE_I64:  { res = lhs->u.m_I64           >= rhs->u.m_I64;           } break;
-		case JIR_TYPE_F32:  { res = lhs->u.m_F32           >= rhs->u.m_F32;           } break;
+		case JIR_TYPE_F32:
 		case JIR_TYPE_F64:  { res = lhs->u.m_F64           >= rhs->u.m_F64;           } break;
 		default:
 			JX_CHECK(false, "Invalid comparison types?");
@@ -1211,7 +1213,7 @@ static jx_ir_constant_t* jir_constFold_cmpConst(jx_ir_context_t* ctx, jx_ir_cons
 		case JIR_TYPE_I32:  { res = (int32_t)lhs->u.m_I64  < (int32_t)rhs->u.m_I64;  } break;
 		case JIR_TYPE_U64:  { res = lhs->u.m_U64           < rhs->u.m_U64;           } break;
 		case JIR_TYPE_I64:  { res = lhs->u.m_I64           < rhs->u.m_I64;           } break;
-		case JIR_TYPE_F32:  { res = lhs->u.m_F32           < rhs->u.m_F32;           } break;
+		case JIR_TYPE_F32:
 		case JIR_TYPE_F64:  { res = lhs->u.m_F64           < rhs->u.m_F64;           } break;
 		default:
 			JX_CHECK(false, "Invalid comparison types?");
@@ -1229,7 +1231,7 @@ static jx_ir_constant_t* jir_constFold_cmpConst(jx_ir_context_t* ctx, jx_ir_cons
 		case JIR_TYPE_I32:  { res = (int32_t)lhs->u.m_I64  > (int32_t)rhs->u.m_I64;  } break;
 		case JIR_TYPE_U64:  { res = lhs->u.m_U64           > rhs->u.m_U64;           } break;
 		case JIR_TYPE_I64:  { res = lhs->u.m_I64           > rhs->u.m_I64;           } break;
-		case JIR_TYPE_F32:  { res = lhs->u.m_F32           > rhs->u.m_F32;           } break;
+		case JIR_TYPE_F32:
 		case JIR_TYPE_F64:  { res = lhs->u.m_F64           > rhs->u.m_F64;           } break;
 		default:
 			JX_CHECK(false, "Invalid comparison types?");
@@ -1247,7 +1249,7 @@ static jx_ir_constant_t* jir_constFold_cmpConst(jx_ir_context_t* ctx, jx_ir_cons
 		case JIR_TYPE_I32:  { res = (int32_t)lhs->u.m_I64  == (int32_t)rhs->u.m_I64;  } break;
 		case JIR_TYPE_U64:  { res = lhs->u.m_U64           == rhs->u.m_U64;           } break;
 		case JIR_TYPE_I64:  { res = lhs->u.m_I64           == rhs->u.m_I64;           } break;
-		case JIR_TYPE_F32:  { res = lhs->u.m_F32           == rhs->u.m_F32;           } break;
+		case JIR_TYPE_F32:
 		case JIR_TYPE_F64:  { res = lhs->u.m_F64           == rhs->u.m_F64;           } break;
 		default:
 			JX_CHECK(false, "Invalid comparison types?");
@@ -1265,7 +1267,7 @@ static jx_ir_constant_t* jir_constFold_cmpConst(jx_ir_context_t* ctx, jx_ir_cons
 		case JIR_TYPE_I32:  { res = (int32_t)lhs->u.m_I64  != (int32_t)rhs->u.m_I64;  } break;
 		case JIR_TYPE_U64:  { res = lhs->u.m_U64           != rhs->u.m_U64;           } break;
 		case JIR_TYPE_I64:  { res = lhs->u.m_I64           != rhs->u.m_I64;           } break;
-		case JIR_TYPE_F32:  { res = lhs->u.m_F32           != rhs->u.m_F32;           } break;
+		case JIR_TYPE_F32:
 		case JIR_TYPE_F64:  { res = lhs->u.m_F64           != rhs->u.m_F64;           } break;
 		default:
 			JX_CHECK(false, "Invalid comparison types?");
@@ -1294,7 +1296,7 @@ static jx_ir_constant_t* jir_constFold_addConst(jx_ir_context_t* ctx, jx_ir_cons
 	case JIR_TYPE_I32:  { res = jx_ir_constGetI32(ctx, (int32_t)(lhs->u.m_I64  + rhs->u.m_I64)); } break;
 	case JIR_TYPE_U64:  { res = jx_ir_constGetU64(ctx, lhs->u.m_U64            + rhs->u.m_U64);  } break;
 	case JIR_TYPE_I64:  { res = jx_ir_constGetI64(ctx, lhs->u.m_I64            + rhs->u.m_I64);  } break;
-	case JIR_TYPE_F32:  { res = jx_ir_constGetF32(ctx, lhs->u.m_F32            + rhs->u.m_F32);  } break;
+	case JIR_TYPE_F32:  { res = jx_ir_constGetF32(ctx, (float)(lhs->u.m_F64    + rhs->u.m_F64)); } break;
 	case JIR_TYPE_F64:  { res = jx_ir_constGetF64(ctx, lhs->u.m_F64            + rhs->u.m_F64);  } break;
 	default:
 		JX_CHECK(false, "Invalid types?");
@@ -1318,7 +1320,7 @@ static jx_ir_constant_t* jir_constFold_subConst(jx_ir_context_t* ctx, jx_ir_cons
 	case JIR_TYPE_I32:  { res = jx_ir_constGetI32(ctx, (int32_t)(lhs->u.m_I64  - rhs->u.m_I64)); } break;
 	case JIR_TYPE_U64:  { res = jx_ir_constGetU64(ctx, lhs->u.m_U64            - rhs->u.m_U64);  } break;
 	case JIR_TYPE_I64:  { res = jx_ir_constGetI64(ctx, lhs->u.m_I64            - rhs->u.m_I64);  } break;
-	case JIR_TYPE_F32:  { res = jx_ir_constGetF32(ctx, lhs->u.m_F32            - rhs->u.m_F32);  } break;
+	case JIR_TYPE_F32:  { res = jx_ir_constGetF32(ctx, (float)(lhs->u.m_F64    - rhs->u.m_F64));  } break;
 	case JIR_TYPE_F64:  { res = jx_ir_constGetF64(ctx, lhs->u.m_F64            - rhs->u.m_F64);  } break;
 	default:
 		JX_CHECK(false, "Invalid types?");
@@ -1342,7 +1344,7 @@ static jx_ir_constant_t* jir_constFold_mulConst(jx_ir_context_t* ctx, jx_ir_cons
 	case JIR_TYPE_I32:  { res = jx_ir_constGetI32(ctx, (int32_t)(lhs->u.m_I64  * rhs->u.m_I64)); } break;
 	case JIR_TYPE_U64:  { res = jx_ir_constGetU64(ctx, lhs->u.m_U64            * rhs->u.m_U64);  } break;
 	case JIR_TYPE_I64:  { res = jx_ir_constGetI64(ctx, lhs->u.m_I64            * rhs->u.m_I64);  } break;
-	case JIR_TYPE_F32:  { res = jx_ir_constGetF32(ctx, lhs->u.m_F32            * rhs->u.m_F32);  } break;
+	case JIR_TYPE_F32:  { res = jx_ir_constGetF32(ctx, (float)(lhs->u.m_F64    * rhs->u.m_F64)); } break;
 	case JIR_TYPE_F64:  { res = jx_ir_constGetF64(ctx, lhs->u.m_F64            * rhs->u.m_F64);  } break;
 	default:
 		JX_CHECK(false, "Invalid types?");
@@ -1366,7 +1368,7 @@ static jx_ir_constant_t* jir_constFold_divConst(jx_ir_context_t* ctx, jx_ir_cons
 	case JIR_TYPE_I32:  { res = jx_ir_constGetI32(ctx, (int32_t)(lhs->u.m_I64  / rhs->u.m_I64)); } break;
 	case JIR_TYPE_U64:  { res = jx_ir_constGetU64(ctx, lhs->u.m_U64            / rhs->u.m_U64);  } break;
 	case JIR_TYPE_I64:  { res = jx_ir_constGetI64(ctx, lhs->u.m_I64            / rhs->u.m_I64);  } break;
-	case JIR_TYPE_F32:  { res = jx_ir_constGetF32(ctx, lhs->u.m_F32            / rhs->u.m_F32);  } break;
+	case JIR_TYPE_F32:  { res = jx_ir_constGetF32(ctx, (float)(lhs->u.m_F64    / rhs->u.m_F64)); } break;
 	case JIR_TYPE_F64:  { res = jx_ir_constGetF64(ctx, lhs->u.m_F64            / rhs->u.m_F64);  } break;
 	default:
 		JX_CHECK(false, "Invalid types?");
