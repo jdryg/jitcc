@@ -4,6 +4,7 @@
 #include <jlib/allocator.h>
 #include <jlib/array.h>
 #include <jlib/dbg.h>
+#include <jlib/math.h>
 #include <jlib/memory.h>
 #include <jlib/string.h>
 
@@ -241,6 +242,21 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
 						jx64_movss(jitCtx, dst, src);
 					} break;
+					case JMIR_OP_MOVSD: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_movsd(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_MOVD: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_movd(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_MOVQ: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_movq(jitCtx, dst, src);
+					} break;
 					case JMIR_OP_ADDPS: {
 						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
 						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
@@ -280,6 +296,16 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
 						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
 						jx64_cvttss2si(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_CVTSD2SS: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_cvtsd2ss(jitCtx, dst, src);
+					} break;
+					case JMIR_OP_CVTSS2SD: {
+						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
+						jx64_cvtss2sd(jitCtx, dst, src);
 					} break;
 					case JMIR_OP_DIVPS: {
 						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
@@ -523,7 +549,16 @@ static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64_context_t* jitCtx, co
 			op = jx64_opImmI64(mirOp->u.m_ConstI64);
 		} break;
 		case JMIR_TYPE_F32: {
-			JX_NOT_IMPLEMENTED();
+			const float fconst = (float)mirOp->u.m_ConstF64;
+			char globalName[256];
+			jx_snprintf(globalName, JX_COUNTOF(globalName), "f32c_%08X", (uint32_t)jx_bitcast_f_i32(fconst));
+			jx_x64_symbol_t* sym = jx64_symbolGetByName(jitCtx, globalName);
+			if (!sym) {
+				sym = jx64_globalVarDeclare(jitCtx, globalName);
+				jx64_globalVarDefine(jitCtx, sym, (const uint8_t*)&fconst, sizeof(float), 4);
+			}
+
+			op = jx64_opSymbol(JX64_SIZE_32, sym);
 		} break;
 		case JMIR_TYPE_F64: {
 			JX_NOT_IMPLEMENTED();

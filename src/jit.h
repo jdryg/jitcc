@@ -373,6 +373,9 @@ bool jx64_cwde(jx_x64_context_t* ctx); // EAX := sign-extend of AX
 bool jx64_cdqe(jx_x64_context_t* ctx); // RAX := sign-extend of EAX
 
 bool jx64_movss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_movsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_movd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_movq(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
 bool jx64_addps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
 bool jx64_addss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
 bool jx64_andnps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
@@ -383,6 +386,8 @@ bool jx64_comiss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t s
 bool jx64_cvtsi2ss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
 bool jx64_cvtss2si(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
 bool jx64_cvttss2si(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_cvtsd2ss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_cvtss2sd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
 bool jx64_divps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
 bool jx64_divss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
 bool jx64_maxps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
