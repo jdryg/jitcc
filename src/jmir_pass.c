@@ -108,11 +108,16 @@ static bool jmir_funcPass_removeRedundantMovesRun(jx_mir_function_pass_o* inst, 
 		while (instr) {
 			jx_mir_instruction_t* instrNext = instr->m_Next;
 
-			if (instr->m_OpCode == JMIR_OP_MOV) {
+			const bool isMov = false
+				|| instr->m_OpCode == JMIR_OP_MOV
+				|| instr->m_OpCode == JMIR_OP_MOVSS
+				|| instr->m_OpCode == JMIR_OP_MOVSD
+				;
+			if (isMov) {
 				jx_mir_operand_t* dst = instr->m_Operands[0];
 				jx_mir_operand_t* src = instr->m_Operands[1];
 
-				if (dst->m_Kind == JMIR_OPERAND_REGISTER && src->m_Kind == JMIR_OPERAND_REGISTER && dst->u.m_RegID == src->u.m_RegID) {
+				if (dst->m_Kind == JMIR_OPERAND_REGISTER && src->m_Kind == JMIR_OPERAND_REGISTER && jx_mir_regEqual(dst->u.m_Reg, src->u.m_Reg)) {
 					jx_mir_bbRemoveInstr(ctx, bb, instr);
 					jx_mir_instrFree(ctx, instr);
 				}
@@ -175,7 +180,7 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 						&& op1->m_Kind == JMIR_OPERAND_REGISTER
 						&& op0->m_Type == JMIR_TYPE_I8
 						&& op1->m_Type == JMIR_TYPE_I8
-						&& op0->u.m_RegID == op1->u.m_RegID
+						&& jx_mir_regEqual(op0->u.m_Reg, op1->u.m_Reg)
 						;
 					if (isValidTest) {
 						jx_mir_instruction_t* setccInstr = testInstr->m_Prev;
@@ -184,7 +189,7 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 							const bool isValidSetcc = true
 								&& op->m_Kind == JMIR_OPERAND_REGISTER
 								&& op->m_Type == JMIR_TYPE_I8
-								&& op->u.m_RegID == op0->u.m_RegID
+								&& jx_mir_regEqual(op->u.m_Reg, op0->u.m_Reg)
 								;
 							if (isValidSetcc) {
 								jx_mir_instruction_t* cmpInstr = setccInstr->m_Prev;
@@ -345,7 +350,7 @@ typedef struct jmir_graph_node_t
 	jmir_graph_node_t* m_Alias;
 	jmir_graph_node_state m_State;
 	uint32_t m_Degree;
-	uint32_t m_RegID;
+	uint32_t m_ID; // ID of the node; used as the index in all bitsets; must be unique
 	uint32_t m_Color;
 } jmir_graph_node_t;
 
@@ -373,9 +378,9 @@ typedef struct jmir_func_pass_regalloc_t
 	uint32_t m_NumNodes;
 	JX_PAD(4);
 
-	uint32_t* m_HWRegs;
+	jx_mir_reg_t* m_HWRegs;
 	uint32_t m_NumHWRegs; // K
-	JX_PAD(4);
+	jx_mir_reg_class m_RegClass;
 
 	jmir_basic_block_info_t* m_BBInfo;
 	uint32_t m_NumBasicBlocks;
@@ -385,7 +390,7 @@ typedef struct jmir_func_pass_regalloc_t
 static void jmir_funcPass_regAllocDestroy(jx_mir_function_pass_o* inst, jx_allocator_i* allocator);
 static bool jmir_funcPass_regAllocRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func);
 
-static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t* ctx, jx_mir_function_t* func, const uint32_t* hwRegs, uint32_t numHWRegs);
+static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_reg_class regClass, const uint32_t* hwRegs, uint32_t numHWRegs);
 static void jmir_regAlloc_shutdown(jmir_func_pass_regalloc_t* pass);
 static bool jmir_regAlloc_initInfo(jmir_func_pass_regalloc_t* pass, jx_mir_function_t* func);
 static void jmir_regAlloc_destroyInfo(jmir_func_pass_regalloc_t* pass);
@@ -393,11 +398,11 @@ static bool jmir_regAlloc_initBasicBlockInfo(jmir_func_pass_regalloc_t* pass, jm
 static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_instruction_info_t* instrInfo, jx_mir_instruction_t* instr);
 static void jmir_regAlloc_buildCFG(jmir_func_pass_regalloc_t* pass, jx_mir_context_t* ctx, jx_mir_function_t* func);
 static bool jmir_regAlloc_livenessAnalysis(jmir_func_pass_regalloc_t* pass, jx_mir_function_t* func);
-static bool jmir_regAlloc_isMoveInstr(jmir_instruction_info_t* instrInfo);
+static bool jmir_regAlloc_isMoveInstr(jmir_instruction_info_t* instrInfo, jx_mir_reg_class regClass);
 static jmir_basic_block_info_t* jmir_regAlloc_getBasicBlockInfo(jmir_func_pass_regalloc_t* pass, jx_mir_basic_block_t* bb);
-static uint32_t jmir_regAlloc_mapRegToID(jmir_func_pass_regalloc_t* pass, uint32_t regID);
+static uint32_t jmir_regAlloc_mapRegToID(jmir_func_pass_regalloc_t* pass, jx_mir_reg_t reg);
 static jmir_graph_node_t* jmir_regAlloc_getNode(jmir_func_pass_regalloc_t* pass, uint32_t nodeID);
-static uint32_t jmir_regAlloc_getHWRegWithColor(jmir_func_pass_regalloc_t* pass, uint32_t color);
+static jx_mir_reg_t jmir_regAlloc_getHWRegWithColor(jmir_func_pass_regalloc_t* pass, uint32_t color);
 
 static void jmir_regAlloc_makeWorklist(jmir_func_pass_regalloc_t* pass);
 static void jmir_regAlloc_simplify(jmir_func_pass_regalloc_t* pass);
@@ -407,8 +412,8 @@ static void jmir_regAlloc_selectSpill(jmir_func_pass_regalloc_t* pass);
 static void jmir_regAlloc_assignColors(jmir_func_pass_regalloc_t* pass);
 static void jmir_regAlloc_replaceRegs(jmir_func_pass_regalloc_t* pass);
 static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass);
-static void jmir_regAlloc_replaceInstrRegDef(jx_mir_instruction_t* instr, uint32_t vregID, jx_mir_operand_t* newReg);
-static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, uint32_t vregID, jx_mir_operand_t* newReg);
+static void jmir_regAlloc_replaceInstrRegDef(jx_mir_instruction_t* instr, jx_mir_reg_t vreg, jx_mir_operand_t* newReg);
+static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, jx_mir_reg_t vreg, jx_mir_operand_t* newReg);
 
 static void jmir_regAlloc_addEdge(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* u, jmir_graph_node_t* v);
 static bool jmir_regAlloc_areNodesAdjacent(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* u, jmir_graph_node_t* v);
@@ -469,81 +474,107 @@ static bool jmir_funcPass_regAllocRun(jx_mir_function_pass_o* inst, jx_mir_conte
 {
 	jmir_func_pass_regalloc_t* pass = (jmir_func_pass_regalloc_t*)inst;
 
-	const uint32_t hwRegs[] = {
-		JMIR_HWREG_A,
-		JMIR_HWREG_C,
-		JMIR_HWREG_D,
-		JMIR_HWREG_B,
-		JMIR_HWREG_SI,
-		JMIR_HWREG_DI,  
-		JMIR_HWREG_R8,
-		JMIR_HWREG_R9,
-		JMIR_HWREG_R10,
-		JMIR_HWREG_R11,
-		JMIR_HWREG_R12,
-		JMIR_HWREG_R13,
-		JMIR_HWREG_R14,
-		JMIR_HWREG_R15,
+	const uint32_t gpRegIDs[] = {
+		JMIR_HWREGID_A,
+		JMIR_HWREGID_C,
+		JMIR_HWREGID_D,
+		JMIR_HWREGID_B,
+		JMIR_HWREGID_SI,
+		JMIR_HWREGID_DI,  
+		JMIR_HWREGID_R8,
+		JMIR_HWREGID_R9,
+		JMIR_HWREGID_R10,
+		JMIR_HWREGID_R11,
+		JMIR_HWREGID_R12,
+		JMIR_HWREGID_R13,
+		JMIR_HWREGID_R14,
+		JMIR_HWREGID_R15,
+	};
+
+	const uint32_t xmmRegIDs[] = {
+		0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+	};
+
+	const uint32_t* regIDs[JMIR_REG_CLASS_COUNT] = {
+		[JMIR_REG_CLASS_GP] = gpRegIDs,
+		[JMIR_REG_CLASS_XMM] = xmmRegIDs
+	};
+	const uint32_t numRegIDs[JMIR_REG_CLASS_COUNT] = {
+		[JMIR_REG_CLASS_GP] = JX_COUNTOF(gpRegIDs),
+		[JMIR_REG_CLASS_XMM] = JX_COUNTOF(xmmRegIDs)
 	};
 
 	pass->m_Ctx = ctx;
 	pass->m_Func = func;
 
-	uint32_t iter = 0;
-	bool changed = true;
-	while (changed && iter < JMIR_REGALLOC_MAX_ITERATIONS) {
-		changed = false;
-
-		// Liveness analysis + build
-		if (!jmir_regAlloc_init(pass, ctx, func, hwRegs, JX_COUNTOF(hwRegs))) {
-			break;
+	for (uint32_t iRegClass = 0; iRegClass < JMIR_REG_CLASS_COUNT; ++iRegClass) {
+		if (func->m_NextVirtualRegID[iRegClass] == 0) {
+			continue;
 		}
 
-		jmir_regAlloc_makeWorklist(pass);
-		while (pass->m_NodeList[JMIR_NODE_STATE_SIMPLIFY] || pass->m_MoveList[JMIR_MOV_STATE_WORKLIST] || pass->m_NodeList[JMIR_NODE_STATE_FREEZE] || pass->m_NodeList[JMIR_NODE_STATE_SPILL]) {
-			if (pass->m_NodeList[JMIR_NODE_STATE_SIMPLIFY]) {
-				jmir_regAlloc_simplify(pass);
-			} else if (pass->m_MoveList[JMIR_MOV_STATE_WORKLIST]) {
-				jmir_regAlloc_coalesce(pass);
-			} else if (pass->m_NodeList[JMIR_NODE_STATE_FREEZE]) {
-				jmir_regAlloc_freeze(pass);
-			} else if (pass->m_NodeList[JMIR_NODE_STATE_SPILL]) {
-				jmir_regAlloc_selectSpill(pass);
+		uint32_t iter = 0;
+		bool changed = true;
+		while (changed && iter < JMIR_REGALLOC_MAX_ITERATIONS) {
+			changed = false;
+
+			// Liveness analysis + build
+			if (!jmir_regAlloc_init(pass, ctx, func, (jx_mir_reg_class)iRegClass, regIDs[iRegClass], numRegIDs[iRegClass])) {
+				break;
 			}
+
+			jmir_regAlloc_makeWorklist(pass);
+			while (pass->m_NodeList[JMIR_NODE_STATE_SIMPLIFY] || pass->m_MoveList[JMIR_MOV_STATE_WORKLIST] || pass->m_NodeList[JMIR_NODE_STATE_FREEZE] || pass->m_NodeList[JMIR_NODE_STATE_SPILL]) {
+				if (pass->m_NodeList[JMIR_NODE_STATE_SIMPLIFY]) {
+					jmir_regAlloc_simplify(pass);
+				} else if (pass->m_MoveList[JMIR_MOV_STATE_WORKLIST]) {
+					jmir_regAlloc_coalesce(pass);
+				} else if (pass->m_NodeList[JMIR_NODE_STATE_FREEZE]) {
+					jmir_regAlloc_freeze(pass);
+				} else if (pass->m_NodeList[JMIR_NODE_STATE_SPILL]) {
+					jmir_regAlloc_selectSpill(pass);
+				}
+			}
+
+			jmir_regAlloc_assignColors(pass);
+
+			if (pass->m_NodeList[JMIR_NODE_STATE_SPILLED]) {
+				jmir_regAlloc_spill(pass);
+				changed = true;
+			} else {
+				jmir_regAlloc_replaceRegs(pass);
+			}
+
+			jmir_regAlloc_shutdown(pass);
+
+			++iter;
 		}
-
-		jmir_regAlloc_assignColors(pass);
-		
-		if (pass->m_NodeList[JMIR_NODE_STATE_SPILLED]) {
-			jmir_regAlloc_spill(pass);
-			changed = true;
-		} else {
-			jmir_regAlloc_replaceRegs(pass);
-		}
-
-		jmir_regAlloc_shutdown(pass);
-
-		++iter;
 	}
 
 	return false;
 }
 
-static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t* ctx, jx_mir_function_t* func, const uint32_t* hwRegs, uint32_t numHWRegs)
+static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_reg_class regClass, const uint32_t* hwRegs, uint32_t numHWRegs)
 {
 	allocator_api->linearAllocatorReset(pass->m_LinearAllocator);
 
 	jx_memset(pass->m_NodeList, 0, sizeof(jmir_graph_node_t*) * JMIR_NODE_STATE_COUNT);
 	jx_memset(pass->m_MoveList, 0, sizeof(jmir_mov_instr_t*) * JMIR_MOV_STATE_COUNT);
 
-	pass->m_HWRegs = (uint32_t*)JX_ALLOC(pass->m_LinearAllocator, sizeof(uint32_t) * numHWRegs);
+	pass->m_HWRegs = (jx_mir_reg_t*)JX_ALLOC(pass->m_LinearAllocator, sizeof(jx_mir_reg_t) * numHWRegs);
 	if (!pass->m_HWRegs) {
 		return false;
 	}
-	jx_memcpy(pass->m_HWRegs, hwRegs, sizeof(uint32_t) * numHWRegs);
+	for (uint32_t iReg = 0; iReg < numHWRegs; ++iReg) {
+		pass->m_HWRegs[iReg] = (jx_mir_reg_t){
+			.m_ID = hwRegs[iReg],
+			.m_Class = regClass,
+			.m_IsVirtual = false
+		};
+	}
 	pass->m_NumHWRegs = numHWRegs;
+	pass->m_RegClass = regClass;
 
-	const uint32_t numVRegs = func->m_NextVirtualRegID; // Assume all allocated virtual regs are used by the function's code.
+	const uint32_t numVRegs = func->m_NextVirtualRegID[regClass]; // Assume all allocated virtual regs are used by the function's code.
 	const uint32_t numNodes = numHWRegs + numVRegs;
 
 	pass->m_Nodes = (jmir_graph_node_t*)JX_ALLOC(pass->m_LinearAllocator, sizeof(jmir_graph_node_t) * numNodes);
@@ -716,9 +747,13 @@ static bool jmir_regAlloc_initBasicBlockInfo(jmir_func_pass_regalloc_t* pass, jm
 	return true;
 }
 
-static void jmir_regAlloc_instrAddUse(jmir_func_pass_regalloc_t* pass, jmir_instruction_info_t* instrInfo, uint32_t regID)
+static void jmir_regAlloc_instrAddUse(jmir_func_pass_regalloc_t* pass, jmir_instruction_info_t* instrInfo, jx_mir_reg_t reg)
 {
-	const uint32_t id = jmir_regAlloc_mapRegToID(pass, regID);
+	if (reg.m_Class != pass->m_RegClass) {
+		return;
+	}
+
+	const uint32_t id = jmir_regAlloc_mapRegToID(pass, reg);
 	if (id == UINT32_MAX) {
 		return;
 	}
@@ -727,10 +762,14 @@ static void jmir_regAlloc_instrAddUse(jmir_func_pass_regalloc_t* pass, jmir_inst
 	instrInfo->m_Uses[instrInfo->m_NumUses++] = id;
 }
 
-static void jmir_regAlloc_instrAddDef(jmir_func_pass_regalloc_t* pass, jmir_instruction_info_t* instrInfo, uint32_t regID)
+static void jmir_regAlloc_instrAddDef(jmir_func_pass_regalloc_t* pass, jmir_instruction_info_t* instrInfo, jx_mir_reg_t reg)
 {
-	JX_CHECK(regID != JMIR_MEMORY_REG_NONE, "Invalid register ID");
-	const uint32_t id = jmir_regAlloc_mapRegToID(pass, regID);
+	if (reg.m_Class != pass->m_RegClass) {
+		return;
+	}
+
+	JX_CHECK(jx_mir_regIsValid(reg), "Invalid register ID");
+	const uint32_t id = jmir_regAlloc_mapRegToID(pass, reg);
 	JX_CHECK(id != UINT32_MAX, "Failed to map register to node index");
 	JX_CHECK(instrInfo->m_NumDefs + 1 < JMIR_REGALLOC_MAX_INSTR_DEFS, "Too many instruction defs");
 	instrInfo->m_Defs[instrInfo->m_NumDefs++] = id;
@@ -749,17 +788,21 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 	switch (instr->m_OpCode) {
 	case JMIR_OP_RET: {
 		// ret implicitly uses RAX?
-		jmir_regAlloc_instrAddUse(pass, instrInfo, JMIR_HWREG_A);
+		jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRRegGP_A);
 	} break;
 	case JMIR_OP_CMP:
-	case JMIR_OP_TEST: {
+	case JMIR_OP_TEST: 
+	case JMIR_OP_COMISS:
+	case JMIR_OP_COMISD:
+	case JMIR_OP_UCOMISS:
+	case JMIR_OP_UCOMISD: {
 		for (uint32_t iOperand = 0; iOperand < 2; ++iOperand) {
 			jx_mir_operand_t* src = instr->m_Operands[iOperand];
 			if (src->m_Kind == JMIR_OPERAND_REGISTER) {
-				jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_RegID);
+				jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_Reg);
 			} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-				jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseRegID);
-				jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexRegID);
+				jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseReg);
+				jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexReg);
 			}
 		}
 	} break;
@@ -768,39 +811,51 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 	} break;
 	case JMIR_OP_MOV:
 	case JMIR_OP_MOVSX:
-	case JMIR_OP_MOVZX: {
+	case JMIR_OP_MOVZX: 
+	case JMIR_OP_MOVSS: 
+	case JMIR_OP_MOVSD: 
+	case JMIR_OP_MOVD:
+	case JMIR_OP_MOVQ:
+	case JMIR_OP_CVTSI2SS:
+	case JMIR_OP_CVTSI2SD:
+	case JMIR_OP_CVTSS2SI:
+	case JMIR_OP_CVTSD2SI:
+	case JMIR_OP_CVTTSS2SI:
+	case JMIR_OP_CVTTSD2SI:
+	case JMIR_OP_CVTSD2SS:
+	case JMIR_OP_CVTSS2SD: {
 		jx_mir_operand_t* src = instr->m_Operands[1];
 		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_RegID);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_Reg);
 		} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseRegID);
-			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexRegID);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexReg);
 		}
 
 		jx_mir_operand_t* dst = instr->m_Operands[0];
 		if (dst->m_Kind == JMIR_OPERAND_REGISTER) {
-			jmir_regAlloc_instrAddDef(pass, instrInfo, dst->u.m_RegID);
+			jmir_regAlloc_instrAddDef(pass, instrInfo, dst->u.m_Reg);
 		} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_MemRef.m_BaseRegID);
-			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_MemRef.m_IndexRegID);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_MemRef.m_BaseReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_MemRef.m_IndexReg);
 		}
 	} break;
 	case JMIR_OP_IDIV:
 	case JMIR_OP_DIV: {
 		jx_mir_operand_t* op = instr->m_Operands[0];
 
-		jmir_regAlloc_instrAddUse(pass, instrInfo, JMIR_HWREG_A);
-		jmir_regAlloc_instrAddUse(pass, instrInfo, JMIR_HWREG_D);
+		jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRRegGP_A);
+		jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRRegGP_D);
 
 		if (op->m_Kind == JMIR_OPERAND_REGISTER) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, op->u.m_RegID);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, op->u.m_Reg);
 		} else if (op->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, op->u.m_MemRef.m_BaseRegID);
-			jmir_regAlloc_instrAddUse(pass, instrInfo, op->u.m_MemRef.m_IndexRegID);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, op->u.m_MemRef.m_BaseReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, op->u.m_MemRef.m_IndexReg);
 		}
 
-		jmir_regAlloc_instrAddDef(pass, instrInfo, JMIR_HWREG_A);
-		jmir_regAlloc_instrAddDef(pass, instrInfo, JMIR_HWREG_D);
+		jmir_regAlloc_instrAddDef(pass, instrInfo, kMIRRegGP_A);
+		jmir_regAlloc_instrAddDef(pass, instrInfo, kMIRRegGP_D);
 	} break;
 	case JMIR_OP_ADD:
 	case JMIR_OP_SUB:
@@ -810,29 +865,69 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 	case JMIR_OP_OR:
 	case JMIR_OP_SAR:
 	case JMIR_OP_SHR:
-	case JMIR_OP_SHL: {
+	case JMIR_OP_SHL: 
+	case JMIR_OP_ADDPS:
+	case JMIR_OP_ADDSS:
+	case JMIR_OP_ADDPD:
+	case JMIR_OP_ADDSD:
+	case JMIR_OP_ANDNPS:
+	case JMIR_OP_ANDNPD:
+	case JMIR_OP_ANDPS:
+	case JMIR_OP_ANDPD:
+	case JMIR_OP_DIVPS:
+	case JMIR_OP_DIVSS:
+	case JMIR_OP_DIVPD:
+	case JMIR_OP_DIVSD:
+	case JMIR_OP_MAXPS:
+	case JMIR_OP_MAXSS:
+	case JMIR_OP_MAXPD:
+	case JMIR_OP_MAXSD:
+	case JMIR_OP_MINPS:
+	case JMIR_OP_MINSS:
+	case JMIR_OP_MINPD:
+	case JMIR_OP_MINSD:
+	case JMIR_OP_MULPS:
+	case JMIR_OP_MULSS:
+	case JMIR_OP_MULPD:
+	case JMIR_OP_MULSD:
+	case JMIR_OP_ORPS:
+	case JMIR_OP_ORPD:
+	case JMIR_OP_RCPPS:
+	case JMIR_OP_RCPSS:
+	case JMIR_OP_RSQRTPS:
+	case JMIR_OP_RSQRTSS:
+	case JMIR_OP_SQRTPS:
+	case JMIR_OP_SQRTSS:
+	case JMIR_OP_SQRTPD:
+	case JMIR_OP_SQRTSD:
+	case JMIR_OP_SUBPS:
+	case JMIR_OP_SUBSS:
+	case JMIR_OP_SUBPD:
+	case JMIR_OP_SUBSD:
+	case JMIR_OP_XORPS:
+	case JMIR_OP_XORPD: {
 		jx_mir_operand_t* src = instr->m_Operands[1];
 		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_RegID);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_Reg);
 		} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseRegID);
-			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexRegID);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexReg);
 		}
 
 		jx_mir_operand_t* dst = instr->m_Operands[0];
 		if (dst->m_Kind == JMIR_OPERAND_REGISTER) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_RegID); // binary operators use both src and dst operands.
-			jmir_regAlloc_instrAddDef(pass, instrInfo, dst->u.m_RegID);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_Reg); // binary operators use both src and dst operands.
+			jmir_regAlloc_instrAddDef(pass, instrInfo, dst->u.m_Reg);
 		} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_MemRef.m_BaseRegID);
-			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_MemRef.m_IndexRegID);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_MemRef.m_BaseReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_MemRef.m_IndexReg);
 		}
 	} break;
 	case JMIR_OP_LEA: {
 		jx_mir_operand_t* src = instr->m_Operands[1];
 		if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseRegID);
-			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexRegID);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexReg);
 		} else if (src->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
 			// NOTE: External symbols are RIP based so there is no register to use.
 		} else {
@@ -841,29 +936,31 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 
 		jx_mir_operand_t* dst = instr->m_Operands[0];
 		JX_CHECK(dst->m_Kind == JMIR_OPERAND_REGISTER, "lea destination operand expected to be a register.");
-		jmir_regAlloc_instrAddDef(pass, instrInfo, dst->u.m_RegID);
+		jmir_regAlloc_instrAddDef(pass, instrInfo, dst->u.m_Reg);
 	} break;
 	case JMIR_OP_CALL: {
-#if 0
-		jx_mir_operand_t* targetOp = instr->m_Operands[0];
-		JX_CHECK(targetOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL, "call reg not implemented yet. This will crash below!");
-		jx_mir_function_t* targetFunc = jx_mir_getFunctionByName(pass->m_Ctx, targetOp->u.m_ExternalSymbolName);
-		JX_CHECK(targetFunc, "Function not found!");
-		const uint32_t numRegArgs = jx_min_u32(targetFunc->m_NumArgs, JX_COUNTOF(kMIRFuncArgIReg));
-		for (uint32_t iRegArg = 0; iRegArg < numRegArgs; ++iRegArg) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgIReg[iRegArg]);
-		}
-#else
 		// TODO: Annotate call with the function signature so I can know which registers are actually used
 		// by the call. For now assume all registers are used.
-		for (uint32_t iRegArg = 0; iRegArg < JX_COUNTOF(kMIRFuncArgIReg); ++iRegArg) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgIReg[iRegArg]);
-		}
-#endif
+		if (pass->m_RegClass == JMIR_REG_CLASS_GP) {
+			for (uint32_t iRegArg = 0; iRegArg < JX_COUNTOF(kMIRFuncArgIReg); ++iRegArg) {
+				jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgIReg[iRegArg]);
+			}
 
-		const uint32_t numCallerSavedRegs = JX_COUNTOF(kMIRFuncCallerSavedIReg);
-		for (uint32_t iReg = 0; iReg < numCallerSavedRegs; ++iReg) {
-			jmir_regAlloc_instrAddDef(pass, instrInfo, kMIRFuncCallerSavedIReg[iReg]);
+			const uint32_t numCallerSavedRegs = JX_COUNTOF(kMIRFuncCallerSavedIReg);
+			for (uint32_t iReg = 0; iReg < numCallerSavedRegs; ++iReg) {
+				jmir_regAlloc_instrAddDef(pass, instrInfo, kMIRFuncCallerSavedIReg[iReg]);
+			}
+		} else if (pass->m_RegClass == JMIR_REG_CLASS_XMM) {
+			for (uint32_t iRegArg = 0; iRegArg < JX_COUNTOF(kMIRFuncArgFReg); ++iRegArg) {
+				jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgFReg[iRegArg]);
+			}
+
+			const uint32_t numCallerSavedRegs = JX_COUNTOF(kMIRFuncCallerSavedFReg);
+			for (uint32_t iReg = 0; iReg < numCallerSavedRegs; ++iReg) {
+				jmir_regAlloc_instrAddDef(pass, instrInfo, kMIRFuncCallerSavedFReg[iReg]);
+			}
+		} else {
+			JX_CHECK(false, "Unknown register class");
 		}
 	} break;
 	case JMIR_OP_PUSH: {
@@ -874,8 +971,8 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 	} break;
 	case JMIR_OP_CDQ:
 	case JMIR_OP_CQO: {
-		jmir_regAlloc_instrAddUse(pass, instrInfo, JMIR_HWREG_A);
-		jmir_regAlloc_instrAddDef(pass, instrInfo, JMIR_HWREG_D);
+		jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRRegGP_A);
+		jmir_regAlloc_instrAddDef(pass, instrInfo, kMIRRegGP_D);
 	} break;
 	case JMIR_OP_SETO:
 	case JMIR_OP_SETNO:
@@ -895,10 +992,10 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 	case JMIR_OP_SETNLE: {
 		jx_mir_operand_t* src = instr->m_Operands[0];
 		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
-			jmir_regAlloc_instrAddDef(pass, instrInfo, src->u.m_RegID);
+			jmir_regAlloc_instrAddDef(pass, instrInfo, src->u.m_Reg);
 		} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseRegID);
-			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexRegID);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexReg);
 		}
 	} break;
 	case JMIR_OP_JO:
@@ -920,6 +1017,12 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 	case JMIR_OP_JMP: {
 		jx_mir_operand_t* src = instr->m_Operands[0];
 		JX_CHECK(src->m_Kind == JMIR_OPERAND_BASIC_BLOCK, "I don't know how to handle non-basic block jump targets atm!");
+	} break;
+	case JMIR_OP_UNPCKHPS: {
+		JX_NOT_IMPLEMENTED();
+	} break;
+	case JMIR_OP_UNPCKLPS: {
+		JX_NOT_IMPLEMENTED();
 	} break;
 	default:
 		JX_CHECK(false, "Unknown mir opcode!");
@@ -1055,7 +1158,7 @@ static bool jmir_regAlloc_livenessAnalysis(jmir_func_pass_regalloc_t* pass, jx_m
 				while (iInstr-- != 0) {
 					jmir_instruction_info_t* instrInfo = &bbInfo->m_InstrInfo[iInstr];
 
-					if (jmir_regAlloc_isMoveInstr(instrInfo)) {
+					if (jmir_regAlloc_isMoveInstr(instrInfo, pass->m_RegClass)) {
 						JX_CHECK(instrInfo->m_NumUses == 1, "Move instruction expected to have 1 use.");
 						jx_bitsetResetBit(instrLive, instrInfo->m_Uses[0]);
 
@@ -1103,11 +1206,18 @@ static bool jmir_regAlloc_livenessAnalysis(jmir_func_pass_regalloc_t* pass, jx_m
 	return true;
 }
 
-static bool jmir_regAlloc_isMoveInstr(jmir_instruction_info_t* instrInfo)
+static bool jmir_regAlloc_isMoveInstr(jmir_instruction_info_t* instrInfo, jx_mir_reg_class regClass)
 {
 	jx_mir_instruction_t* instr = instrInfo->m_Instr;
 
-	if (instr->m_OpCode != JMIR_OP_MOV && instr->m_OpCode != JMIR_OP_MOVSX && instr->m_OpCode != JMIR_OP_MOVZX) {
+	const bool isMov = false
+		|| instr->m_OpCode == JMIR_OP_MOV
+		|| instr->m_OpCode == JMIR_OP_MOVSX
+		|| instr->m_OpCode == JMIR_OP_MOVZX
+		|| instr->m_OpCode == JMIR_OP_MOVSS
+		|| instr->m_OpCode == JMIR_OP_MOVSD
+		;
+	if (!isMov) {
 		return false;
 	}
 
@@ -1115,6 +1225,8 @@ static bool jmir_regAlloc_isMoveInstr(jmir_instruction_info_t* instrInfo)
 	jx_mir_operand_t* src = instr->m_Operands[1];
 	return dst->m_Kind == JMIR_OPERAND_REGISTER
 		&& src->m_Kind == JMIR_OPERAND_REGISTER
+		&& jx_mir_regIsClass(dst->u.m_Reg, regClass)
+		&& jx_mir_regIsClass(src->u.m_Reg, regClass)
 		;
 }
 
@@ -1130,19 +1242,19 @@ static jmir_basic_block_info_t* jmir_regAlloc_getBasicBlockInfo(jmir_func_pass_r
 	return NULL;
 }
 
-static uint32_t jmir_regAlloc_mapRegToID(jmir_func_pass_regalloc_t* pass, uint32_t regID)
+static uint32_t jmir_regAlloc_mapRegToID(jmir_func_pass_regalloc_t* pass, jx_mir_reg_t reg)
 {
 	uint32_t id = UINT32_MAX;
-	if (regID == JMIR_MEMORY_REG_NONE) {
+	if (!jx_mir_regIsValid(reg)) {
 		// No op
-	} else if (regID >= JMIR_FIRST_VIRTUAL_REGISTER) {
-		id = (regID - JMIR_FIRST_VIRTUAL_REGISTER) + pass->m_NumHWRegs;
+	} else if (jx_mir_regIsVirtual(reg)) {
+		id = reg.m_ID + pass->m_NumHWRegs;
 		JX_CHECK(id < pass->m_NumNodes, "Invalid virtual register node index!");
 	} else {
 		// Must be a hardware register. Find index in hw regs array.
 		const uint32_t numHWRegs = pass->m_NumHWRegs;
 		for (uint32_t iHWReg = 0; iHWReg < numHWRegs; ++iHWReg) {
-			if (pass->m_HWRegs[iHWReg] == regID) {
+			if (jx_mir_regEqual(pass->m_HWRegs[iHWReg], reg)) {
 				id = iHWReg;
 				break;
 			}
@@ -1158,7 +1270,7 @@ static inline jmir_graph_node_t* jmir_regAlloc_getNode(jmir_func_pass_regalloc_t
 	return &pass->m_Nodes[nodeID];
 }
 
-static uint32_t jmir_regAlloc_getHWRegWithColor(jmir_func_pass_regalloc_t* pass, uint32_t color)
+static jx_mir_reg_t jmir_regAlloc_getHWRegWithColor(jmir_func_pass_regalloc_t* pass, uint32_t color)
 {
 	const uint32_t numHWRegs = pass->m_NumHWRegs;
 	for (uint32_t iHWReg = 0; iHWReg < numHWRegs; ++iHWReg) {
@@ -1169,7 +1281,7 @@ static uint32_t jmir_regAlloc_getHWRegWithColor(jmir_func_pass_regalloc_t* pass,
 		}
 	}
 
-	return JMIR_MEMORY_REG_NONE;
+	return kMIRRegGPNone;
 }
 
 static void jmir_regAlloc_makeWorklist(jmir_func_pass_regalloc_t* pass)
@@ -1327,36 +1439,39 @@ static void jmir_regAlloc_replaceRegs(jmir_func_pass_regalloc_t* pass)
 			const uint32_t numOperands = instr->m_NumOperands;
 			for (uint32_t iOperand = 0; iOperand < numOperands; ++iOperand) {
 				jx_mir_operand_t* operand = instr->m_Operands[iOperand];
-				if (operand->m_Kind == JMIR_OPERAND_REGISTER && operand->u.m_RegID >= JMIR_FIRST_VIRTUAL_REGISTER) {
-					jmir_graph_node_t* node = jmir_regAlloc_getNode(pass, jmir_regAlloc_mapRegToID(pass, operand->u.m_RegID));
+				if (operand->m_Kind == JMIR_OPERAND_REGISTER && jx_mir_regIsVirtual(operand->u.m_Reg) && jx_mir_regIsClass(operand->u.m_Reg, pass->m_RegClass)) {
+					jmir_graph_node_t* node = jmir_regAlloc_getNode(pass, jmir_regAlloc_mapRegToID(pass, operand->u.m_Reg));
 					if (jmir_nodeIs(node, JMIR_NODE_STATE_COLORED)) {
-						uint32_t hwReg = jmir_regAlloc_getHWRegWithColor(pass, node->m_Color);
-						if (hwReg != JMIR_MEMORY_REG_NONE) {
-							pass->m_Func->m_UsedHWIRegs |= 1u << (uint32_t)hwReg;
-							operand->u.m_RegID = hwReg;
+						jx_mir_reg_t hwReg = jmir_regAlloc_getHWRegWithColor(pass, node->m_Color);
+						if (jx_mir_regIsValid(hwReg)) {
+							JX_CHECK(jx_mir_regIsHW(hwReg), "Expected hw register.");
+							pass->m_Func->m_UsedHWRegs[hwReg.m_Class] |= 1u << (uint32_t)hwReg.m_ID;
+							operand->u.m_Reg = hwReg;
 						}
 					}
 				} else if (operand->m_Kind == JMIR_OPERAND_MEMORY_REF) {
 					jx_mir_memory_ref_t* memRef = &operand->u.m_MemRef;
 
-					if (memRef->m_BaseRegID != JMIR_MEMORY_REG_NONE && memRef->m_BaseRegID >= JMIR_FIRST_VIRTUAL_REGISTER) {
-						jmir_graph_node_t* node = jmir_regAlloc_getNode(pass, jmir_regAlloc_mapRegToID(pass, memRef->m_BaseRegID));
+					if (jx_mir_regIsValid(memRef->m_BaseReg) && jx_mir_regIsVirtual(memRef->m_BaseReg) && jx_mir_regIsClass(memRef->m_BaseReg, pass->m_RegClass)) {
+						jmir_graph_node_t* node = jmir_regAlloc_getNode(pass, jmir_regAlloc_mapRegToID(pass, memRef->m_BaseReg));
 						if (jmir_nodeIs(node, JMIR_NODE_STATE_COLORED)) {
-							uint32_t hwReg = jmir_regAlloc_getHWRegWithColor(pass, node->m_Color);
-							if (hwReg != JMIR_MEMORY_REG_NONE) {
-								pass->m_Func->m_UsedHWIRegs |= 1u << (uint32_t)hwReg;
-								memRef->m_BaseRegID = hwReg;
+							jx_mir_reg_t hwReg = jmir_regAlloc_getHWRegWithColor(pass, node->m_Color);
+							if (jx_mir_regIsValid(hwReg)) {
+								JX_CHECK(jx_mir_regIsHW(hwReg), "Expected hw register.");
+								pass->m_Func->m_UsedHWRegs[hwReg.m_Class] |= 1u << (uint32_t)hwReg.m_ID;
+								memRef->m_BaseReg = hwReg;
 							}
 						}
 					}
 
-					if (memRef->m_IndexRegID != JMIR_MEMORY_REG_NONE && memRef->m_IndexRegID >= JMIR_FIRST_VIRTUAL_REGISTER) {
-						jmir_graph_node_t* node = jmir_regAlloc_getNode(pass, jmir_regAlloc_mapRegToID(pass, memRef->m_IndexRegID));
+					if (jx_mir_regIsValid(memRef->m_IndexReg) && jx_mir_regIsVirtual(memRef->m_IndexReg) && jx_mir_regIsClass(memRef->m_IndexReg, pass->m_RegClass)) {
+						jmir_graph_node_t* node = jmir_regAlloc_getNode(pass, jmir_regAlloc_mapRegToID(pass, memRef->m_IndexReg));
 						if (jmir_nodeIs(node, JMIR_NODE_STATE_COLORED)) {
-							uint32_t hwReg = jmir_regAlloc_getHWRegWithColor(pass, node->m_Color);
-							if (hwReg != JMIR_MEMORY_REG_NONE) {
-								pass->m_Func->m_UsedHWIRegs |= 1u << (uint32_t)hwReg;
-								memRef->m_IndexRegID = hwReg;
+							jx_mir_reg_t hwReg = jmir_regAlloc_getHWRegWithColor(pass, node->m_Color);
+							if (jx_mir_regIsValid(hwReg)) {
+								JX_CHECK(jx_mir_regIsHW(hwReg), "Expected hw register.");
+								pass->m_Func->m_UsedHWRegs[hwReg.m_Class] |= 1u << (uint32_t)hwReg.m_ID;
+								memRef->m_IndexReg = hwReg;
 							}
 						}
 					}
@@ -1376,10 +1491,14 @@ static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass)
 	jmir_graph_node_t* node = pass->m_NodeList[JMIR_NODE_STATE_SPILLED];
 	while (node) {
 		JX_CHECK(jmir_nodeIs(node, JMIR_NODE_STATE_SPILLED), "Expected node from spill list!");
-		JX_CHECK(node->m_RegID >= pass->m_NumHWRegs, "Expected a virtual register!");
+		JX_CHECK(node->m_ID >= pass->m_NumHWRegs, "Expected a virtual register!");
 
-		const uint32_t regID = node->m_RegID;
-		const uint32_t vregID = (regID - pass->m_NumHWRegs) + JMIR_FIRST_VIRTUAL_REGISTER;
+		const uint32_t nodeID = node->m_ID;
+		const jx_mir_reg_t vreg = {
+			.m_ID = nodeID - pass->m_NumHWRegs,
+			.m_Class = pass->m_RegClass,
+			.m_IsVirtual = true
+		};
 
 		jx_mir_operand_t* stackSlot = NULL;
 		jx_mir_operand_t* temp = NULL;
@@ -1401,7 +1520,7 @@ static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass)
 
 				const uint32_t numUses = instrInfo->m_NumUses;
 				for (uint32_t iUse = 0; iUse < numUses; ++iUse) {
-					if (instrInfo->m_Uses[iUse] == regID) {
+					if (instrInfo->m_Uses[iUse] == nodeID) {
 						use = true;
 						break;
 					}
@@ -1409,7 +1528,7 @@ static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass)
 
 				const uint32_t numDefs = instrInfo->m_NumDefs;
 				for (uint32_t iDef = 0; iDef < numDefs; ++iDef) {
-					if (instrInfo->m_Defs[iDef] == regID) {
+					if (instrInfo->m_Defs[iDef] == nodeID) {
 						def = true;
 						break;
 					}
@@ -1423,12 +1542,12 @@ static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass)
 					for (uint32_t iOperand = 0; iOperand < numOperands; ++iOperand) {
 						jx_mir_operand_t* operand = instr->m_Operands[iOperand];
 						if (operand->m_Kind == JMIR_OPERAND_REGISTER) {
-							if (operand->u.m_RegID == vregID) {
+							if (jx_mir_regEqual(operand->u.m_Reg, vreg)) {
 								regType = operand->m_Type;
 								break;
 							}
 						} else if (operand->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-							if (operand->u.m_MemRef.m_BaseRegID == vregID || operand->u.m_MemRef.m_IndexRegID == vregID) {
+							if (jx_mir_regEqual(operand->u.m_MemRef.m_BaseReg, vreg) || jx_mir_regEqual(operand->u.m_MemRef.m_IndexReg, vreg)) {
 								regType = JMIR_TYPE_I64;
 								break;
 							}
@@ -1445,14 +1564,14 @@ static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass)
 
 				if (use && def) {
 					jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, temp, stackSlot));
-					jmir_regAlloc_replaceInstrRegUse(instr, vregID, temp);
+					jmir_regAlloc_replaceInstrRegUse(instr, vreg, temp);
 					jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_mov(ctx, stackSlot, temp));
 				} else if (use) {
 					// Load from stack into new temporary
 					jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, temp, stackSlot));
-					jmir_regAlloc_replaceInstrRegUse(instr, vregID, temp);
+					jmir_regAlloc_replaceInstrRegUse(instr, vreg, temp);
 				} else if (def) {
-					jmir_regAlloc_replaceInstrRegDef(instr, vregID, temp);
+					jmir_regAlloc_replaceInstrRegDef(instr, vreg, temp);
 					jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_mov(ctx, stackSlot, temp));
 				}
 			}
@@ -1462,7 +1581,7 @@ static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass)
 	}
 }
 
-static void jmir_regAlloc_replaceInstrRegDef(jx_mir_instruction_t* instr, uint32_t vregID, jx_mir_operand_t* newReg)
+static void jmir_regAlloc_replaceInstrRegDef(jx_mir_instruction_t* instr, jx_mir_reg_t vreg, jx_mir_operand_t* newReg)
 {
 	switch (instr->m_OpCode) {
 	case JMIR_OP_RET: {
@@ -1495,7 +1614,7 @@ static void jmir_regAlloc_replaceInstrRegDef(jx_mir_instruction_t* instr, uint32
 	case JMIR_OP_SHL: {
 		jx_mir_operand_t* dst = instr->m_Operands[0];
 		JX_CHECK(dst->m_Kind == JMIR_OPERAND_REGISTER, "Move dest expected to be a register.");
-		JX_CHECK(dst->u.m_RegID == vregID, "Expected a different virtual register!");
+		JX_CHECK(jx_mir_regEqual(dst->u.m_Reg, vreg), "Expected a different virtual register!");
 		instr->m_Operands[0] = newReg;
 	} break;
 	case JMIR_OP_IDIV:
@@ -1557,7 +1676,7 @@ static void jmir_regAlloc_replaceInstrRegDef(jx_mir_instruction_t* instr, uint32
 	}
 }
 
-static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, uint32_t vregID, jx_mir_operand_t* newReg)
+static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, jx_mir_reg_t vreg, jx_mir_operand_t* newReg)
 {
 	switch (instr->m_OpCode) {
 	case JMIR_OP_RET: {
@@ -1577,7 +1696,7 @@ static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, uint32
 	case JMIR_OP_MOVZX: {
 		jx_mir_operand_t* src = instr->m_Operands[1];
 		JX_CHECK(src->m_Kind == JMIR_OPERAND_REGISTER, "Expected register operand");
-		JX_CHECK(src->u.m_RegID == vregID, "Wrong virtual register!");
+		JX_CHECK(jx_mir_regEqual(src->u.m_Reg, vreg), "Wrong virtual register!");
 		instr->m_Operands[1] = newReg;
 	} break;
 	case JMIR_OP_CMP:
@@ -1586,7 +1705,7 @@ static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, uint32
 	case JMIR_OP_SUB: {
 		jx_mir_operand_t* src = instr->m_Operands[1];
 		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
-			if (src->u.m_RegID == vregID) {
+			if (jx_mir_regEqual(src->u.m_Reg, vreg)) {
 				instr->m_Operands[1] = newReg;
 			}
 		} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
@@ -1595,7 +1714,7 @@ static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, uint32
 
 		jx_mir_operand_t* dst = instr->m_Operands[0];
 		if (dst->m_Kind == JMIR_OPERAND_REGISTER) {
-			if (dst->u.m_RegID == vregID) {
+			if (jx_mir_regEqual(dst->u.m_Reg, vreg)) {
 				instr->m_Operands[0] = newReg;
 			}
 		} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF) {
@@ -1677,8 +1796,8 @@ static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, uint32
 static void jmir_regAlloc_addEdge(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* u, jmir_graph_node_t* v)
 {
 	if (u != v && !jmir_regAlloc_areNodesAdjacent(pass, u, v)) {
-		jx_bitsetSetBit(u->m_AdjacentSet, v->m_RegID);
-		jx_bitsetSetBit(v->m_AdjacentSet, u->m_RegID);
+		jx_bitsetSetBit(u->m_AdjacentSet, v->m_ID);
+		jx_bitsetSetBit(v->m_AdjacentSet, u->m_ID);
 
 		if (!jmir_nodeIs(u, JMIR_NODE_STATE_PRECOLORED)) {
 			jx_array_push_back(u->m_AdjacentArr, v);
@@ -1694,8 +1813,8 @@ static void jmir_regAlloc_addEdge(jmir_func_pass_regalloc_t* pass, jmir_graph_no
 
 static bool jmir_regAlloc_areNodesAdjacent(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* u, jmir_graph_node_t* v)
 {
-	JX_CHECK(jx_bitsetIsBitSet(u->m_AdjacentSet, v->m_RegID) == jx_bitsetIsBitSet(v->m_AdjacentSet, u->m_RegID), "Invalid bitset state!");
-	return jx_bitsetIsBitSet(u->m_AdjacentSet, v->m_RegID);
+	JX_CHECK(jx_bitsetIsBitSet(u->m_AdjacentSet, v->m_ID) == jx_bitsetIsBitSet(v->m_AdjacentSet, u->m_ID), "Invalid bitset state!");
+	return jx_bitsetIsBitSet(u->m_AdjacentSet, v->m_ID);
 }
 
 static bool jmir_regAlloc_canCombineNodes(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* u, jmir_graph_node_t* v)
@@ -1929,7 +2048,7 @@ static jmir_graph_node_t* jmir_regAlloc_nodeAdjacentIterNext(jmir_graph_node_t* 
 	return res;
 }
 
-static bool jmir_regAlloc_nodeInit(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node, uint32_t regID, jmir_graph_node_state initialState)
+static bool jmir_regAlloc_nodeInit(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node, uint32_t id, jmir_graph_node_state initialState)
 {
 	node->m_AdjacentSet = jx_bitsetCreate(pass->m_NumNodes, pass->m_LinearAllocator);
 	if (!node->m_AdjacentSet) {
@@ -1942,8 +2061,9 @@ static bool jmir_regAlloc_nodeInit(jmir_func_pass_regalloc_t* pass, jmir_graph_n
 	}
 
 	if (initialState == JMIR_NODE_STATE_PRECOLORED) {
+		JX_CHECK(id < pass->m_NumHWRegs, "Trying to precolor a virtual register?");
 		node->m_AdjacentArr = NULL;
-		node->m_Color = regID;
+		node->m_Color = id;
 	} else {
 		node->m_AdjacentArr = (jmir_graph_node_t**)jx_array_create(pass->m_Allocator);
 		if (!node->m_AdjacentArr) {
@@ -1953,7 +2073,7 @@ static bool jmir_regAlloc_nodeInit(jmir_func_pass_regalloc_t* pass, jmir_graph_n
 		node->m_Color = UINT32_MAX;
 	}
 
-	node->m_RegID = regID;
+	node->m_ID = id;
 	node->m_State = JMIR_NODE_STATE_ALLOCATED;
 	jmir_regAlloc_nodeSetState(pass, node, initialState);
 

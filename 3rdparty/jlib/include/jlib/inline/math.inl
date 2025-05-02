@@ -587,6 +587,16 @@ static inline float jx_bitcast_i32_f(int32_t x)
 {
 	return ((union { int32_t i; float f; }) { x }).f;
 }
+
+static inline int64_t jx_bitcast_d_i64(double x)
+{
+	return ((union { double d; int64_t i; }) { x }).i;
+}
+
+static inline double jx_bitcast_i64_d(int64_t x)
+{
+	return ((union { int64_t i; double d; }) { x }).d;
+}
 JX_PRAGMA_DIAGNOSTIC_POP
 #else // __cplusplus
 static inline int32_t jx_bitcast_f_i32(float x)

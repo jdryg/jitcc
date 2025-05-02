@@ -15,8 +15,8 @@ uint8_t  test_addu8(uint8_t a, uint8_t b)    { return a + b; }
 uint16_t test_addu16(uint16_t a, uint16_t b) { return a + b; }
 uint32_t test_addu32(uint32_t a, uint32_t b) { return a + b; }
 uint64_t test_addu64(uint64_t a, uint64_t b) { return a + b; }
-////float    test_addf32(float a, float b)       { return a + b; }
-////double   test_addf64(double a, double b)     { return a + b; }
+float    test_addf32(float a, float b)       { return a + b; }
+double   test_addf64(double a, double b)     { return a + b; }
 
 int8_t   test_subi8(int8_t a, int8_t b)      { return a - b; }
 int16_t  test_subi16(int16_t a, int16_t b)   { return a - b; }
@@ -26,8 +26,8 @@ uint8_t  test_subu8(uint8_t a, uint8_t b)    { return a - b; }
 uint16_t test_subu16(uint16_t a, uint16_t b) { return a - b; }
 uint32_t test_subu32(uint32_t a, uint32_t b) { return a - b; }
 uint64_t test_subu64(uint64_t a, uint64_t b) { return a - b; }
-//float    test_subf32(float a, float b)       { return a - b; }
-//double   test_subf64(double a, double b)     { return a - b; }
+float    test_subf32(float a, float b)       { return a - b; }
+double   test_subf64(double a, double b)     { return a - b; }
 
 int8_t   test_muli8(int8_t a, int8_t b)      { return a * b; }
 int16_t  test_muli16(int16_t a, int16_t b)   { return a * b; }
@@ -37,8 +37,8 @@ uint8_t  test_mulu8(uint8_t a, uint8_t b)    { return a * b; }
 uint16_t test_mulu16(uint16_t a, uint16_t b) { return a * b; }
 uint32_t test_mulu32(uint32_t a, uint32_t b) { return a * b; }
 uint64_t test_mulu64(uint64_t a, uint64_t b) { return a * b; }
-//float    test_mulf32(float a, float b)       { return a * b; }
-//double   test_mulf64(double a, double b)     { return a * b; }
+float    test_mulf32(float a, float b)       { return a * b; }
+double   test_mulf64(double a, double b)     { return a * b; }
 
 int8_t   test_divi8(int8_t a, int8_t b)      { return a / b; }
 int16_t  test_divi16(int16_t a, int16_t b)   { return a / b; }
@@ -48,8 +48,8 @@ uint8_t  test_divu8(uint8_t a, uint8_t b)    { return a / b; }
 uint16_t test_divu16(uint16_t a, uint16_t b) { return a / b; }
 uint32_t test_divu32(uint32_t a, uint32_t b) { return a / b; }
 uint64_t test_divu64(uint64_t a, uint64_t b) { return a / b; }
-//float    test_divf32(float a, float b)       { return a / b; }
-//double   test_divf64(double a, double b)     { return a / b; }
+float    test_divf32(float a, float b)       { return a / b; }
+double   test_divf64(double a, double b)     { return a / b; }
 
 int8_t   test_modi8(int8_t a, int8_t b)      { return a % b; }
 int16_t  test_modi16(int16_t a, int16_t b)   { return a % b; }

@@ -551,6 +551,7 @@ typedef struct jx_cc_struct_member_t
 	uint32_t m_Offset;
 	uint32_t m_BitOffset;
 	uint32_t m_BitWidth;
+	uint32_t m_GEPIndex; // NOTE: GetElementPtr index; might be different than ID if the struct has bitfields.
 	bool m_IsBitfield;
 	JX_PAD(3);
 } jx_cc_struct_member_t;

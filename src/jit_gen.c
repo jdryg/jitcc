@@ -4,28 +4,244 @@
 #include <jlib/allocator.h>
 #include <jlib/array.h>
 #include <jlib/dbg.h>
+#include <jlib/math.h>
 #include <jlib/memory.h>
 #include <jlib/string.h>
 
 #include <stdlib.h> // calloc
-#include <stdio.h> // printf
+#include <stdio.h>  // printf
 #include <memory.h> // memset/memcpy
 
-static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64_context_t* jitCtx, const jx_mir_operand_t* mirOp);
+typedef bool (*jx64VoidFunc)(jx_x64_context_t* ctx);
+typedef bool (*jx64UnaryFunc)(jx_x64_context_t* ctx, jx_x64_operand_t op);
+typedef bool (*jx64BinaryFunc)(jx_x64_context_t* ctx, jx_x64_operand_t op1, jx_x64_operand_t op2);
+typedef bool (*jx64CondFunc)(jx_x64_context_t* ctx, jx_x64_condition_code cc, jx_x64_operand_t op);
+
+typedef enum jx64gen_instr_kind
+{
+	JX64GEN_INSTR_UNKNOWN = 0,
+	JX64GEN_INSTR_VOID = 1,
+	JX64GEN_INSTR_UNARY = 2,
+	JX64GEN_INSTR_BINARY = 3,
+	JX64GEN_INSTR_COND = 4,
+} jx64gen_instr_kind;
+
+typedef struct jx64gen_instr_desc_t
+{
+	jx64gen_instr_kind m_Kind;
+	JX_PAD(4);
+	union
+	{
+		jx64VoidFunc m_VoidFunc;
+		jx64UnaryFunc m_UnaryFunc;
+		jx64BinaryFunc m_BinaryFunc;
+		struct
+		{
+			jx64CondFunc m_Func;
+			uint32_t m_Code;
+			JX_PAD(4);
+		} m_Cond;
+	} u;
+} jx64gen_instr_desc_t;
+
+static const jx64gen_instr_desc_t kInstrDesc[] = {
+	[JMIR_OP_RET]       = { .m_Kind = JX64GEN_INSTR_VOID,   .u.m_VoidFunc = jx64_retn },
+	[JMIR_OP_CMP]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cmp },
+	[JMIR_OP_TEST]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_test },
+	[JMIR_OP_JMP]       = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_jmp },
+	[JMIR_OP_PHI]       = { 0 },
+	[JMIR_OP_MOV]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_mov },
+	[JMIR_OP_MOVSX]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movsx },
+	[JMIR_OP_MOVZX]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movzx },
+	[JMIR_OP_IMUL]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_imul },
+	[JMIR_OP_IDIV]      = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_idiv },
+	[JMIR_OP_DIV]       = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_idiv },
+	[JMIR_OP_ADD]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_add },
+	[JMIR_OP_SUB]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_sub },
+	[JMIR_OP_LEA]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_lea },
+	[JMIR_OP_XOR]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_xor },
+	[JMIR_OP_AND]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_and },
+	[JMIR_OP_OR]        = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_or },
+	[JMIR_OP_SAR]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_sar },
+	[JMIR_OP_SHR]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_shr },
+	[JMIR_OP_SHL]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_shl },
+	[JMIR_OP_CALL]      = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_call },
+	[JMIR_OP_PUSH]      = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_push },
+	[JMIR_OP_POP]       = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_pop },
+	[JMIR_OP_CDQ]       = { .m_Kind = JX64GEN_INSTR_VOID,   .u.m_VoidFunc = jx64_cdq },
+	[JMIR_OP_CQO]       = { .m_Kind = JX64GEN_INSTR_VOID,   .u.m_VoidFunc = jx64_cqo },
+	[JMIR_OP_SETO]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_O },
+	[JMIR_OP_SETNO]     = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NO },
+	[JMIR_OP_SETB]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_B },
+	[JMIR_OP_SETNB]     = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NB },
+	[JMIR_OP_SETE]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_E },
+	[JMIR_OP_SETNE]     = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NE },
+	[JMIR_OP_SETBE]     = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_BE },
+	[JMIR_OP_SETNBE]    = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NBE },
+	[JMIR_OP_SETS]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_S },
+	[JMIR_OP_SETNS]     = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NS },
+	[JMIR_OP_SETP]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_P },
+	[JMIR_OP_SETNP]     = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NP },
+	[JMIR_OP_SETL]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_L },
+	[JMIR_OP_SETNL]     = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NL },
+	[JMIR_OP_SETLE]     = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_LE },
+	[JMIR_OP_SETNLE]    = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NLE },
+	[JMIR_OP_JO]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_O },
+	[JMIR_OP_JNO]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NO },
+	[JMIR_OP_JB]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_B },
+	[JMIR_OP_JNB]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NB },
+	[JMIR_OP_JE]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_E },
+	[JMIR_OP_JNE]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NE },
+	[JMIR_OP_JBE]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_BE },
+	[JMIR_OP_JNBE]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NBE },
+	[JMIR_OP_JS]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_S },
+	[JMIR_OP_JNS]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NS },
+	[JMIR_OP_JP]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_P },
+	[JMIR_OP_JNP]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NP },
+	[JMIR_OP_JL]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_L },
+	[JMIR_OP_JNL]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NL },
+	[JMIR_OP_JLE]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_LE },
+	[JMIR_OP_JNLE]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NLE },
+	[JMIR_OP_MOVSS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movss },
+	[JMIR_OP_MOVSD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movsd },
+	[JMIR_OP_MOVD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movd },
+	[JMIR_OP_MOVQ]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movq },
+	[JMIR_OP_ADDPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_addps },
+	[JMIR_OP_ADDSS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_addss },
+	[JMIR_OP_ADDPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_addpd },
+	[JMIR_OP_ADDSD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_addsd },
+	[JMIR_OP_ANDNPS]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_andnps },
+	[JMIR_OP_ANDNPD]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_andnpd },
+	[JMIR_OP_ANDPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_andps },
+	[JMIR_OP_ANDPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_andpd },
+	[JMIR_OP_COMISS]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_comiss },
+	[JMIR_OP_COMISD]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_comisd },
+	[JMIR_OP_CVTSI2SS]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvtsi2ss },
+	[JMIR_OP_CVTSI2SD]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvtsi2sd },
+	[JMIR_OP_CVTSS2SI]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvtss2si },
+	[JMIR_OP_CVTSD2SI]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvtsd2si },
+	[JMIR_OP_CVTTSS2SI] = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvttss2si },
+	[JMIR_OP_CVTTSD2SI] = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvttsd2si },
+	[JMIR_OP_CVTSD2SS]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvtsd2ss },
+	[JMIR_OP_CVTSS2SD]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvtss2sd },
+	[JMIR_OP_DIVPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_divps },
+	[JMIR_OP_DIVSS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_divss },
+	[JMIR_OP_DIVPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_divpd },
+	[JMIR_OP_DIVSD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_divsd },
+	[JMIR_OP_MAXPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_maxps },
+	[JMIR_OP_MAXSS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_maxss },
+	[JMIR_OP_MAXPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_maxpd },
+	[JMIR_OP_MAXSD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_maxsd },
+	[JMIR_OP_MINPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_minps },
+	[JMIR_OP_MINSS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_minss },
+	[JMIR_OP_MINPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_minpd },
+	[JMIR_OP_MINSD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_minsd },
+	[JMIR_OP_MULPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_mulps },
+	[JMIR_OP_MULSS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_mulss },
+	[JMIR_OP_MULPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_mulpd },
+	[JMIR_OP_MULSD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_mulsd },
+	[JMIR_OP_ORPS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_orps },
+	[JMIR_OP_ORPD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_orpd },
+	[JMIR_OP_RCPPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_rcpps },
+	[JMIR_OP_RCPSS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_rcpss },
+	[JMIR_OP_RSQRTPS]   = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_rsqrtps },
+	[JMIR_OP_RSQRTSS]   = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_rsqrtss },
+	[JMIR_OP_SQRTPS]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_sqrtps },
+	[JMIR_OP_SQRTSS]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_sqrtss },
+	[JMIR_OP_SQRTPD]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_sqrtpd },
+	[JMIR_OP_SQRTSD]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_sqrtsd },
+	[JMIR_OP_SUBPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_subps },
+	[JMIR_OP_SUBSS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_subss },
+	[JMIR_OP_SUBPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_subpd },
+	[JMIR_OP_SUBSD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_subsd },
+	[JMIR_OP_UCOMISS]   = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_ucomiss },
+	[JMIR_OP_UCOMISD]   = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_ucomisd },
+	[JMIR_OP_UNPCKHPS]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_unpckhps },
+	[JMIR_OP_UNPCKHPD]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_unpckhpd },
+	[JMIR_OP_UNPCKLPS]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_unpcklps },
+	[JMIR_OP_UNPCKLPD]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_unpcklpd },
+	[JMIR_OP_XORPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_xorps },
+	[JMIR_OP_XORPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_xorpd },
+};
+
+typedef struct jx_x64gen_context_t
+{
+	jx_allocator_i* m_Allocator;
+	jx_x64_context_t* m_JITCtx;
+	jx_mir_context_t* m_MIRCtx;
+	jx_x64_symbol_t** m_GlobalVars;
+	jx_x64_symbol_t** m_Funcs;
+	jx_x64_label_t** m_BasicBlocks;
+} jx_x64gen_context_t;
+
+static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64gen_context_t* ctx, const jx_mir_operand_t* mirOp);
 static jx_x64_size jx_x64gen_convertMIRTypeToSize(jx_mir_type_kind type);
-static jx_x64_reg jx_x64gen_convertMIRReg(uint32_t mirRegID, jx_x64_size sz);
+static jx_x64_reg jx_x64gen_convertMIRReg(jx_mir_reg_t mirReg, jx_x64_size sz);
 static jx_x64_scale jx_x64gen_convertMIRScale(uint32_t mirScale);
 
-bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allocator_i* allocator)
+jx_x64gen_context_t* jx_x64gen_createContext(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allocator_i* allocator)
 {
-	// Declare global variables.
-	const uint32_t numGlobalVars = jx_mir_getNumGlobalVars(mirCtx);
-	jx_x64_symbol_t** jitGVs = (jx_x64_symbol_t**)JX_ALLOC(allocator, sizeof(jx_x64_symbol_t*) * numGlobalVars);
-	if (!jitGVs) {
-		return false;
+	jx_x64gen_context_t* ctx = (jx_x64gen_context_t*)JX_ALLOC(allocator, sizeof(jx_x64gen_context_t));
+	if (!ctx) {
+		return NULL;
 	}
 
-	jx_memset(jitGVs, 0, sizeof(jx_x64_symbol_t*) * numGlobalVars);
+	jx_memset(ctx, 0, sizeof(jx_x64gen_context_t));
+	ctx->m_Allocator = allocator;
+	ctx->m_JITCtx = jitCtx;
+	ctx->m_MIRCtx = mirCtx;
+	ctx->m_GlobalVars = (jx_x64_symbol_t**)jx_array_create(allocator);
+	if (!ctx->m_GlobalVars) {
+		jx_x64gen_destroyContext(ctx);
+		return NULL;
+	}
+
+	ctx->m_Funcs = (jx_x64_symbol_t**)jx_array_create(allocator);
+	if (!ctx->m_Funcs) {
+		jx_x64gen_destroyContext(ctx);
+		return NULL;
+	}
+
+	ctx->m_BasicBlocks = (jx_x64_label_t**)jx_array_create(allocator);
+	if (!ctx->m_BasicBlocks) {
+		jx_x64gen_destroyContext(ctx);
+		return NULL;
+	}
+
+	return ctx;
+}
+
+void jx_x64gen_destroyContext(jx_x64gen_context_t* ctx)
+{
+	if (ctx->m_BasicBlocks) {
+		jx_array_free(ctx->m_BasicBlocks);
+		ctx->m_BasicBlocks = NULL;
+	}
+
+	if (ctx->m_Funcs) {
+		jx_array_free(ctx->m_Funcs);
+		ctx->m_Funcs = NULL;
+	}
+
+	if (ctx->m_GlobalVars) {
+		jx_array_free(ctx->m_GlobalVars);
+		ctx->m_GlobalVars = NULL;
+	}
+
+	JX_FREE(ctx->m_Allocator, ctx);
+}
+
+bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
+{
+	jx_mir_context_t* mirCtx = ctx->m_MIRCtx;
+	jx_x64_context_t* jitCtx = ctx->m_JITCtx;
+
+	jx_array_resize(ctx->m_GlobalVars, 0);
+	jx_array_resize(ctx->m_Funcs, 0);
+	jx_array_resize(ctx->m_BasicBlocks, 0);
+
+	// Declare global variables.
+	const uint32_t numGlobalVars = jx_mir_getNumGlobalVars(mirCtx);
 	for (uint32_t iGV = 0; iGV < numGlobalVars; ++iGV) {
 		jx_mir_global_variable_t* mirGV = jx_mir_getGlobalVarByID(mirCtx, iGV);
 
@@ -36,18 +252,17 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 			gvName = mirGV->m_Name;
 		}
 
-		jitGVs[iGV] = jx64_globalVarDeclare(jitCtx, gvName);
+		jx_x64_symbol_t* gv = jx64_globalVarDeclare(jitCtx, gvName);
+		if (!gv) {
+			return false;
+		}
+
+		jx_array_push_back(ctx->m_GlobalVars, gv);
 	}
 
 	// Declare functions
-	const uint32_t numFunctions = jx_mir_getNumFunctions(mirCtx);
-	jx_x64_symbol_t** jitFuncs = (jx_x64_symbol_t**)JX_ALLOC(allocator, sizeof(jx_x64_symbol_t*) * numFunctions);
-	if (!jitFuncs) {
-		return false;
-	}
-
-	jx_memset(jitFuncs, 0, sizeof(jx_x64_symbol_t*) * numFunctions);
-	for (uint32_t iFunc = 0; iFunc < numFunctions; ++iFunc) {
+	const uint32_t numFuncs = jx_mir_getNumFunctions(mirCtx);
+	for (uint32_t iFunc = 0; iFunc < numFuncs; ++iFunc) {
 		jx_mir_function_t* mirFunc = jx_mir_getFunctionByID(mirCtx, iFunc);
 
 		const char* funcName = jx_strrchr(mirFunc->m_Name, ':');
@@ -57,187 +272,58 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 			funcName = mirFunc->m_Name;
 		}
 
-		jitFuncs[iFunc] = jx64_funcDeclare(jitCtx, funcName);
+		jx_x64_symbol_t* func = jx64_funcDeclare(jitCtx, funcName);
+		if (!func) {
+			return false;
+		}
+
+		jx_array_push_back(ctx->m_Funcs, func);
 	}
 
 	// Emit functions
-	for (uint32_t iFunc = 0; iFunc < numFunctions; ++iFunc) {
+	for (uint32_t iFunc = 0; iFunc < numFuncs; ++iFunc) {
 		jx_mir_function_t* mirFunc = jx_mir_getFunctionByID(mirCtx, iFunc);
 
 		if (mirFunc->m_BasicBlockListHead) {
 			const uint32_t numBasicBlocks = mirFunc->m_NextBasicBlockID;
-			jx_x64_label_t** bbLabels = (jx_x64_label_t**)JX_ALLOC(allocator, sizeof(jx_x64_label_t*) * numBasicBlocks);
-			if (!bbLabels) {
-				return false;
-			}
-
-			jx_memset(bbLabels, 0, sizeof(jx_x64_label_t*) * numBasicBlocks);
 			for (uint32_t iBB = 0; iBB < numBasicBlocks; ++iBB) {
-				bbLabels[iBB] = jx64_labelAlloc(jitCtx, JX64_SECTION_TEXT);
+				jx_x64_label_t* lbl = jx64_labelAlloc(jitCtx, JX64_SECTION_TEXT);
+				if (!lbl) {
+					return false;
+				}
+
+				jx_array_push_back(ctx->m_BasicBlocks, lbl);
 			}
 
-			jx64_funcBegin(jitCtx, jitFuncs[iFunc]);
+			jx64_funcBegin(jitCtx, ctx->m_Funcs[iFunc]);
 
 			jx_mir_basic_block_t* mirBB = mirFunc->m_BasicBlockListHead;
 			while (mirBB) {
-				jx64_labelBind(jitCtx, bbLabels[mirBB->m_ID]);
+				jx64_labelBind(jitCtx, ctx->m_BasicBlocks[mirBB->m_ID]);
 
 				jx_mir_instruction_t* mirInstr = mirBB->m_InstrListHead;
 				while (mirInstr) {
-					switch (mirInstr->m_OpCode) {
-					case JMIR_OP_RET: {
-						jx64_retn(jitCtx);
+					JX_CHECK(mirInstr->m_OpCode < JX_COUNTOF(kInstrDesc), "Unknown opcode!");
+					const jx64gen_instr_desc_t* desc = &kInstrDesc[mirInstr->m_OpCode];
+					switch (desc->m_Kind) {
+					case JX64GEN_INSTR_VOID: {
+						desc->u.m_VoidFunc(jitCtx);
 					} break;
-					case JMIR_OP_CMP: {
-						jx_x64_operand_t op1 = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx_x64_operand_t op2 = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
-						jx64_cmp(jitCtx, op1, op2);
+					case JX64GEN_INSTR_UNARY: {
+						jx_x64_operand_t op = jx_x64gen_convertMIROperand(ctx, mirInstr->m_Operands[0]);
+						desc->u.m_UnaryFunc(jitCtx, op);
 					} break;
-					case JMIR_OP_TEST: {
-						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
-						jx64_test(jitCtx, dst, src);
+					case JX64GEN_INSTR_BINARY: {
+						jx_x64_operand_t op1 = jx_x64gen_convertMIROperand(ctx, mirInstr->m_Operands[0]);
+						jx_x64_operand_t op2 = jx_x64gen_convertMIROperand(ctx, mirInstr->m_Operands[1]);
+						desc->u.m_BinaryFunc(jitCtx, op1, op2);
 					} break;
-					case JMIR_OP_JMP: {
-						jx_mir_operand_t* mirOp = mirInstr->m_Operands[0];
-						JX_CHECK(mirOp->m_Kind == JMIR_OPERAND_BASIC_BLOCK, "jmp expected basic block operand");
-						jx_x64_operand_t lblOp = jx64_opLbl(JX64_SIZE_64, bbLabels[mirOp->u.m_BB->m_ID]);
-						jx64_jmp(jitCtx, lblOp);
-					} break;
-					case JMIR_OP_PHI: {
-						JX_NOT_IMPLEMENTED();
-					} break;
-					case JMIR_OP_MOV: {
-						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
-						jx64_mov(jitCtx, dst, src);
-					} break;
-					case JMIR_OP_MOVSX: {
-						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
-						jx64_movsx(jitCtx, dst, src);
-					} break;
-					case JMIR_OP_MOVZX: {
-						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
-						jx64_movzx(jitCtx, dst, src);
-					} break;
-					case JMIR_OP_IMUL: {
-						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
-						jx64_imul(jitCtx, dst, src);
-					} break;
-					case JMIR_OP_IDIV:
-					case JMIR_OP_DIV: {
-						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx64_idiv(jitCtx, src);
-					} break;
-					case JMIR_OP_ADD: {
-						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
-						jx64_add(jitCtx, dst, src);
-					} break;
-					case JMIR_OP_SUB: {
-						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
-						jx64_sub(jitCtx, dst, src);
-					} break;
-					case JMIR_OP_LEA: {
-						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
-						jx64_lea(jitCtx, dst, src);
-					} break;
-					case JMIR_OP_XOR: {
-						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
-						jx64_xor(jitCtx, dst, src);
-					} break;
-					case JMIR_OP_AND: {
-						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
-						jx64_and(jitCtx, dst, src);
-					} break;
-					case JMIR_OP_OR: {
-						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
-						jx64_or(jitCtx, dst, src);
-					} break;
-					case JMIR_OP_SAR: {
-						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
-						jx64_sar(jitCtx, dst, src);
-					} break;
-					case JMIR_OP_SHR: {
-						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
-						jx64_shr(jitCtx, dst, src);
-					} break;
-					case JMIR_OP_SHL: {
-						jx_x64_operand_t dst = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx_x64_operand_t src = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[1]);
-						jx64_shl(jitCtx, dst, src);
-					} break;
-					case JMIR_OP_CALL: {
-						jx_x64_operand_t op = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx64_call(jitCtx, op);
-					} break;
-					case JMIR_OP_PUSH: {
-						jx_x64_operand_t op = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx64_push(jitCtx, op);
-					} break;
-					case JMIR_OP_POP: {
-						jx_x64_operand_t op = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx64_pop(jitCtx, op);
-					} break;
-					case JMIR_OP_CDQ: {
-						jx64_cdq(jitCtx);
-					} break;
-					case JMIR_OP_CQO: {
-						jx64_cqo(jitCtx);
-					} break;
-					case JMIR_OP_SETO:
-					case JMIR_OP_SETNO:
-					case JMIR_OP_SETB:
-					case JMIR_OP_SETNB:
-					case JMIR_OP_SETE:
-					case JMIR_OP_SETNE:
-					case JMIR_OP_SETBE:
-					case JMIR_OP_SETNBE:
-					case JMIR_OP_SETS:
-					case JMIR_OP_SETNS:
-					case JMIR_OP_SETP:
-					case JMIR_OP_SETNP:
-					case JMIR_OP_SETL:
-					case JMIR_OP_SETNL:
-					case JMIR_OP_SETLE:
-					case JMIR_OP_SETNLE: {
-						jx_x64_operand_t op = jx_x64gen_convertMIROperand(jitCtx, mirInstr->m_Operands[0]);
-						jx_x64_condition_code cc = (jx_x64_condition_code)(mirInstr->m_OpCode - JMIR_OP_SETCC_BASE);
-						jx64_setcc(jitCtx, cc, op);
-					} break;
-					case JMIR_OP_JO:
-					case JMIR_OP_JNO:
-					case JMIR_OP_JB:
-					case JMIR_OP_JNB:
-					case JMIR_OP_JE:
-					case JMIR_OP_JNE:
-					case JMIR_OP_JBE:
-					case JMIR_OP_JNBE:
-					case JMIR_OP_JS:
-					case JMIR_OP_JNS:
-					case JMIR_OP_JP:
-					case JMIR_OP_JNP:
-					case JMIR_OP_JL:
-					case JMIR_OP_JNL:
-					case JMIR_OP_JLE:
-					case JMIR_OP_JNLE: {
-						jx_mir_operand_t* mirOp = mirInstr->m_Operands[0];
-						JX_CHECK(mirOp->m_Kind == JMIR_OPERAND_BASIC_BLOCK, "jcc expected basic block operand");
-						jx_x64_condition_code cc = (jx_x64_condition_code)(mirInstr->m_OpCode - JMIR_OP_JCC_BASE);
-						jx64_jcc(jitCtx, cc, bbLabels[mirOp->u.m_BB->m_ID]);
+					case JX64GEN_INSTR_COND: {
+						jx_x64_operand_t op = jx_x64gen_convertMIROperand(ctx, mirInstr->m_Operands[0]);
+						desc->u.m_Cond.m_Func(jitCtx, desc->u.m_Cond.m_Code, op);
 					} break;
 					default:
-						JX_CHECK(false, "Unknown mir instruction opcode");
+						JX_NOT_IMPLEMENTED();
 						break;
 					}
 
@@ -250,11 +336,11 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 			jx64_funcEnd(jitCtx);
 
 			for (uint32_t iBB = 0; iBB < numBasicBlocks; ++iBB) {
-				jx64_labelFree(jitCtx, bbLabels[iBB]);
+				jx64_labelFree(jitCtx, ctx->m_BasicBlocks[iBB]);
 			}
-			JX_FREE(allocator, bbLabels);
+			jx_array_resize(ctx->m_BasicBlocks, 0);
 		} else {
-			// TODO: How to handle external functions?
+			// TODO: Emit external function stub here instead of jx64_finalize()?
 		}
 	}
 
@@ -263,12 +349,12 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 		jx_mir_global_variable_t* mirGV = jx_mir_getGlobalVarByID(mirCtx, iGV);
 
 		const uint32_t dataSize = (uint32_t)jx_array_sizeu(mirGV->m_DataArr);
-		jx64_globalVarDefine(jitCtx, jitGVs[iGV], mirGV->m_DataArr, dataSize, mirGV->m_Alignment);
+		jx64_globalVarDefine(jitCtx, ctx->m_GlobalVars[iGV], mirGV->m_DataArr, dataSize, mirGV->m_Alignment);
 
 		const uint32_t numRelocations = (uint32_t)jx_array_sizeu(mirGV->m_RelocationsArr);
 		for (uint32_t iReloc = 0; iReloc < numRelocations; ++iReloc) {
 			jx_mir_relocation_t* mirReloc = &mirGV->m_RelocationsArr[iReloc];
-			jx64_symbolAddRelocation(jitCtx, jitGVs[iGV], JX64_RELOC_ADDR64, mirReloc->m_Offset, mirReloc->m_SymbolName);
+			jx64_symbolAddRelocation(jitCtx, ctx->m_GlobalVars[iGV], JX64_RELOC_ADDR64, mirReloc->m_Offset, mirReloc->m_SymbolName);
 		}
 	}
 
@@ -307,41 +393,44 @@ bool jx_x64_emitCode(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allo
 
 	jx64_finalize(jitCtx);
 
-	JX_FREE(allocator, jitFuncs);
-	JX_FREE(allocator, jitGVs);
-
 	return true;
 }
 
-static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64_context_t* jitCtx, const jx_mir_operand_t* mirOp)
+static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64gen_context_t* ctx, const jx_mir_operand_t* mirOp)
 {
 	jx_x64_operand_t op = jx64_opReg(JX64_REG_NONE);
 
 	switch (mirOp->m_Kind) {
 	case JMIR_OPERAND_REGISTER: {
-		JX_CHECK(mirOp->u.m_RegID < JMIR_FIRST_VIRTUAL_REGISTER, "Expected hardware register!");
+		JX_CHECK(!mirOp->u.m_Reg.m_IsVirtual, "Expected hardware register!");
 		switch (mirOp->m_Type) {
 		case JMIR_TYPE_VOID: {
 			JX_CHECK(false, "Unexpected void register!");
 		} break;
 		case JMIR_TYPE_I8: {
-			op = jx64_opReg((jx_x64_reg)(JX64_REG_AL + mirOp->u.m_RegID));
+			JX_CHECK(mirOp->u.m_Reg.m_Class == JMIR_REG_CLASS_GP, "Expected GP register.");
+			op = jx64_opReg((jx_x64_reg)(JX64_REG_AL + mirOp->u.m_Reg.m_ID));
 		} break;
 		case JMIR_TYPE_I16: {
-			op = jx64_opReg((jx_x64_reg)(JX64_REG_AX + mirOp->u.m_RegID));
+			JX_CHECK(mirOp->u.m_Reg.m_Class == JMIR_REG_CLASS_GP, "Expected GP register.");
+			op = jx64_opReg((jx_x64_reg)(JX64_REG_AX + mirOp->u.m_Reg.m_ID));
 		} break;
 		case JMIR_TYPE_I32: {
-			op = jx64_opReg((jx_x64_reg)(JX64_REG_EAX + mirOp->u.m_RegID));
+			JX_CHECK(mirOp->u.m_Reg.m_Class == JMIR_REG_CLASS_GP, "Expected GP register.");
+			op = jx64_opReg((jx_x64_reg)(JX64_REG_EAX + mirOp->u.m_Reg.m_ID));
 		} break;
 		case JMIR_TYPE_I64:
 		case JMIR_TYPE_PTR: {
-			op = jx64_opReg((jx_x64_reg)(JX64_REG_RAX + mirOp->u.m_RegID));
+			JX_CHECK(mirOp->u.m_Reg.m_Class == JMIR_REG_CLASS_GP, "Expected GP register.");
+			op = jx64_opReg((jx_x64_reg)(JX64_REG_RAX + mirOp->u.m_Reg.m_ID));
 		} break;
 		case JMIR_TYPE_F32: {
-			JX_NOT_IMPLEMENTED();
+			JX_CHECK(mirOp->u.m_Reg.m_Class == JMIR_REG_CLASS_XMM, "Expected XMM register.");
+			op = jx64_opReg((jx_x64_reg)(JX64_REG_XMM0 + mirOp->u.m_Reg.m_ID));
 		} break;
 		case JMIR_TYPE_F64: {
-			JX_NOT_IMPLEMENTED();
+			JX_CHECK(mirOp->u.m_Reg.m_Class == JMIR_REG_CLASS_XMM, "Expected XMM register.");
+			op = jx64_opReg((jx_x64_reg)(JX64_REG_XMM0 + mirOp->u.m_Reg.m_ID));
 		} break;
 		default:
 			JX_CHECK(false, "Unknown mir type");
@@ -367,10 +456,28 @@ static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64_context_t* jitCtx, co
 			op = jx64_opImmI64(mirOp->u.m_ConstI64);
 		} break;
 		case JMIR_TYPE_F32: {
-			JX_NOT_IMPLEMENTED();
+			const float fconst = (float)mirOp->u.m_ConstF64;
+			char globalName[256];
+			jx_snprintf(globalName, JX_COUNTOF(globalName), "f32c_%08X", (uint32_t)jx_bitcast_f_i32(fconst));
+			jx_x64_symbol_t* sym = jx64_symbolGetByName(ctx->m_JITCtx, globalName);
+			if (!sym) {
+				sym = jx64_globalVarDeclare(ctx->m_JITCtx, globalName);
+				jx64_globalVarDefine(ctx->m_JITCtx, sym, (const uint8_t*)&fconst, sizeof(float), 4);
+			}
+
+			op = jx64_opSymbol(JX64_SIZE_32, sym);
 		} break;
 		case JMIR_TYPE_F64: {
-			JX_NOT_IMPLEMENTED();
+			const double dconst = mirOp->u.m_ConstF64;
+			char globalName[256];
+			jx_snprintf(globalName, JX_COUNTOF(globalName), "f64c_%016llX", (uint64_t)jx_bitcast_d_i64(dconst));
+			jx_x64_symbol_t* sym = jx64_symbolGetByName(ctx->m_JITCtx, globalName);
+			if (!sym) {
+				sym = jx64_globalVarDeclare(ctx->m_JITCtx, globalName);
+				jx64_globalVarDefine(ctx->m_JITCtx, sym, (const uint8_t*)&dconst, sizeof(double), 8);
+			}
+
+			op = jx64_opSymbol(JX64_SIZE_64, sym);
 		} break;
 		default:
 			JX_CHECK(false, "Unknown mir type");
@@ -378,19 +485,17 @@ static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64_context_t* jitCtx, co
 		}
 	} break;
 	case JMIR_OPERAND_BASIC_BLOCK: {
-		JX_NOT_IMPLEMENTED();
+		jx_mir_basic_block_t* bb = mirOp->u.m_BB;
+		op = jx64_opLbl(JX64_SIZE_64, ctx->m_BasicBlocks[bb->m_ID]);
 	} break;
 	case JMIR_OPERAND_STACK_OBJECT: {
 		jx_x64_size size = jx_x64gen_convertMIRTypeToSize(mirOp->m_Type);
 		int32_t disp = mirOp->u.m_StackObj->m_SPOffset;
 		op = jx64_opMem(size, JX64_REG_RSP, JX64_REG_NONE, JX64_SCALE_1, disp);
 	} break;
-	case JMIR_OPERAND_GLOBAL_VARIABLE: {
-		JX_NOT_IMPLEMENTED();
-	} break;
 	case JMIR_OPERAND_EXTERNAL_SYMBOL: {
 		const char* name = mirOp->u.m_ExternalSymbolName;
-		jx_x64_symbol_t* symbol = jx64_symbolGetByName(jitCtx, name);
+		jx_x64_symbol_t* symbol = jx64_symbolGetByName(ctx->m_JITCtx, name);
 		if (!symbol) {
 			// Check if this is an intrinsic function and add a new symbol now.
 			const bool isIntrinsic = false
@@ -398,7 +503,7 @@ static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64_context_t* jitCtx, co
 				|| !jx_strcmp(name, "memcpy")
 				;
 			if (isIntrinsic) {
-				symbol = jx64_funcDeclare(jitCtx, name);
+				symbol = jx64_funcDeclare(ctx->m_JITCtx, name);
 			}
 		}
 		JX_CHECK(symbol, "Symbol not found!");
@@ -406,8 +511,8 @@ static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64_context_t* jitCtx, co
 	} break;
 	case JMIR_OPERAND_MEMORY_REF: {
 		jx_x64_size size = jx_x64gen_convertMIRTypeToSize(mirOp->m_Type);
-		jx_x64_reg baseReg = jx_x64gen_convertMIRReg(mirOp->u.m_MemRef.m_BaseRegID, JX64_SIZE_64);
-		jx_x64_reg indexReg = jx_x64gen_convertMIRReg(mirOp->u.m_MemRef.m_IndexRegID, JX64_SIZE_64);
+		jx_x64_reg baseReg = jx_x64gen_convertMIRReg(mirOp->u.m_MemRef.m_BaseReg, JX64_SIZE_64);
+		jx_x64_reg indexReg = jx_x64gen_convertMIRReg(mirOp->u.m_MemRef.m_IndexReg, JX64_SIZE_64);
 		jx_x64_scale scale = jx_x64gen_convertMIRScale(mirOp->u.m_MemRef.m_Scale);
 		int32_t disp = mirOp->u.m_MemRef.m_Displacement;
 		op = jx64_opMem(size, baseReg, indexReg, scale, disp);
@@ -434,18 +539,14 @@ static jx_x64_size jx_x64gen_convertMIRTypeToSize(jx_mir_type_kind type)
 	case JMIR_TYPE_I16: {
 		sz = JX64_SIZE_16;
 	} break;
-	case JMIR_TYPE_I32: {
+	case JMIR_TYPE_I32: 
+	case JMIR_TYPE_F32: {
 		sz = JX64_SIZE_32;
 	} break;
 	case JMIR_TYPE_I64:
-	case JMIR_TYPE_PTR: {
-		sz = JX64_SIZE_64;
-	} break;
-	case JMIR_TYPE_F32: {
-		JX_NOT_IMPLEMENTED();
-	} break;
+	case JMIR_TYPE_PTR: 
 	case JMIR_TYPE_F64: {
-		JX_NOT_IMPLEMENTED();
+		sz = JX64_SIZE_64;
 	} break;
 	default:
 		JX_CHECK(false, "Unknown mir type");
@@ -455,27 +556,35 @@ static jx_x64_size jx_x64gen_convertMIRTypeToSize(jx_mir_type_kind type)
 	return sz;
 }
 
-static jx_x64_reg jx_x64gen_convertMIRReg(uint32_t mirRegID, jx_x64_size sz)
+static jx_x64_reg jx_x64gen_convertMIRReg(jx_mir_reg_t mirReg, jx_x64_size sz)
 {
-	if (mirRegID == JMIR_MEMORY_REG_NONE) {
+	if (mirReg.m_ID == JMIR_HWREGID_NONE) {
 		return JX64_REG_NONE;
 	}
 
-	JX_CHECK(mirRegID < JMIR_FIRST_VIRTUAL_REGISTER, "Expected hardware register!");
+	JX_CHECK(!mirReg.m_IsVirtual, "Expected hardware register!");
 
 	jx_x64_reg reg = JX64_REG_NONE;
 	switch (sz) {
 	case JX64_SIZE_8: {
-		reg = (jx_x64_reg)(JX64_REG_AL + mirRegID);
+		JX_CHECK(mirReg.m_Class == JMIR_REG_CLASS_GP, "Expected GP register");
+		reg = (jx_x64_reg)(JX64_REG_AL + mirReg.m_ID);
 	} break;
 	case JX64_SIZE_16: {
-		reg = (jx_x64_reg)(JX64_REG_AX + mirRegID);
+		JX_CHECK(mirReg.m_Class == JMIR_REG_CLASS_GP, "Expected GP register");
+		reg = (jx_x64_reg)(JX64_REG_AX + mirReg.m_ID);
 	} break;
 	case JX64_SIZE_32: {
-		reg = (jx_x64_reg)(JX64_REG_EAX + mirRegID);
+		JX_CHECK(mirReg.m_Class == JMIR_REG_CLASS_GP, "Expected GP register");
+		reg = (jx_x64_reg)(JX64_REG_EAX + mirReg.m_ID);
 	} break;
 	case JX64_SIZE_64: {
-		reg = (jx_x64_reg)(JX64_REG_RAX + mirRegID);
+		JX_CHECK(mirReg.m_Class == JMIR_REG_CLASS_GP, "Expected GP register");
+		reg = (jx_x64_reg)(JX64_REG_RAX + mirReg.m_ID);
+	} break;
+	case JX64_SIZE_128: {
+		JX_CHECK(mirReg.m_Class == JMIR_REG_CLASS_XMM, "Expected XMM register");
+		reg = (jx_x64_reg)(JX64_REG_XMM0 + mirReg.m_ID);
 	} break;
 	default:
 		JX_CHECK(false, "Unknown size!");

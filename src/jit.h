@@ -12,10 +12,11 @@ typedef struct jx_x64_symbol_t jx_x64_symbol_t;
 
 typedef enum jx_x64_size
 {
-	JX64_SIZE_8  = 0,
-	JX64_SIZE_16 = 1,
-	JX64_SIZE_32 = 2,
-	JX64_SIZE_64 = 3,
+	JX64_SIZE_8   = 0,
+	JX64_SIZE_16  = 1,
+	JX64_SIZE_32  = 2,
+	JX64_SIZE_64  = 3,
+	JX64_SIZE_128 = 4, // XMM registers
 } jx_x64_size;
 
 typedef enum jx_x64_scale
@@ -54,6 +55,23 @@ typedef enum jx_x64_reg_id
 	JX64_REG_ID_R13 = 13, 
 	JX64_REG_ID_R14 = 14, 
 	JX64_REG_ID_R15 = 15, 
+
+	JX64_REG_ID_XMM0  = 0,
+	JX64_REG_ID_XMM1  = 1, 
+	JX64_REG_ID_XMM2  = 2, 
+	JX64_REG_ID_XMM3  = 3, 
+	JX64_REG_ID_XMM4  = 4, 
+	JX64_REG_ID_XMM5  = 5, 
+	JX64_REG_ID_XMM6  = 6, 
+	JX64_REG_ID_XMM7  = 7, 
+	JX64_REG_ID_XMM8  = 8, 
+	JX64_REG_ID_XMM9  = 9, 
+	JX64_REG_ID_XMM10 = 10, 
+	JX64_REG_ID_XMM11 = 11, 
+	JX64_REG_ID_XMM12 = 12, 
+	JX64_REG_ID_XMM13 = 13, 
+	JX64_REG_ID_XMM14 = 14, 
+	JX64_REG_ID_XMM15 = 15, 
 } jx_x64_reg_id;
 
 typedef enum jx_x64_condition_code
@@ -90,11 +108,11 @@ typedef enum jx_x64_condition_code
 } jx_x64_condition_code;
 
 #define JX64_REG_ID_Pos          0
-#define JX64_REG_ID_Msk          (0x0F << JX64_REG_ID_Pos)
+#define JX64_REG_ID_Msk          (0b1111 << JX64_REG_ID_Pos)
 #define JX64_REG_FLAG_Pos        4
-#define JX64_REG_FLAG_Msk        (0x01 << JX64_REG_FLAG_Pos)
+#define JX64_REG_FLAG_Msk        (0b1 << JX64_REG_FLAG_Pos)
 #define JX64_REG_SIZE_Pos        5
-#define JX64_REG_SIZE_Msk        (0x03 << JX64_REG_SIZE_Pos)
+#define JX64_REG_SIZE_Msk        (0b111 << JX64_REG_SIZE_Pos)
 #define JX64_REG(id, flag, size) ((((id) << JX64_REG_ID_Pos) & JX64_REG_ID_Msk) | (((flag) << JX64_REG_FLAG_Pos) & JX64_REG_FLAG_Msk) | (((size) << JX64_REG_SIZE_Pos) & JX64_REG_SIZE_Msk))
 
 #define JX64_REG_GET_ID(reg)     (((reg) & JX64_REG_ID_Msk) >> JX64_REG_ID_Pos)
@@ -176,6 +194,24 @@ typedef enum jx_x64_reg
 	JX64_REG_R13B = JX64_REG(JX64_REG_ID_R13, 0, JX64_SIZE_8), 
 	JX64_REG_R14B = JX64_REG(JX64_REG_ID_R14, 0, JX64_SIZE_8), 
 	JX64_REG_R15B = JX64_REG(JX64_REG_ID_R15, 0, JX64_SIZE_8),
+
+	// 128-bit registers (XMM)
+	JX64_REG_XMM0  = JX64_REG(JX64_REG_ID_XMM0, 0, JX64_SIZE_128),
+	JX64_REG_XMM1  = JX64_REG(JX64_REG_ID_XMM1, 0, JX64_SIZE_128),
+	JX64_REG_XMM2  = JX64_REG(JX64_REG_ID_XMM2, 0, JX64_SIZE_128),
+	JX64_REG_XMM3  = JX64_REG(JX64_REG_ID_XMM3, 0, JX64_SIZE_128),
+	JX64_REG_XMM4  = JX64_REG(JX64_REG_ID_XMM4, 0, JX64_SIZE_128),
+	JX64_REG_XMM5  = JX64_REG(JX64_REG_ID_XMM5, 0, JX64_SIZE_128),
+	JX64_REG_XMM6  = JX64_REG(JX64_REG_ID_XMM6, 0, JX64_SIZE_128),
+	JX64_REG_XMM7  = JX64_REG(JX64_REG_ID_XMM7, 0, JX64_SIZE_128),
+	JX64_REG_XMM8  = JX64_REG(JX64_REG_ID_XMM8, 0, JX64_SIZE_128),
+	JX64_REG_XMM9  = JX64_REG(JX64_REG_ID_XMM9, 0, JX64_SIZE_128),
+	JX64_REG_XMM10 = JX64_REG(JX64_REG_ID_XMM10, 0, JX64_SIZE_128),
+	JX64_REG_XMM11 = JX64_REG(JX64_REG_ID_XMM11, 0, JX64_SIZE_128),
+	JX64_REG_XMM12 = JX64_REG(JX64_REG_ID_XMM12, 0, JX64_SIZE_128),
+	JX64_REG_XMM13 = JX64_REG(JX64_REG_ID_XMM13, 0, JX64_SIZE_128),
+	JX64_REG_XMM14 = JX64_REG(JX64_REG_ID_XMM14, 0, JX64_SIZE_128),
+	JX64_REG_XMM15 = JX64_REG(JX64_REG_ID_XMM15, 0, JX64_SIZE_128),
 
 	JX64_REG_NONE = 0xFF,
 } jx_x64_reg;
@@ -326,7 +362,7 @@ bool jx64_bts(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 bool jx64_btc(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src); // Bit Test and Complement
 bool jx64_bsr(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src); // Bit Scan Reverse
 bool jx64_bsf(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src); // Bit Scan Forward
-bool jx64_jcc(jx_x64_context_t* ctx, jx_x64_condition_code cc, jx_x64_label_t* lbl);
+bool jx64_jcc(jx_x64_context_t* ctx, jx_x64_condition_code cc, jx_x64_operand_t lbl);
 bool jx64_jmp(jx_x64_context_t* ctx, jx_x64_operand_t op);
 bool jx64_call(jx_x64_context_t* ctx, jx_x64_operand_t op);
 bool jx64_cdq(jx_x64_context_t* ctx);
@@ -335,6 +371,73 @@ bool jx64_cqo(jx_x64_context_t* ctx);
 bool jx64_cbw(jx_x64_context_t* ctx);  // AX := sign-extend of AL
 bool jx64_cwde(jx_x64_context_t* ctx); // EAX := sign-extend of AX
 bool jx64_cdqe(jx_x64_context_t* ctx); // RAX := sign-extend of EAX
+
+bool jx64_movss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_movsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_movd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_movq(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_addps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_addss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_addpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_addsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_andnps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_andnpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_andps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_andpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_cmpps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src, uint8_t imm8);
+bool jx64_cmpss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src, uint8_t imm8);
+bool jx64_cmppd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src, uint8_t imm8);
+bool jx64_cmpsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src, uint8_t imm8);
+bool jx64_comiss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_comisd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_cvtsi2ss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_cvtsi2sd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_cvtss2si(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_cvtsd2si(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_cvttss2si(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_cvttsd2si(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_cvtsd2ss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_cvtss2sd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_divps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_divss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_divpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_divsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_maxps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_maxss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_maxpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_maxsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_minps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_minss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_minpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_minsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_mulps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_mulss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_mulpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_mulsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_orps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_orpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_rcpps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_rcpss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_rsqrtps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_rsqrtss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_shufps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src, uint8_t imm8);
+bool jx64_shufpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src, uint8_t imm8);
+bool jx64_sqrtps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_sqrtss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_sqrtpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_sqrtsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_subps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_subss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_subpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_subsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_ucomiss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_ucomisd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_unpckhps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_unpckhpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_unpcklps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_unpcklpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_xorps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_xorpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
 
 static inline jx_x64_operand_t jx64_opReg(jx_x64_reg reg)
 {

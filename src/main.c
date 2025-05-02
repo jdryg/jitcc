@@ -758,7 +758,7 @@ int main(int argc, char** argv)
 
 	jx_allocator_i* allocator = allocator_api->createAllocator("jcc");
 
-#if 1
+#if 0
 	uint32_t totalTests = 0;
 	uint32_t numSkipped = 0;
 	uint32_t numPass = 0;
@@ -776,7 +776,7 @@ int main(int argc, char** argv)
 			|| iTest == 119 // Floating point
 			|| iTest == 121 // Parsing error; complex variable/function declaration
 			|| iTest == 123 // Floating point
-			|| iTest == 140 // Call with stack arguments
+//			|| iTest == 140 // Call with stack arguments
 			|| iTest == 152 // #line+#error
 			|| iTest == 162 // const/static/volatile/restrict in array declaration
 			|| iTest == 170 // forward enum
@@ -794,8 +794,7 @@ int main(int argc, char** argv)
 //			|| iTest == 212 // Predefined macros
 			|| iTest == 213 // Statement expressions
 			|| iTest == 214 // __builtin_expect
-			|| iTest == 216 // BUG? Parser: missing braces from inner struct initializer
-			|| iTest == 218 // Bitfields
+			|| iTest == 216 // BUG? Parser: missing braces from inner union initializer
 			|| iTest == 219 // BUG? Parser: _Generic
 			|| iTest == 220 // Unicode
 			;
@@ -826,8 +825,9 @@ int main(int argc, char** argv)
 			jx_mirgen_destroyContext(mirGenCtx);
 
 			jx_x64_context_t* jitCtx = jx_x64_createContext(allocator);
+			jx_x64gen_context_t* jitgenCtx = jx_x64gen_createContext(jitCtx, mirCtx, allocator);
 
-			if (jx_x64_emitCode(jitCtx, mirCtx, allocator)) {
+			if (jx_x64gen_codeGen(jitgenCtx)) {
 				uint32_t execBufSize = 0;
 				const uint8_t* execBuf = jx64_getBuffer(jitCtx, &execBufSize);
 
@@ -848,6 +848,7 @@ int main(int argc, char** argv)
 				}
 			}
 
+			jx_x64gen_destroyContext(jitgenCtx);
 			jx_x64_destroyContext(jitCtx);
 			jx_mir_destroyContext(mirCtx);
 			jx_ir_destroyContext(irCtx);
@@ -862,11 +863,11 @@ int main(int argc, char** argv)
 	JX_SYS_LOG_INFO(NULL, "Pass : %u\n", numPass);
 	JX_SYS_LOG_INFO(NULL, "Fail : %u\n", numFailed);
 	JX_SYS_LOG_INFO(NULL, "Skip : %u\n", numSkipped);
-#else
+#elif 1
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-	const char* sourceFile = "test/c-testsuite/00205.c";
-//	const char* sourceFile = "test/pointer_arithmetic.c";
+//	const char* sourceFile = "test/c-testsuite/00140.c";
+	const char* sourceFile = "test/floats.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
 	jx_cc_translation_unit_t* tu = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_INSTALL, sourceFile);
@@ -887,7 +888,7 @@ int main(int argc, char** argv)
 	}
 #endif
 
-#if 1
+#if 0
 	JX_SYS_LOG_INFO(NULL, "Saving AST to JSON...\n");
 	{
 		jx_config_t* ast = jx_config_createConfig(allocator);
@@ -942,8 +943,9 @@ int main(int argc, char** argv)
 				jx_strbuf_destroy(sb);
 
 				jx_x64_context_t* jitCtx = jx_x64_createContext(allocator);
+				jx_x64gen_context_t* jitgenCtx = jx_x64gen_createContext(jitCtx, mirCtx, allocator);
 
-				if (jx_x64_emitCode(jitCtx, mirCtx, allocator)) {
+				if (jx_x64gen_codeGen(jitgenCtx)) {
 					sb = jx_strbuf_create(allocator);
 
 					uint32_t bufferSize = 0;
@@ -967,6 +969,7 @@ int main(int argc, char** argv)
 					}
 				}
 
+				jx_x64gen_destroyContext(jitgenCtx);
 				jx_x64_destroyContext(jitCtx);
 				jx_mir_destroyContext(mirCtx);
 			}
@@ -976,6 +979,18 @@ int main(int argc, char** argv)
 
 end:
 	jx_cc_destroyContext(ctx);
+#else
+	// JIT SSE test
+	jx_x64_context_t* jitCtx = jx_x64_createContext(allocator);
+
+	jx_x64_symbol_t* func = jx64_funcDeclare(jitCtx, "test");
+	jx64_funcBegin(jitCtx, func);
+	{
+		jx64_addss(jitCtx, jx64_opReg(JX64_REG_XMM8), jx64_opReg(JX64_REG_XMM0));
+	}
+	jx64_funcEnd(jitCtx);
+
+	jx_x64_destroyContext(jitCtx);
 #endif
 
 	allocator_api->destroyAllocator(allocator);

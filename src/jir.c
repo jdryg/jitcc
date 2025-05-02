@@ -172,6 +172,8 @@ static jir_vmExecOpcodeFunc kOpcodeFuncs[] = {
 	[JIR_OP_PTR_TO_INT]	     = NULL,
 	[JIR_OP_INT_TO_PTR]	     = NULL,
 	[JIR_OP_BITCAST]         = NULL,
+	[JIR_OP_FPEXT]           = NULL,
+	[JIR_OP_FPTRUNC]         = NULL,
 };
 
 typedef struct jir_vm_value_hash_t
@@ -1642,6 +1644,42 @@ jx_ir_instruction_t* jx_ir_instrBitcast(jx_ir_context_t* ctx, jx_ir_value_t* val
 	return instr;
 }
 
+jx_ir_instruction_t* jx_ir_instrFPExt(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType)
+{
+	jx_ir_type_t* valType = val->m_Type;
+	if (!jx_ir_typeIsFloatingPoint(valType) || !jx_ir_typeIsFloatingPoint(targetType) || jx_ir_typeGetSize(valType) >= jx_ir_typeGetSize(targetType)) {
+		JX_CHECK(false, "fpext can only be applied from one floating point type to another larger floating point type.");
+		return NULL;
+	}
+
+	jx_ir_instruction_t* instr = jir_instrAlloc(ctx, targetType, JIR_OP_FPEXT, 1);
+	if (!instr) {
+		return NULL;
+	}
+
+	jir_instrAddOperand(ctx, instr, val);
+
+	return instr;
+}
+
+jx_ir_instruction_t* jx_ir_instrFPTrunc(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType)
+{
+	jx_ir_type_t* valType = val->m_Type;
+	if (!jx_ir_typeIsFloatingPoint(valType) || !jx_ir_typeIsFloatingPoint(targetType) || jx_ir_typeGetSize(valType) <= jx_ir_typeGetSize(targetType)) {
+		JX_CHECK(false, "fptrunc can only be applied from one floating point type to another smaller floating point type.");
+		return NULL;
+	}
+
+	jx_ir_instruction_t* instr = jir_instrAlloc(ctx, targetType, JIR_OP_FPTRUNC, 1);
+	if (!instr) {
+		return NULL;
+	}
+
+	jir_instrAddOperand(ctx, instr, val);
+
+	return instr;
+}
+
 jx_ir_instruction_t* jx_ir_instrCall(jx_ir_context_t* ctx, jx_ir_value_t* funcVal, uint32_t numArgs, jx_ir_value_t** argValues)
 {
 	// NOTE: Don't assume funcVal is a function value. It might be an instruction pointing to a function
@@ -1791,7 +1829,13 @@ static jx_ir_type_t* jir_getIndexedType(jx_ir_type_t* ptr, uint32_t numIndices, 
 		// Check if index is valid for the current composite type
 		// and move on to the pointed type.
 		if (ptr->m_Kind == JIR_TYPE_ARRAY) {
-			if (index->m_Type->m_Kind != JIR_TYPE_I32 && index->m_Type->m_Kind != JIR_TYPE_I64) {
+			const bool isValidIndexType = false
+				|| index->m_Type->m_Kind == JIR_TYPE_I32
+				|| index->m_Type->m_Kind == JIR_TYPE_I64
+				|| index->m_Type->m_Kind == JIR_TYPE_U32
+				|| index->m_Type->m_Kind == JIR_TYPE_U64
+				;
+			if (!isValidIndexType) {
 				return NULL;
 			}
 
@@ -3261,7 +3305,7 @@ jx_ir_constant_t* jx_ir_constGetF32(jx_ir_context_t* ctx, float val)
 				.m_Type = type
 			}
 		},
-		.u.m_F32 = val
+		.u.m_F64 = (double)val
 	};
 
 	jx_ir_constant_t** cachedTypePtr = (jx_ir_constant_t**)jx_hashmapGet(ctx->m_ConstMap, &key);
@@ -3276,7 +3320,7 @@ jx_ir_constant_t* jx_ir_constGetF32(jx_ir_context_t* ctx, float val)
 
 	jx_memset(ci, 0, sizeof(jx_ir_constant_t));
 	jir_constCtor(ctx, ci, type);
-	ci->u.m_F32 = val;
+	ci->u.m_F64 = (double)val;
 
 	jx_hashmapSet(ctx->m_ConstMap, &ci);
 
@@ -3489,20 +3533,32 @@ void jx_ir_constPrint(jx_ir_context_t* ctx, jx_ir_constant_t* c, jx_string_buffe
 	case JIR_TYPE_BOOL: {
 		jx_strbuf_printf(sb, "%s", c->u.m_Bool ? "true" : "false");
 	} break;
-	case JIR_TYPE_I8:
-	case JIR_TYPE_I16:
-	case JIR_TYPE_I32:
+	case JIR_TYPE_I8: {
+		jx_strbuf_printf(sb, "%d", (int8_t)c->u.m_I64);
+	} break;
+	case JIR_TYPE_I16: {
+		jx_strbuf_printf(sb, "%d", (int16_t)c->u.m_I64);
+	} break;
+	case JIR_TYPE_I32: {
+		jx_strbuf_printf(sb, "%d", (int32_t)c->u.m_I64);
+	} break;
 	case JIR_TYPE_I64: {
 		jx_strbuf_printf(sb, "%lld", c->u.m_I64);
 	} break;
-	case JIR_TYPE_U8:
-	case JIR_TYPE_U16:
-	case JIR_TYPE_U32:
+	case JIR_TYPE_U8: {
+		jx_strbuf_printf(sb, "%u", (uint8_t)c->u.m_U64);
+	} break;
+	case JIR_TYPE_U16: {
+		jx_strbuf_printf(sb, "%u", (uint16_t)c->u.m_U64);
+	} break;
+	case JIR_TYPE_U32: {
+		jx_strbuf_printf(sb, "%u", (uint32_t)c->u.m_U64);
+	} break;
 	case JIR_TYPE_U64: {
 		jx_strbuf_printf(sb, "%llu", c->u.m_U64);
 	} break;
 	case JIR_TYPE_F32: {
-		jx_strbuf_printf(sb, "%f", c->u.m_F32);
+		jx_strbuf_printf(sb, "%f", (float)c->u.m_F64);
 	} break;
 	case JIR_TYPE_F64: {
 		jx_strbuf_printf(sb, "%f", c->u.m_F64);
@@ -4139,9 +4195,7 @@ static uint64_t jir_constHashCallback(const void* item, uint64_t seed0, uint64_t
 	case JIR_TYPE_U64: {
 		hash = jx_hashFNV1a(&c->u.m_U64, sizeof(uint64_t), hash, seed1);
 	} break;
-	case JIR_TYPE_F32: {
-		hash = jx_hashFNV1a(&c->u.m_F32, sizeof(float), hash, seed1);
-	} break;
+	case JIR_TYPE_F32:
 	case JIR_TYPE_F64: {
 		hash = jx_hashFNV1a(&c->u.m_F64, sizeof(double), hash, seed1);
 	} break;
@@ -4200,12 +4254,7 @@ static int32_t jir_constCompareCallback(const void* a, const void* b, void* udat
 			: (cA->u.m_U64 > cB->u.m_U64 ? 1 : 0)
 			;
 	} break;
-	case JIR_TYPE_F32: {
-		res = cA->u.m_F32 < cB->u.m_F32
-			? -1
-			: (cA->u.m_F32 > cB->u.m_F32 ? 1 : 0)
-			;
-	} break;
+	case JIR_TYPE_F32:
 	case JIR_TYPE_F64: {
 		res = cA->u.m_F64 < cB->u.m_F64
 			? -1
@@ -5531,7 +5580,7 @@ static void jir_vmInitMemory(jx_ir_context_t* ctx, jx_ir_vm_t* vm, void* mem, jx
 		*(int64_t*)mem = initializer->u.m_I64;
 	} break;
 	case JIR_TYPE_F32: {
-		*(float*)mem = initializer->u.m_F32;
+		*(float*)mem = (float)initializer->u.m_F64;
 	} break;
 	case JIR_TYPE_F64: {
 		*(double*)mem = initializer->u.m_F64;
@@ -5659,7 +5708,7 @@ static jx_ir_generic_value_t jir_vmStackFrameGetValue(jx_ir_context_t* ctx, jx_i
 			val.m_I64 = c->u.m_I64;
 		} break;
 		case JIR_TYPE_F32: {
-			val.m_F32 = c->u.m_F32;
+			val.m_F32 = (float)c->u.m_F64;
 		} break;
 		case JIR_TYPE_F64: {
 			val.m_F64 = c->u.m_F64;

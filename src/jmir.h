@@ -92,6 +92,67 @@ typedef enum jx_mir_opcode
 	JMIR_OP_JLE,
 	JMIR_OP_JNLE,
 
+	JMIR_OP_MOVSS,
+	JMIR_OP_MOVSD,
+	JMIR_OP_MOVD,
+	JMIR_OP_MOVQ,
+	JMIR_OP_ADDPS,
+	JMIR_OP_ADDSS,
+	JMIR_OP_ADDPD,
+	JMIR_OP_ADDSD,
+	JMIR_OP_ANDNPS,
+	JMIR_OP_ANDNPD,
+	JMIR_OP_ANDPS,
+	JMIR_OP_ANDPD,
+	JMIR_OP_COMISS,
+	JMIR_OP_COMISD,
+	JMIR_OP_CVTSI2SS,
+	JMIR_OP_CVTSI2SD,
+	JMIR_OP_CVTSS2SI,
+	JMIR_OP_CVTSD2SI,
+	JMIR_OP_CVTTSS2SI,
+	JMIR_OP_CVTTSD2SI,
+	JMIR_OP_CVTSD2SS,
+	JMIR_OP_CVTSS2SD,
+	JMIR_OP_DIVPS,
+	JMIR_OP_DIVSS,
+	JMIR_OP_DIVPD,
+	JMIR_OP_DIVSD,
+	JMIR_OP_MAXPS,
+	JMIR_OP_MAXSS,
+	JMIR_OP_MAXPD,
+	JMIR_OP_MAXSD,
+	JMIR_OP_MINPS,
+	JMIR_OP_MINSS,
+	JMIR_OP_MINPD,
+	JMIR_OP_MINSD,
+	JMIR_OP_MULPS,
+	JMIR_OP_MULSS,
+	JMIR_OP_MULPD,
+	JMIR_OP_MULSD,
+	JMIR_OP_ORPS,
+	JMIR_OP_ORPD,
+	JMIR_OP_RCPPS,
+	JMIR_OP_RCPSS,
+	JMIR_OP_RSQRTPS,
+	JMIR_OP_RSQRTSS,
+	JMIR_OP_SQRTPS,
+	JMIR_OP_SQRTSS,
+	JMIR_OP_SQRTPD,
+	JMIR_OP_SQRTSD,
+	JMIR_OP_SUBPS,
+	JMIR_OP_SUBSS,
+	JMIR_OP_SUBPD,
+	JMIR_OP_SUBSD,
+	JMIR_OP_UCOMISS,
+	JMIR_OP_UCOMISD,
+	JMIR_OP_UNPCKHPS,
+	JMIR_OP_UNPCKHPD,
+	JMIR_OP_UNPCKLPS,
+	JMIR_OP_UNPCKLPD,
+	JMIR_OP_XORPS,
+	JMIR_OP_XORPD,
+
 	JMIR_OP_SETCC_BASE = JMIR_OP_SETO,
 	JMIR_OP_JCC_BASE = JMIR_OP_JO,
 } jx_mir_opcode;
@@ -131,67 +192,137 @@ typedef enum jx_mir_condition_code
 	JMIR_CC_G = JMIR_CC_NLE
 } jx_mir_condition_code;
 
-typedef enum jx_mir_hw_reg
+typedef enum jx_mir_reg_class
 {
-	JMIR_HWREG_R0 = 0,
-	JMIR_HWREG_R1 = 1,
-	JMIR_HWREG_R2 = 2,
-	JMIR_HWREG_R3 = 3,
-	JMIR_HWREG_R4 = 4,
-	JMIR_HWREG_R5 = 5,
-	JMIR_HWREG_R6 = 6,
-	JMIR_HWREG_R7 = 7,
-	JMIR_HWREG_R8 = 8,
-	JMIR_HWREG_R9 = 9,
-	JMIR_HWREG_R10 = 10,
-	JMIR_HWREG_R11 = 11,
-	JMIR_HWREG_R12 = 12,
-	JMIR_HWREG_R13 = 13,
-	JMIR_HWREG_R14 = 14,
-	JMIR_HWREG_R15 = 15,
+	JMIR_REG_CLASS_GP = 0,
+	JMIR_REG_CLASS_XMM = 1,
 
-	JMIR_HWREG_A = JMIR_HWREG_R0,
-	JMIR_HWREG_C = JMIR_HWREG_R1,
-	JMIR_HWREG_D = JMIR_HWREG_R2,
-	JMIR_HWREG_B = JMIR_HWREG_R3,
-	JMIR_HWREG_SP = JMIR_HWREG_R4,
-	JMIR_HWREG_BP = JMIR_HWREG_R5,
-	JMIR_HWREG_SI = JMIR_HWREG_R6,
-	JMIR_HWREG_DI = JMIR_HWREG_R7,
+	JMIR_REG_CLASS_COUNT,
+} jx_mir_reg_class;
 
-	JMIR_HWREG_RET = JMIR_HWREG_A,
+typedef enum jx_mir_hw_reg_id
+{
+	JMIR_HWREGID_A = 0,
+	JMIR_HWREGID_C = 1,
+	JMIR_HWREGID_D = 2,
+	JMIR_HWREGID_B = 3,
+	JMIR_HWREGID_SP = 4,
+	JMIR_HWREGID_BP = 5,
+	JMIR_HWREGID_SI = 6,
+	JMIR_HWREGID_DI = 7,
+	JMIR_HWREGID_R8 = 8,
+	JMIR_HWREGID_R9 = 9,
+	JMIR_HWREGID_R10 = 10,
+	JMIR_HWREGID_R11 = 11,
+	JMIR_HWREGID_R12 = 12,
+	JMIR_HWREGID_R13 = 13,
+	JMIR_HWREGID_R14 = 14,
+	JMIR_HWREGID_R15 = 15,
 
-	JMIR_FIRST_VIRTUAL_REGISTER = 1000,
+	JMIR_HWREGID_NONE = 0x1FFFFFFF, // UINT32_MAX truncated to the bitwidth of jx_mir_reg_t::m_ID
+} jx_mir_hw_reg_id;
 
-	JMIR_MEMORY_REG_NONE = UINT32_MAX
-} jx_mir_hw_reg;
+typedef struct jx_mir_reg_t
+{
+	uint32_t m_ID : 29;
+	uint32_t m_Class : 2;
+	uint32_t m_IsVirtual : 1;
+} jx_mir_reg_t;
 
-static const jx_mir_hw_reg kMIRFuncArgIReg[] = {
-	JMIR_HWREG_C,
-	JMIR_HWREG_D,
-	JMIR_HWREG_R8,
-	JMIR_HWREG_R9,
+static const jx_mir_reg_t kMIRRegGPNone  = { .m_ID = JMIR_HWREGID_NONE, .m_Class = JMIR_REG_CLASS_GP, .m_IsVirtual = true };
+static const jx_mir_reg_t kMIRRegXMMNone = { .m_ID = JMIR_HWREGID_NONE, .m_Class = JMIR_REG_CLASS_XMM, .m_IsVirtual = true };
+
+#define JMIR_REG_HW_GP(id) { .m_ID = (id), .m_Class = JMIR_REG_CLASS_GP, .m_IsVirtual = false }
+#define JMIR_REG_HW_XMM(id) { .m_ID = (id), .m_Class = JMIR_REG_CLASS_XMM, .m_IsVirtual = false }
+
+static const jx_mir_reg_t kMIRRegGP_A   = JMIR_REG_HW_GP(JMIR_HWREGID_A);
+static const jx_mir_reg_t kMIRRegGP_C   = JMIR_REG_HW_GP(JMIR_HWREGID_C);
+static const jx_mir_reg_t kMIRRegGP_D   = JMIR_REG_HW_GP(JMIR_HWREGID_D);
+static const jx_mir_reg_t kMIRRegGP_B   = JMIR_REG_HW_GP(JMIR_HWREGID_B);
+static const jx_mir_reg_t kMIRRegGP_SP  = JMIR_REG_HW_GP(JMIR_HWREGID_SP);
+static const jx_mir_reg_t kMIRRegGP_BP  = JMIR_REG_HW_GP(JMIR_HWREGID_BP);
+static const jx_mir_reg_t kMIRRegGP_SI  = JMIR_REG_HW_GP(JMIR_HWREGID_SI);
+static const jx_mir_reg_t kMIRRegGP_DI  = JMIR_REG_HW_GP(JMIR_HWREGID_DI);
+static const jx_mir_reg_t kMIRRegGP_R8  = JMIR_REG_HW_GP(JMIR_HWREGID_R8);
+static const jx_mir_reg_t kMIRRegGP_R9  = JMIR_REG_HW_GP(JMIR_HWREGID_R9);
+static const jx_mir_reg_t kMIRRegGP_R10 = JMIR_REG_HW_GP(JMIR_HWREGID_R10);
+static const jx_mir_reg_t kMIRRegGP_R11 = JMIR_REG_HW_GP(JMIR_HWREGID_R11);
+static const jx_mir_reg_t kMIRRegGP_R12 = JMIR_REG_HW_GP(JMIR_HWREGID_R12);
+static const jx_mir_reg_t kMIRRegGP_R13 = JMIR_REG_HW_GP(JMIR_HWREGID_R13);
+static const jx_mir_reg_t kMIRRegGP_R14 = JMIR_REG_HW_GP(JMIR_HWREGID_R14);
+static const jx_mir_reg_t kMIRRegGP_R15 = JMIR_REG_HW_GP(JMIR_HWREGID_R15);
+static const jx_mir_reg_t kMIRRegXMM_0  = JMIR_REG_HW_XMM(0);
+static const jx_mir_reg_t kMIRRegXMM_1  = JMIR_REG_HW_XMM(1);
+static const jx_mir_reg_t kMIRRegXMM_2  = JMIR_REG_HW_XMM(2);
+static const jx_mir_reg_t kMIRRegXMM_3  = JMIR_REG_HW_XMM(3);
+static const jx_mir_reg_t kMIRRegXMM_4  = JMIR_REG_HW_XMM(4);
+static const jx_mir_reg_t kMIRRegXMM_5  = JMIR_REG_HW_XMM(5);
+static const jx_mir_reg_t kMIRRegXMM_6  = JMIR_REG_HW_XMM(6);
+static const jx_mir_reg_t kMIRRegXMM_7  = JMIR_REG_HW_XMM(7);
+static const jx_mir_reg_t kMIRRegXMM_8  = JMIR_REG_HW_XMM(8);
+static const jx_mir_reg_t kMIRRegXMM_9  = JMIR_REG_HW_XMM(9);
+static const jx_mir_reg_t kMIRRegXMM_10 = JMIR_REG_HW_XMM(1);
+static const jx_mir_reg_t kMIRRegXMM_11 = JMIR_REG_HW_XMM(1);
+static const jx_mir_reg_t kMIRRegXMM_12 = JMIR_REG_HW_XMM(1);
+static const jx_mir_reg_t kMIRRegXMM_13 = JMIR_REG_HW_XMM(1);
+static const jx_mir_reg_t kMIRRegXMM_14 = JMIR_REG_HW_XMM(1);
+static const jx_mir_reg_t kMIRRegXMM_15 = JMIR_REG_HW_XMM(1);
+
+static const jx_mir_reg_t kMIRFuncArgIReg[] = {
+	JMIR_REG_HW_GP(JMIR_HWREGID_C),
+	JMIR_REG_HW_GP(JMIR_HWREGID_D),
+	JMIR_REG_HW_GP(JMIR_HWREGID_R8),
+	JMIR_REG_HW_GP(JMIR_HWREGID_R9),
 };
 
-static const jx_mir_hw_reg kMIRFuncCallerSavedIReg[] = {
-	JMIR_HWREG_A,
-	JMIR_HWREG_C,
-	JMIR_HWREG_D,
-	JMIR_HWREG_R8,
-	JMIR_HWREG_R9,
-	JMIR_HWREG_R10,
-	JMIR_HWREG_R11,
+static const jx_mir_reg_t kMIRFuncArgFReg[] = {
+	JMIR_REG_HW_XMM(0),
+	JMIR_REG_HW_XMM(1),
+	JMIR_REG_HW_XMM(2),
+	JMIR_REG_HW_XMM(3),
 };
 
-static const jx_mir_hw_reg kMIRFuncCalleeSavedIReg[] = {
-	JMIR_HWREG_B,
-//	JMIR_HWREG_BP, // Always saved by the function if needed; never used by the register allocator.
-	JMIR_HWREG_SI,
-	JMIR_HWREG_DI,
-	JMIR_HWREG_R12,
-	JMIR_HWREG_R13,
-	JMIR_HWREG_R14,
-	JMIR_HWREG_R15,
+static const jx_mir_reg_t kMIRFuncCallerSavedIReg[] = {
+	JMIR_REG_HW_GP(JMIR_HWREGID_A),
+	JMIR_REG_HW_GP(JMIR_HWREGID_C),
+	JMIR_REG_HW_GP(JMIR_HWREGID_D),
+	JMIR_REG_HW_GP(JMIR_HWREGID_R8),
+	JMIR_REG_HW_GP(JMIR_HWREGID_R9),
+	JMIR_REG_HW_GP(JMIR_HWREGID_R10),
+	JMIR_REG_HW_GP(JMIR_HWREGID_R11),
+};
+
+static const jx_mir_reg_t kMIRFuncCallerSavedFReg[] = {
+	JMIR_REG_HW_XMM(0),
+	JMIR_REG_HW_XMM(1),
+	JMIR_REG_HW_XMM(2),
+	JMIR_REG_HW_XMM(3),
+	JMIR_REG_HW_XMM(4),
+	JMIR_REG_HW_XMM(5),
+};
+
+static const jx_mir_reg_t kMIRFuncCalleeSavedIReg[] = {
+	JMIR_REG_HW_GP(JMIR_HWREGID_B),
+//	JMIR_REG_HW_GP(JMIR_HWREGID_BP), // Always saved by the function if needed; never used by the register allocator.
+	JMIR_REG_HW_GP(JMIR_HWREGID_SI),
+	JMIR_REG_HW_GP(JMIR_HWREGID_DI),
+	JMIR_REG_HW_GP(JMIR_HWREGID_R12),
+	JMIR_REG_HW_GP(JMIR_HWREGID_R13),
+	JMIR_REG_HW_GP(JMIR_HWREGID_R14),
+	JMIR_REG_HW_GP(JMIR_HWREGID_R15),
+};
+
+static const jx_mir_reg_t kMIRFuncCalleeSavedFReg[] = {
+	JMIR_REG_HW_XMM(6),
+	JMIR_REG_HW_XMM(7),
+	JMIR_REG_HW_XMM(8),
+	JMIR_REG_HW_XMM(9),
+	JMIR_REG_HW_XMM(10),
+	JMIR_REG_HW_XMM(11),
+	JMIR_REG_HW_XMM(12),
+	JMIR_REG_HW_XMM(13),
+	JMIR_REG_HW_XMM(14),
+	JMIR_REG_HW_XMM(15),
 };
 
 typedef enum jx_mir_operand_kind
@@ -200,7 +331,6 @@ typedef enum jx_mir_operand_kind
 	JMIR_OPERAND_CONST,
 	JMIR_OPERAND_BASIC_BLOCK,
 	JMIR_OPERAND_STACK_OBJECT,
-	JMIR_OPERAND_GLOBAL_VARIABLE,
 	JMIR_OPERAND_EXTERNAL_SYMBOL,
 	JMIR_OPERAND_MEMORY_REF,
 } jx_mir_operand_kind;
@@ -213,8 +343,8 @@ typedef struct jx_mir_stack_object_t
 
 typedef struct jx_mir_memory_ref_t
 {
-	uint32_t m_BaseRegID;
-	uint32_t m_IndexRegID;
+	jx_mir_reg_t m_BaseReg;
+	jx_mir_reg_t m_IndexReg;
 	uint32_t m_Scale;
 	int32_t m_Displacement;
 } jx_mir_memory_ref_t;
@@ -225,14 +355,13 @@ typedef struct jx_mir_operand_t
 	jx_mir_type_kind m_Type;
 	union
 	{
-		uint32_t m_RegID;                  // JMIR_OPERAND_REGISTER
+		jx_mir_reg_t m_Reg;                // JMIR_OPERAND_REGISTER
 		int64_t m_ConstI64;                // JMIR_OPERAND_CONST + integer m_Type
 		double m_ConstF64;                 // JMIR_OPERAND_CONST + float m_Type
 		jx_mir_basic_block_t* m_BB;        // JMIR_OPERAND_BASIC_BLOCK
 		jx_mir_stack_object_t* m_StackObj; // JMIR_OPERAND_STACK_OBJECT
 		jx_mir_memory_ref_t m_MemRef;      // JMIR_OPERAND_MEMORY_REF
 		const char* m_ExternalSymbolName;  // JMIR_OPERAND_EXTERNAL_SYMBOL
-		// TODO: Global Variables
 	} u;
 } jx_mir_operand_t;
 
@@ -270,9 +399,9 @@ typedef struct jx_mir_function_t
 	uint32_t m_NumArgs;
 	jx_mir_type_kind m_RetType;
 	uint32_t m_NextBasicBlockID;
-	uint32_t m_NextVirtualRegID;
+	uint32_t m_NextVirtualRegID[JMIR_REG_CLASS_COUNT];
 	uint32_t m_Flags;
-	uint32_t m_UsedHWIRegs;
+	uint32_t m_UsedHWRegs[JMIR_REG_CLASS_COUNT];
 } jx_mir_function_t;
 
 typedef struct jx_mir_relocation_t
@@ -337,10 +466,11 @@ bool jx_mir_bbRemoveInstr(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb, jx_mi
 jx_mir_instruction_t* jx_mir_bbGetFirstTerminatorInstr(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb);
 
 jx_mir_operand_t* jx_mir_opVirtualReg(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type);
-jx_mir_operand_t* jx_mir_opHWReg(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, jx_mir_hw_reg reg);
+jx_mir_operand_t* jx_mir_opHWReg(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, jx_mir_reg_t reg);
 jx_mir_operand_t* jx_mir_opIConst(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, int64_t val);
+jx_mir_operand_t* jx_mir_opFConst(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, double val);
 jx_mir_operand_t* jx_mir_opBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb);
-jx_mir_operand_t* jx_mir_opMemoryRef(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, uint32_t baseRegID, uint32_t indexRefID, uint32_t scale, int32_t displacement);
+jx_mir_operand_t* jx_mir_opMemoryRef(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, jx_mir_reg_t baseReg, jx_mir_reg_t indexReg, uint32_t scale, int32_t displacement);
 jx_mir_operand_t* jx_mir_opStackObj(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, uint32_t sz, uint32_t alignment);
 jx_mir_operand_t* jx_mir_opExternalSymbol(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, const char* name);
 void jx_mir_opPrint(jx_mir_context_t* ctx, jx_mir_operand_t* op, jx_string_buffer_t* sb);
@@ -388,34 +518,173 @@ jx_mir_instruction_t* jx_mir_pop(jx_mir_context_t* ctx, jx_mir_operand_t* op);
 jx_mir_instruction_t* jx_mir_cdq(jx_mir_context_t* ctx);
 jx_mir_instruction_t* jx_mir_cqo(jx_mir_context_t* ctx);
 
-static inline bool jx_mir_regIsArg(uint32_t regID)
+jx_mir_instruction_t* jx_mir_movss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_movsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_movd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_movq(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_addps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_addss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_addpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_addsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_andnps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_andnpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_andps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_andpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_cmpps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src, uint8_t imm8);
+jx_mir_instruction_t* jx_mir_cmpss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src, uint8_t imm8);
+jx_mir_instruction_t* jx_mir_cmppd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src, uint8_t imm8);
+jx_mir_instruction_t* jx_mir_cmpsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src, uint8_t imm8);
+jx_mir_instruction_t* jx_mir_comiss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_comisd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_cvtsi2ss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_cvtsi2sd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_cvtss2si(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_cvtsd2si(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_cvttss2si(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_cvttsd2si(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_cvtsd2ss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_cvtss2sd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_divps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_divss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_divpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_divsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_maxps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_maxss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_maxpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_maxsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_minps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_minss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_minpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_minsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_mulps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_mulss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_mulpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_mulsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_orps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_orpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_rcpps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_rcpss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_rsqrtps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_rsqrtss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_shufps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src, uint8_t imm8);
+jx_mir_instruction_t* jx_mir_shufpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src, uint8_t imm8);
+jx_mir_instruction_t* jx_mir_sqrtps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_sqrtss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_sqrtpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_sqrtsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_subps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_subss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_subpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_subsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_ucomiss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_ucomisd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_unpckhps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_unpckhpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_unpcklps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_unpcklpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_xorps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_xorpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+
+static inline bool jx_mir_regIsValid(jx_mir_reg_t reg)
 {
-	return false
-		|| kMIRFuncArgIReg[0] == regID
-		|| kMIRFuncArgIReg[1] == regID
-		|| kMIRFuncArgIReg[2] == regID
-		|| kMIRFuncArgIReg[3] == regID
+	return reg.m_ID != JMIR_HWREGID_NONE;
+}
+
+static inline bool jx_mir_regIsGP(jx_mir_reg_t reg)
+{
+	return reg.m_Class == JMIR_REG_CLASS_GP;
+}
+
+static inline bool jx_mir_regIsXMM(jx_mir_reg_t reg)
+{
+	return reg.m_Class == JMIR_REG_CLASS_XMM;
+}
+
+static inline bool jx_mir_regIsVirtual(jx_mir_reg_t reg)
+{
+	return reg.m_IsVirtual;
+}
+
+static inline bool jx_mir_regIsHW(jx_mir_reg_t reg)
+{
+	return !reg.m_IsVirtual;
+}
+
+static inline bool jx_mir_regEqual(jx_mir_reg_t a, jx_mir_reg_t b)
+{
+	return true
+		&& a.m_ID == b.m_ID
+		&& a.m_Class == b.m_Class
+		&& a.m_IsVirtual == b.m_IsVirtual
 		;
 }
 
-static inline uint32_t jx_mir_regGetArgID(uint32_t regID)
+static inline bool jx_mir_regIsSameClass(jx_mir_reg_t a, jx_mir_reg_t b)
 {
-	if (regID == kMIRFuncArgIReg[0]) {
-		return 0;
-	} else if (regID == kMIRFuncArgIReg[1]) {
-		return 1;
-	} else if (regID == kMIRFuncArgIReg[2]) {
-		return 2;
-	} else if (regID == kMIRFuncArgIReg[3]) {
-		return 3;
+	return a.m_Class == b.m_Class;
+}
+
+static inline bool jx_mir_regIsClass(jx_mir_reg_t a, jx_mir_reg_class regClass)
+{
+	return a.m_Class == regClass;
+}
+
+static inline bool jx_mir_regIsArg(jx_mir_reg_t reg)
+{
+	if (!reg.m_IsVirtual) {
+		if (reg.m_Class == JMIR_REG_CLASS_GP) {
+			// Hopefully this will be unrolled
+			for (uint32_t iReg = 0; iReg < JX_COUNTOF(kMIRFuncArgIReg); ++iReg) {
+				if (kMIRFuncArgIReg[iReg].m_ID == reg.m_ID) {
+					return true;
+				}
+			}
+		} else if (reg.m_Class == JMIR_REG_CLASS_XMM) {
+			// Hopefully this will be unrolled
+			for (uint32_t iReg = 0; iReg < JX_COUNTOF(kMIRFuncArgFReg); ++iReg) {
+				if (kMIRFuncArgFReg[iReg].m_ID == reg.m_ID) {
+					return true;
+				}
+			}
+		} else {
+			JX_CHECK(false, "Unknown register class");
+		}
+	}
+
+	return false;
+}
+
+static inline uint32_t jx_mir_regGetArgID(jx_mir_reg_t reg)
+{
+	if (!reg.m_IsVirtual) {
+		if (reg.m_Class == JMIR_REG_CLASS_GP) {
+			for (uint32_t iReg = 0; iReg < JX_COUNTOF(kMIRFuncArgIReg); ++iReg) {
+				if (kMIRFuncArgIReg[iReg].m_ID == reg.m_ID) {
+					return iReg;
+				}
+			}
+		} else if (reg.m_Class == JMIR_REG_CLASS_XMM) {
+			for (uint32_t iReg = 0; iReg < JX_COUNTOF(kMIRFuncArgFReg); ++iReg) {
+				if (kMIRFuncArgFReg[iReg].m_ID == reg.m_ID) {
+					return iReg;
+				}
+			}
+		} else {
+			JX_CHECK(false, "Unknown register class");
+		}
 	}
 
 	return UINT32_MAX;
 }
 
-static inline bool jx_mir_opIsHWReg(jx_mir_operand_t* op, jx_mir_hw_reg regID)
+static inline bool jx_mir_opIsReg(jx_mir_operand_t* op, jx_mir_reg_t reg)
 {
-	return op->m_Kind == JMIR_OPERAND_REGISTER && op->u.m_RegID == regID;
+	return true
+		&& op->m_Kind == JMIR_OPERAND_REGISTER 
+		&& op->u.m_Reg.m_ID == reg.m_ID 
+		&& op->u.m_Reg.m_Class == reg.m_Class
+		&& op->u.m_Reg.m_IsVirtual == reg.m_IsVirtual
+		;
 }
 
 static inline uint32_t jx_mir_typeGetSize(jx_mir_type_kind type)
@@ -450,6 +719,14 @@ static inline uint32_t jx_mir_typeGetAlignment(jx_mir_type_kind type)
 	uint32_t sz = kTypeAlignment[type];
 	JX_CHECK(sz != 0, "Type is unsized!");
 	return sz;
+}
+
+static inline bool jx_mir_typeIsFloatingPoint(jx_mir_type_kind type)
+{
+	return false
+		|| type == JMIR_TYPE_F32 
+		|| type == JMIR_TYPE_F64
+		;
 }
 
 static inline bool jx_mir_opcodeIsJcc(uint32_t opcode)
