@@ -111,6 +111,7 @@ static bool jmir_funcPass_removeRedundantMovesRun(jx_mir_function_pass_o* inst, 
 			const bool isMov = false
 				|| instr->m_OpCode == JMIR_OP_MOV
 				|| instr->m_OpCode == JMIR_OP_MOVSS
+				|| instr->m_OpCode == JMIR_OP_MOVSD
 				;
 			if (isMov) {
 				jx_mir_operand_t* dst = instr->m_Operands[0];
@@ -807,7 +808,12 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 	case JMIR_OP_MOV:
 	case JMIR_OP_MOVSX:
 	case JMIR_OP_MOVZX: 
-	case JMIR_OP_MOVSS: {
+	case JMIR_OP_MOVSS: 
+	case JMIR_OP_MOVSD: 
+	case JMIR_OP_MOVD:
+	case JMIR_OP_MOVQ:
+	case JMIR_OP_CVTSD2SS: 
+	case JMIR_OP_CVTSS2SD: {
 		jx_mir_operand_t* src = instr->m_Operands[1];
 		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
 			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_Reg);
@@ -1196,6 +1202,7 @@ static bool jmir_regAlloc_isMoveInstr(jmir_instruction_info_t* instrInfo, jx_mir
 		|| instr->m_OpCode == JMIR_OP_MOVSX
 		|| instr->m_OpCode == JMIR_OP_MOVZX
 		|| instr->m_OpCode == JMIR_OP_MOVSS
+		|| instr->m_OpCode == JMIR_OP_MOVSD
 		;
 	if (!isMov) {
 		return false;

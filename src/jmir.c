@@ -66,6 +66,9 @@ static const char* kMIROpcodeMnemonic[] = {
 	[JMIR_OP_JLE] = "jle",
 	[JMIR_OP_JNLE] = "jg",
 	[JMIR_OP_MOVSS] = "movss",
+	[JMIR_OP_MOVSD] = "movsd",
+	[JMIR_OP_MOVD] = "movd",
+	[JMIR_OP_MOVQ] = "movq",
 	[JMIR_OP_ADDPS] = "addps",
 	[JMIR_OP_ADDSS] = "addss",
 	[JMIR_OP_ANDNPS] = "andnps",
@@ -74,6 +77,8 @@ static const char* kMIROpcodeMnemonic[] = {
 	[JMIR_OP_CVTSI2SS] = "cvtsi2ss",
 	[JMIR_OP_CVTSS2SI] = "cvtss2si",
 	[JMIR_OP_CVTTSS2SI] = "cvttss2si",
+	[JMIR_OP_CVTSD2SS] = "cvtsd2ss",
+	[JMIR_OP_CVTSS2SD] = "cvtss2sd",
 	[JMIR_OP_DIVPS] = "divps",
 	[JMIR_OP_DIVSS] = "divss",
 	[JMIR_OP_MAXPS] = "maxps",
@@ -842,6 +847,18 @@ jx_mir_operand_t* jx_mir_opIConst(jx_mir_context_t* ctx, jx_mir_function_t* func
 	return operand;
 }
 
+jx_mir_operand_t* jx_mir_opFConst(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, double val)
+{
+	jx_mir_operand_t* operand = jmir_operandAlloc(ctx, JMIR_OPERAND_CONST, type);
+	if (!operand) {
+		return NULL;
+	}
+
+	operand->u.m_ConstF64 = val;
+
+	return operand;
+}
+
 jx_mir_operand_t* jx_mir_opBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb)
 {
 	jx_mir_operand_t* operand = jmir_operandAlloc(ctx, JMIR_OPERAND_BASIC_BLOCK, JMIR_TYPE_VOID);
@@ -1179,16 +1196,19 @@ void jx_mir_instrPrint(jx_mir_context_t* ctx, jx_mir_instruction_t* instr, jx_st
 
 jx_mir_instruction_t* jx_mir_mov(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
+	JX_CHECK(!jx_mir_typeIsFloatingPoint(dst->m_Type) && !jx_mir_typeIsFloatingPoint(src->m_Type), "Floating point types not allowed!");
 	return jmir_instrAlloc2(ctx, JMIR_OP_MOV, dst, src);
 }
 
 jx_mir_instruction_t* jx_mir_movsx(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
+	JX_CHECK(!jx_mir_typeIsFloatingPoint(dst->m_Type) && !jx_mir_typeIsFloatingPoint(src->m_Type), "Floating point types not allowed!");
 	return jmir_instrAlloc2(ctx, JMIR_OP_MOVSX, dst, src);
 }
 
 jx_mir_instruction_t* jx_mir_movzx(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
+	JX_CHECK(!jx_mir_typeIsFloatingPoint(dst->m_Type) && !jx_mir_typeIsFloatingPoint(src->m_Type), "Floating point types not allowed!");
 	return jmir_instrAlloc2(ctx, JMIR_OP_MOVZX, dst, src);
 }
 
@@ -1399,6 +1419,21 @@ jx_mir_instruction_t* jx_mir_movss(jx_mir_context_t* ctx, jx_mir_operand_t* dst,
 	return jmir_instrAlloc2(ctx, JMIR_OP_MOVSS, dst, src);
 }
 
+jx_mir_instruction_t* jx_mir_movsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_MOVSD, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_movd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_MOVD, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_movq(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_MOVQ, dst, src);
+}
+
 jx_mir_instruction_t* jx_mir_addps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_ADDPS, dst, src);
@@ -1449,6 +1484,16 @@ jx_mir_instruction_t* jx_mir_cvtss2si(jx_mir_context_t* ctx, jx_mir_operand_t* d
 jx_mir_instruction_t* jx_mir_cvttss2si(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_CVTTSS2SI, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_cvtsd2ss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_CVTSD2SS, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_cvtss2sd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_CVTSS2SD, dst, src);
 }
 
 jx_mir_instruction_t* jx_mir_divps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)

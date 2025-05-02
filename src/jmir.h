@@ -93,6 +93,9 @@ typedef enum jx_mir_opcode
 	JMIR_OP_JNLE,
 
 	JMIR_OP_MOVSS,
+	JMIR_OP_MOVSD,
+	JMIR_OP_MOVD,
+	JMIR_OP_MOVQ,
 	JMIR_OP_ADDPS,
 	JMIR_OP_ADDSS,
 	JMIR_OP_ANDNPS,
@@ -101,6 +104,8 @@ typedef enum jx_mir_opcode
 	JMIR_OP_CVTSI2SS,
 	JMIR_OP_CVTSS2SI,
 	JMIR_OP_CVTTSS2SI,
+	JMIR_OP_CVTSD2SS,
+	JMIR_OP_CVTSS2SD,
 	JMIR_OP_DIVPS,
 	JMIR_OP_DIVSS,
 	JMIR_OP_MAXPS,
@@ -440,6 +445,7 @@ jx_mir_instruction_t* jx_mir_bbGetFirstTerminatorInstr(jx_mir_context_t* ctx, jx
 jx_mir_operand_t* jx_mir_opVirtualReg(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type);
 jx_mir_operand_t* jx_mir_opHWReg(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, jx_mir_reg_t reg);
 jx_mir_operand_t* jx_mir_opIConst(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, int64_t val);
+jx_mir_operand_t* jx_mir_opFConst(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, double val);
 jx_mir_operand_t* jx_mir_opBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb);
 jx_mir_operand_t* jx_mir_opMemoryRef(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, jx_mir_reg_t baseReg, jx_mir_reg_t indexReg, uint32_t scale, int32_t displacement);
 jx_mir_operand_t* jx_mir_opStackObj(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, uint32_t sz, uint32_t alignment);
@@ -490,6 +496,9 @@ jx_mir_instruction_t* jx_mir_cdq(jx_mir_context_t* ctx);
 jx_mir_instruction_t* jx_mir_cqo(jx_mir_context_t* ctx);
 
 jx_mir_instruction_t* jx_mir_movss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_movsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_movd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_movq(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_addps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_addss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_andnps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
@@ -500,6 +509,8 @@ jx_mir_instruction_t* jx_mir_comiss(jx_mir_context_t* ctx, jx_mir_operand_t* dst
 jx_mir_instruction_t* jx_mir_cvtsi2ss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_cvtss2si(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_cvttss2si(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_cvtsd2ss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_cvtss2sd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_divps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_divss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_maxps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
