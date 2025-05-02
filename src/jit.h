@@ -362,7 +362,7 @@ bool jx64_bts(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 bool jx64_btc(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src); // Bit Test and Complement
 bool jx64_bsr(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src); // Bit Scan Reverse
 bool jx64_bsf(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src); // Bit Scan Forward
-bool jx64_jcc(jx_x64_context_t* ctx, jx_x64_condition_code cc, jx_x64_label_t* lbl);
+bool jx64_jcc(jx_x64_context_t* ctx, jx_x64_condition_code cc, jx_x64_operand_t lbl);
 bool jx64_jmp(jx_x64_context_t* ctx, jx_x64_operand_t op);
 bool jx64_call(jx_x64_context_t* ctx, jx_x64_operand_t op);
 bool jx64_cdq(jx_x64_context_t* ctx);

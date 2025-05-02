@@ -1327,8 +1327,14 @@ bool jx64_bsf(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 	return false;
 }
 
-bool jx64_jcc(jx_x64_context_t* ctx, jx_x64_condition_code cc, jx_x64_label_t* lbl)
+bool jx64_jcc(jx_x64_context_t* ctx, jx_x64_condition_code cc, jx_x64_operand_t op)
 {
+	if (op.m_Type != JX64_OPERAND_LBL) {
+		JX_CHECK(false, "Can only jump to labels");
+		return false;
+	}
+
+	jx_x64_label_t* lbl = op.u.m_Lbl;
 	if (lbl->m_Section != JX64_SECTION_TEXT) {
 		JX_CHECK(false, "Can only jump to text section labels");
 		return false;

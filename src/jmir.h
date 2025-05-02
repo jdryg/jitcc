@@ -306,7 +306,6 @@ typedef enum jx_mir_operand_kind
 	JMIR_OPERAND_CONST,
 	JMIR_OPERAND_BASIC_BLOCK,
 	JMIR_OPERAND_STACK_OBJECT,
-	JMIR_OPERAND_GLOBAL_VARIABLE,
 	JMIR_OPERAND_EXTERNAL_SYMBOL,
 	JMIR_OPERAND_MEMORY_REF,
 } jx_mir_operand_kind;
@@ -338,7 +337,6 @@ typedef struct jx_mir_operand_t
 		jx_mir_stack_object_t* m_StackObj; // JMIR_OPERAND_STACK_OBJECT
 		jx_mir_memory_ref_t m_MemRef;      // JMIR_OPERAND_MEMORY_REF
 		const char* m_ExternalSymbolName;  // JMIR_OPERAND_EXTERNAL_SYMBOL
-		// TODO: Global Variables
 	} u;
 } jx_mir_operand_t;
 

@@ -1101,9 +1101,6 @@ void jx_mir_opPrint(jx_mir_context_t* ctx, jx_mir_operand_t* op, jx_string_buffe
 		
 		jx_strbuf_pushCStr(sb, "]");
 	} break;
-	case JMIR_OPERAND_GLOBAL_VARIABLE: {
-		JX_NOT_IMPLEMENTED();
-	} break;
 	case JMIR_OPERAND_MEMORY_REF: {
 		switch (op->m_Type) {
 		case JMIR_TYPE_I8:

@@ -190,6 +190,8 @@ static bool jx_isMultipleOf_u64(uint64_t x, uint64_t of);
 
 static int32_t jx_bitcast_f_i32(float x);
 static float jx_bitcast_i32_f(int32_t x);
+static int64_t jx_bitcast_d_i64(double x);
+static double jx_bitcast_i64_d(int64_t x);
 
 static uint32_t jx_bisectf(const float* arr, uint32_t n, uint32_t stride, float x);
 static uint32_t jx_bisectd(const double* arr, uint32_t n, uint32_t stride, double x);
