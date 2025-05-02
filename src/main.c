@@ -825,8 +825,9 @@ int main(int argc, char** argv)
 			jx_mirgen_destroyContext(mirGenCtx);
 
 			jx_x64_context_t* jitCtx = jx_x64_createContext(allocator);
+			jx_x64gen_context_t* jitgenCtx = jx_x64gen_createContext(jitCtx, mirCtx, allocator);
 
-			if (jx_x64_emitCode(jitCtx, mirCtx, allocator)) {
+			if (jx_x64gen_codeGen(jitgenCtx)) {
 				uint32_t execBufSize = 0;
 				const uint8_t* execBuf = jx64_getBuffer(jitCtx, &execBufSize);
 
@@ -847,6 +848,7 @@ int main(int argc, char** argv)
 				}
 			}
 
+			jx_x64gen_destroyContext(jitgenCtx);
 			jx_x64_destroyContext(jitCtx);
 			jx_mir_destroyContext(mirCtx);
 			jx_ir_destroyContext(irCtx);
@@ -865,7 +867,7 @@ int main(int argc, char** argv)
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
 //	const char* sourceFile = "test/c-testsuite/00140.c";
-	const char* sourceFile = "test/floats.c";
+	const char* sourceFile = "test/factorial.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
 	jx_cc_translation_unit_t* tu = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_INSTALL, sourceFile);
@@ -941,8 +943,9 @@ int main(int argc, char** argv)
 				jx_strbuf_destroy(sb);
 
 				jx_x64_context_t* jitCtx = jx_x64_createContext(allocator);
+				jx_x64gen_context_t* jitgenCtx = jx_x64gen_createContext(jitCtx, mirCtx, allocator);
 
-				if (jx_x64_emitCode(jitCtx, mirCtx, allocator)) {
+				if (jx_x64gen_codeGen(jitgenCtx)) {
 					sb = jx_strbuf_create(allocator);
 
 					uint32_t bufferSize = 0;
@@ -966,6 +969,7 @@ int main(int argc, char** argv)
 					}
 				}
 
+				jx_x64gen_destroyContext(jitgenCtx);
 				jx_x64_destroyContext(jitCtx);
 				jx_mir_destroyContext(mirCtx);
 			}
