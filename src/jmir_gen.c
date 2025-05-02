@@ -580,6 +580,11 @@ static jx_mir_operand_t* jmirgen_instrBuild_mul(jx_mirgen_context_t* ctx, jx_ir_
 
 	if (jx_ir_typeIsFloatingPoint(instrType)) {
 		// Floating point multiplication
+#if 1
+		// NOTE: The check below cannot happen. Floating point constants are always memory references
+		// to the data section.
+		JX_CHECK(rhs->m_Kind == JMIR_OPERAND_REGISTER || rhs->m_Kind == JMIR_OPERAND_MEMORY_REF || rhs->m_Kind == JMIR_OPERAND_STACK_OBJECT, "Unexpected operand.");
+#else
 		// Make sure rhs is either a memory reference/stack object or a register. If it's not (e.g. a constant)
 		// move it to a virtual register first.
 		if (rhs->m_Kind != JMIR_OPERAND_REGISTER && rhs->m_Kind != JMIR_OPERAND_MEMORY_REF && rhs->m_Kind != JMIR_OPERAND_STACK_OBJECT) {
@@ -587,6 +592,7 @@ static jx_mir_operand_t* jmirgen_instrBuild_mul(jx_mirgen_context_t* ctx, jx_ir_
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, tmp, rhs));
 			rhs = tmp;
 		}
+#endif
 
 		if (instrType->m_Kind == JIR_TYPE_F32) {
 			// movss reg, lhs
@@ -867,7 +873,7 @@ static jx_mir_operand_t* jmirgen_instrBuild_load(jx_mirgen_context_t* ctx, jx_ir
 			if (regType == JMIR_TYPE_F32) {
 				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movss(ctx->m_MIRCtx, tmpReg, srcOperand));
 			} else if (regType == JMIR_TYPE_F64) {
-				JX_NOT_IMPLEMENTED();
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movsd(ctx->m_MIRCtx, tmpReg, srcOperand));
 			} else {
 				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, tmpReg, srcOperand));
 			}
@@ -879,7 +885,7 @@ static jx_mir_operand_t* jmirgen_instrBuild_load(jx_mirgen_context_t* ctx, jx_ir
 	if (regType == JMIR_TYPE_F32) {
 		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movss(ctx->m_MIRCtx, dstReg, memRef));
 	} else if (regType == JMIR_TYPE_F64) {
-		JX_NOT_IMPLEMENTED();
+		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movsd(ctx->m_MIRCtx, dstReg, memRef));
 	} else {
 		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, dstReg, memRef));
 	}
@@ -923,7 +929,7 @@ static jx_mir_operand_t* jmirgen_instrBuild_store(jx_mirgen_context_t* ctx, jx_i
 			if (regType == JMIR_TYPE_F32) {
 				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movss(ctx->m_MIRCtx, tmpReg, srcOperand));
 			} else if (regType == JMIR_TYPE_F64) {
-				JX_NOT_IMPLEMENTED();
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movsd(ctx->m_MIRCtx, tmpReg, srcOperand));
 			} else {
 				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, tmpReg, srcOperand));
 			}
@@ -934,7 +940,7 @@ static jx_mir_operand_t* jmirgen_instrBuild_store(jx_mirgen_context_t* ctx, jx_i
 	if (regType == JMIR_TYPE_F32) {
 		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movss(ctx->m_MIRCtx, memRef, srcOperand));
 	} else if (regType == JMIR_TYPE_F64) {
-		JX_NOT_IMPLEMENTED();
+		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movsd(ctx->m_MIRCtx, memRef, srcOperand));
 	} else {
 		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, memRef, srcOperand));
 	}
@@ -1260,7 +1266,7 @@ static jx_mir_operand_t* jmirgen_instrBuild_shr(jx_mirgen_context_t* ctx, jx_ir_
 
 static jx_mir_operand_t* jmirgen_instrBuild_trunc(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr)
 {
-	JX_CHECK(irInstr->m_OpCode == JIR_OP_TRUNC, "Expected shr instruction");
+	JX_CHECK(irInstr->m_OpCode == JIR_OP_TRUNC, "Expected trunc instruction");
 
 	jx_ir_type_t* instrType = jx_ir_instrToValue(irInstr)->m_Type;
 	jx_mir_operand_t* operand = jmirgen_getOperand(ctx, irInstr->super.m_OperandArr[0]->m_Value);
@@ -1285,7 +1291,7 @@ static jx_mir_operand_t* jmirgen_instrBuild_trunc(jx_mirgen_context_t* ctx, jx_i
 
 static jx_mir_operand_t* jmirgen_instrBuild_zext(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr)
 {
-	JX_CHECK(irInstr->m_OpCode == JIR_OP_ZEXT, "Expected shr instruction");
+	JX_CHECK(irInstr->m_OpCode == JIR_OP_ZEXT, "Expected zext instruction");
 
 	jx_ir_value_t* instrVal = jx_ir_instrToValue(irInstr);
 	JX_CHECK(jx_ir_typeIsInteger(instrVal->m_Type), "Expected integer target type!");
@@ -1306,7 +1312,7 @@ static jx_mir_operand_t* jmirgen_instrBuild_zext(jx_mirgen_context_t* ctx, jx_ir
 
 static jx_mir_operand_t* jmirgen_instrBuild_sext(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr)
 {
-	JX_CHECK(irInstr->m_OpCode == JIR_OP_SEXT, "Expected shr instruction");
+	JX_CHECK(irInstr->m_OpCode == JIR_OP_SEXT, "Expected sext instruction");
 
 	jx_ir_value_t* instrVal = jx_ir_instrToValue(irInstr);
 	JX_CHECK(jx_ir_typeIsInteger(instrVal->m_Type), "Expected integer target type!");
