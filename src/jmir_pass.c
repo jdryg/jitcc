@@ -791,7 +791,11 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 		jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRRegGP_A);
 	} break;
 	case JMIR_OP_CMP:
-	case JMIR_OP_TEST: {
+	case JMIR_OP_TEST: 
+	case JMIR_OP_COMISS:
+	case JMIR_OP_COMISD:
+	case JMIR_OP_UCOMISS:
+	case JMIR_OP_UCOMISD: {
 		for (uint32_t iOperand = 0; iOperand < 2; ++iOperand) {
 			jx_mir_operand_t* src = instr->m_Operands[iOperand];
 			if (src->m_Kind == JMIR_OPERAND_REGISTER) {
@@ -812,7 +816,13 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 	case JMIR_OP_MOVSD: 
 	case JMIR_OP_MOVD:
 	case JMIR_OP_MOVQ:
-	case JMIR_OP_CVTSD2SS: 
+	case JMIR_OP_CVTSI2SS:
+	case JMIR_OP_CVTSI2SD:
+	case JMIR_OP_CVTSS2SI:
+	case JMIR_OP_CVTSD2SI:
+	case JMIR_OP_CVTTSS2SI:
+	case JMIR_OP_CVTTSD2SI:
+	case JMIR_OP_CVTSD2SS:
 	case JMIR_OP_CVTSS2SD: {
 		jx_mir_operand_t* src = instr->m_Operands[1];
 		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
@@ -858,26 +868,44 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 	case JMIR_OP_SHL: 
 	case JMIR_OP_ADDPS:
 	case JMIR_OP_ADDSS:
+	case JMIR_OP_ADDPD:
+	case JMIR_OP_ADDSD:
 	case JMIR_OP_ANDNPS:
-	case JMIR_OP_ANDPS: 
+	case JMIR_OP_ANDNPD:
+	case JMIR_OP_ANDPS:
+	case JMIR_OP_ANDPD:
 	case JMIR_OP_DIVPS:
 	case JMIR_OP_DIVSS:
+	case JMIR_OP_DIVPD:
+	case JMIR_OP_DIVSD:
 	case JMIR_OP_MAXPS:
 	case JMIR_OP_MAXSS:
+	case JMIR_OP_MAXPD:
+	case JMIR_OP_MAXSD:
 	case JMIR_OP_MINPS:
 	case JMIR_OP_MINSS:
+	case JMIR_OP_MINPD:
+	case JMIR_OP_MINSD:
 	case JMIR_OP_MULPS:
 	case JMIR_OP_MULSS:
+	case JMIR_OP_MULPD:
+	case JMIR_OP_MULSD:
 	case JMIR_OP_ORPS:
+	case JMIR_OP_ORPD:
 	case JMIR_OP_RCPPS:
 	case JMIR_OP_RCPSS:
 	case JMIR_OP_RSQRTPS:
 	case JMIR_OP_RSQRTSS:
 	case JMIR_OP_SQRTPS:
 	case JMIR_OP_SQRTSS:
+	case JMIR_OP_SQRTPD:
+	case JMIR_OP_SQRTSD:
 	case JMIR_OP_SUBPS:
 	case JMIR_OP_SUBSS:
-	case JMIR_OP_XORPS: {
+	case JMIR_OP_SUBPD:
+	case JMIR_OP_SUBSD:
+	case JMIR_OP_XORPS:
+	case JMIR_OP_XORPD: {
 		jx_mir_operand_t* src = instr->m_Operands[1];
 		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
 			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_Reg);
@@ -989,21 +1017,6 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 	case JMIR_OP_JMP: {
 		jx_mir_operand_t* src = instr->m_Operands[0];
 		JX_CHECK(src->m_Kind == JMIR_OPERAND_BASIC_BLOCK, "I don't know how to handle non-basic block jump targets atm!");
-	} break;
-	case JMIR_OP_COMISS: {
-		JX_NOT_IMPLEMENTED();
-	} break;
-	case JMIR_OP_CVTSI2SS: {
-		JX_NOT_IMPLEMENTED();
-	} break;
-	case JMIR_OP_CVTSS2SI: {
-		JX_NOT_IMPLEMENTED();
-	} break;
-	case JMIR_OP_CVTTSS2SI: {
-		JX_NOT_IMPLEMENTED();
-	} break;
-	case JMIR_OP_UCOMISS: {
-		JX_NOT_IMPLEMENTED();
 	} break;
 	case JMIR_OP_UNPCKHPS: {
 		JX_NOT_IMPLEMENTED();

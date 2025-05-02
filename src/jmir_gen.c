@@ -445,8 +445,10 @@ static jx_mir_operand_t* jmirgen_instrBuild_ret(jx_mirgen_context_t* ctx, jx_ir_
 				retReg = jx_mir_opHWReg(ctx->m_MIRCtx, ctx->m_Func, mirType, kMIRRegXMM_0);
 				if (mirType == JMIR_TYPE_F32) {
 					jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movss(ctx->m_MIRCtx, retReg, mirRetVal));
+				} else if (mirType == JMIR_TYPE_F64) {
+					jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movsd(ctx->m_MIRCtx, retReg, mirRetVal));
 				} else {
-					JX_NOT_IMPLEMENTED();
+					JX_CHECK(false, "Unknown floating point type");
 				}
 			} else {
 				retReg = jx_mir_opHWReg(ctx->m_MIRCtx, ctx->m_Func, mirType, kMIRRegGP_A);
@@ -515,7 +517,10 @@ static jx_mir_operand_t* jmirgen_instrBuild_add(jx_mirgen_context_t* ctx, jx_ir_
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movss(ctx->m_MIRCtx, dstReg, lhs));
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_addss(ctx->m_MIRCtx, dstReg, rhs));
 		} else if (instrType->m_Kind == JIR_TYPE_F64) {
-			JX_NOT_IMPLEMENTED();
+			// movsd reg, lhs
+			// addsd reg, rhs
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movsd(ctx->m_MIRCtx, dstReg, lhs));
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_addsd(ctx->m_MIRCtx, dstReg, rhs));
 		} else {
 			JX_CHECK(false, "Unknown floating point type.");
 		}
@@ -546,7 +551,10 @@ static jx_mir_operand_t* jmirgen_instrBuild_sub(jx_mirgen_context_t* ctx, jx_ir_
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movss(ctx->m_MIRCtx, dstReg, lhs));
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_subss(ctx->m_MIRCtx, dstReg, rhs));
 		} else if (instrType->m_Kind == JIR_TYPE_F64) {
-			JX_NOT_IMPLEMENTED();
+			// movsd reg, lhs
+			// subsd reg, rhs
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movsd(ctx->m_MIRCtx, dstReg, lhs));
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_subsd(ctx->m_MIRCtx, dstReg, rhs));
 		} else {
 			JX_CHECK(false, "Unknown floating point type.");
 		}
@@ -586,7 +594,10 @@ static jx_mir_operand_t* jmirgen_instrBuild_mul(jx_mirgen_context_t* ctx, jx_ir_
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movss(ctx->m_MIRCtx, dstReg, lhs));
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mulss(ctx->m_MIRCtx, dstReg, rhs));
 		} else if (instrType->m_Kind == JIR_TYPE_F64) {
-			JX_NOT_IMPLEMENTED();
+			// movsd reg, lhs
+			// mulsd reg, rhs
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movsd(ctx->m_MIRCtx, dstReg, lhs));
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mulsd(ctx->m_MIRCtx, dstReg, rhs));
 		} else {
 			JX_CHECK(false, "Unknown floating point type.");
 		}
@@ -622,16 +633,28 @@ static jx_mir_operand_t* jmirgen_instrBuild_div_rem(jx_mirgen_context_t* ctx, jx
 	jx_ir_value_t* instrVal = jx_ir_instrToValue(irInstr);
 	jx_ir_type_t* instrType = instrVal->m_Type;
 
-	jx_mir_operand_t* dstReg = NULL;
+	jx_mir_operand_t* lhs = jmirgen_getOperand(ctx, irInstr->super.m_OperandArr[0]->m_Value);
+	jx_mir_operand_t* rhs = jmirgen_getOperand(ctx, irInstr->super.m_OperandArr[1]->m_Value);
+
+	jx_mir_type_kind type = jmirgen_convertType(instrType);
+	jx_mir_operand_t* dstReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, type);
 
 	if (jx_ir_typeIsFloatingPoint(instrType)) {
-		JX_NOT_IMPLEMENTED();
+		JX_CHECK(irInstr->m_OpCode == JIR_OP_DIV, "Expected floating point div instruction.");
+		if (instrType->m_Kind == JIR_TYPE_F32) {
+			// movss reg, lhs
+			// divss reg, rhs
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movss(ctx->m_MIRCtx, dstReg, lhs));
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_divss(ctx->m_MIRCtx, dstReg, rhs));
+		} else if (instrType->m_Kind == JIR_TYPE_F64) {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movsd(ctx->m_MIRCtx, dstReg, lhs));
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_divsd(ctx->m_MIRCtx, dstReg, rhs));
+		} else {
+			JX_CHECK(false, "Unknown floating point type");
+		}
 	} else {
-		jx_mir_type_kind type = jmirgen_convertType(instrType);
 		JX_CHECK(type == JMIR_TYPE_I32 || type == JMIR_TYPE_I64 || type == JMIR_TYPE_PTR, "Expected 32-bit or 64-bit division");
 
-		jx_mir_operand_t* lhs = jmirgen_getOperand(ctx, irInstr->super.m_OperandArr[0]->m_Value);
-		jx_mir_operand_t* rhs = jmirgen_getOperand(ctx, irInstr->super.m_OperandArr[1]->m_Value);
 		if (rhs->m_Kind == JMIR_OPERAND_CONST) {
 			// TODO: Div by constant. Try to avoid div/idiv. Is this the right place to do this or it's better to 
 			// add an IR pass?
@@ -639,8 +662,6 @@ static jx_mir_operand_t* jmirgen_instrBuild_div_rem(jx_mirgen_context_t* ctx, jx
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, reg, rhs));
 			rhs = reg;
 		}
-
-		dstReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, type);
 
 		jx_mir_operand_t* loReg = jx_mir_opHWReg(ctx->m_MIRCtx, ctx->m_Func, type, kMIRRegGP_A);
 		jx_mir_operand_t* hiReg = jx_mir_opHWReg(ctx->m_MIRCtx, ctx->m_Func, type, kMIRRegGP_D);
@@ -754,14 +775,23 @@ static jx_mir_operand_t* jmirgen_instrBuild_setcc(jx_mirgen_context_t* ctx, jx_i
 
 	jx_ir_type_t* cmpType = lhsVal->m_Type;
 
-	jx_mir_operand_t* dstReg = NULL;
+	jx_mir_operand_t* dstReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I8);;
+
+	jx_ir_condition_code irCC = irInstr->m_OpCode - JIR_OP_SET_CC_BASE;
+
 	if (jx_ir_typeIsFloatingPoint(cmpType)) {
-		JX_NOT_IMPLEMENTED();
+		if (cmpType->m_Kind == JIR_TYPE_F32) {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_ucomiss(ctx->m_MIRCtx, lhs, rhs));
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_setcc(ctx->m_MIRCtx, irCC, dstReg));
+		} else if (cmpType->m_Kind == JIR_TYPE_F64) {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_ucomisd(ctx->m_MIRCtx, lhs, rhs));
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_setcc(ctx->m_MIRCtx, irCC, dstReg));
+		} else {
+			JX_CHECK(false, "Unknown floating point type.");
+		}
 	} else {
 		// cmp lhs, rhs
 		// setcc reg8
-		dstReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I8);
-		jx_ir_condition_code irCC = irInstr->m_OpCode - JIR_OP_SET_CC_BASE;
 		jx_mir_condition_code mirCC = jx_ir_typeIsSigned(cmpType)
 			? kIRCCToMIRCCSigned[irCC]
 			: kIRCCToMIRCCUnsigned[irCC]

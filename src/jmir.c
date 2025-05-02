@@ -71,35 +71,60 @@ static const char* kMIROpcodeMnemonic[] = {
 	[JMIR_OP_MOVQ] = "movq",
 	[JMIR_OP_ADDPS] = "addps",
 	[JMIR_OP_ADDSS] = "addss",
+	[JMIR_OP_ADDPD] = "addpd",
+	[JMIR_OP_ADDSD] = "addsd",
 	[JMIR_OP_ANDNPS] = "andnps",
+	[JMIR_OP_ANDNPD] = "andnpd",
 	[JMIR_OP_ANDPS] = "andps",
+	[JMIR_OP_ANDPD] = "andpd",
 	[JMIR_OP_COMISS] = "comiss",
+	[JMIR_OP_COMISD] = "comisd",
 	[JMIR_OP_CVTSI2SS] = "cvtsi2ss",
+	[JMIR_OP_CVTSI2SD] = "cvtsi2sd",
 	[JMIR_OP_CVTSS2SI] = "cvtss2si",
+	[JMIR_OP_CVTSD2SI] = "cvtsd2si",
 	[JMIR_OP_CVTTSS2SI] = "cvttss2si",
+	[JMIR_OP_CVTTSD2SI] = "cvttsd2si",
 	[JMIR_OP_CVTSD2SS] = "cvtsd2ss",
 	[JMIR_OP_CVTSS2SD] = "cvtss2sd",
 	[JMIR_OP_DIVPS] = "divps",
 	[JMIR_OP_DIVSS] = "divss",
+	[JMIR_OP_DIVPD] = "divpd",
+	[JMIR_OP_DIVSD] = "divsd",
 	[JMIR_OP_MAXPS] = "maxps",
 	[JMIR_OP_MAXSS] = "maxss",
+	[JMIR_OP_MAXPD] = "maxpd",
+	[JMIR_OP_MAXSD] = "maxsd",
 	[JMIR_OP_MINPS] = "minps",
 	[JMIR_OP_MINSS] = "minss",
+	[JMIR_OP_MINPD] = "minpd",
+	[JMIR_OP_MINSD] = "minsd",
 	[JMIR_OP_MULPS] = "mulps",
 	[JMIR_OP_MULSS] = "mulss",
+	[JMIR_OP_MULPD] = "mulpd",
+	[JMIR_OP_MULSD] = "mulsd",
 	[JMIR_OP_ORPS] = "orps",
+	[JMIR_OP_ORPD] = "orps",
 	[JMIR_OP_RCPPS] = "rcpps",
 	[JMIR_OP_RCPSS] = "rcpss",
 	[JMIR_OP_RSQRTPS] = "rsqrtps",
 	[JMIR_OP_RSQRTSS] = "rsqrtss",
 	[JMIR_OP_SQRTPS] = "sqrtps",
 	[JMIR_OP_SQRTSS] = "sqrtss",
+	[JMIR_OP_SQRTPD] = "sqrtpd",
+	[JMIR_OP_SQRTSD] = "sqrtsd",
 	[JMIR_OP_SUBPS] = "subps",
 	[JMIR_OP_SUBSS] = "subss",
+	[JMIR_OP_SUBPD] = "subpd",
+	[JMIR_OP_SUBSD] = "subsd",
 	[JMIR_OP_UCOMISS] = "ucomiss",
+	[JMIR_OP_UCOMISD] = "ucomisd",
 	[JMIR_OP_UNPCKHPS] = "unpckhps",
+	[JMIR_OP_UNPCKHPD] = "unpckhpd",
 	[JMIR_OP_UNPCKLPS] = "unpcklps",
+	[JMIR_OP_UNPCKLPD] = "unpcklpd",
 	[JMIR_OP_XORPS] = "xorps",
+	[JMIR_OP_XORPD] = "xorpd",
 };
 
 typedef struct jx_mir_frame_info_t
@@ -1441,14 +1466,34 @@ jx_mir_instruction_t* jx_mir_addss(jx_mir_context_t* ctx, jx_mir_operand_t* dst,
 	return jmir_instrAlloc2(ctx, JMIR_OP_ADDSS, dst, src);
 }
 
+jx_mir_instruction_t* jx_mir_addpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_ADDPD, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_addsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_ADDSD, dst, src);
+}
+
 jx_mir_instruction_t* jx_mir_andnps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_ANDNPS, dst, src);
 }
 
+jx_mir_instruction_t* jx_mir_andnpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_ANDNPD, dst, src);
+}
+
 jx_mir_instruction_t* jx_mir_andps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_ANDPS, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_andpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_ANDPD, dst, src);
 }
 
 jx_mir_instruction_t* jx_mir_cmpps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src, uint8_t imm8)
@@ -1463,9 +1508,26 @@ jx_mir_instruction_t* jx_mir_cmpss(jx_mir_context_t* ctx, jx_mir_operand_t* dst,
 	return NULL;
 }
 
+jx_mir_instruction_t* jx_mir_cmppd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src, uint8_t imm8)
+{
+	JX_NOT_IMPLEMENTED();
+	return NULL;
+}
+
+jx_mir_instruction_t* jx_mir_cmpsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src, uint8_t imm8)
+{
+	JX_NOT_IMPLEMENTED();
+	return NULL;
+}
+
 jx_mir_instruction_t* jx_mir_comiss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_COMISS, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_comisd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_COMISD, dst, src);
 }
 
 jx_mir_instruction_t* jx_mir_cvtsi2ss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
@@ -1473,14 +1535,29 @@ jx_mir_instruction_t* jx_mir_cvtsi2ss(jx_mir_context_t* ctx, jx_mir_operand_t* d
 	return jmir_instrAlloc2(ctx, JMIR_OP_CVTSI2SS, dst, src);
 }
 
+jx_mir_instruction_t* jx_mir_cvtsi2sd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_CVTSI2SD, dst, src);
+}
+
 jx_mir_instruction_t* jx_mir_cvtss2si(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_CVTSS2SI, dst, src);
 }
 
+jx_mir_instruction_t* jx_mir_cvtsd2si(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_CVTSD2SI, dst, src);
+}
+
 jx_mir_instruction_t* jx_mir_cvttss2si(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_CVTTSS2SI, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_cvttsd2si(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_CVTTSD2SI, dst, src);
 }
 
 jx_mir_instruction_t* jx_mir_cvtsd2ss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
@@ -1503,6 +1580,16 @@ jx_mir_instruction_t* jx_mir_divss(jx_mir_context_t* ctx, jx_mir_operand_t* dst,
 	return jmir_instrAlloc2(ctx, JMIR_OP_DIVSS, dst, src);
 }
 
+jx_mir_instruction_t* jx_mir_divpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_DIVPD, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_divsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_DIVSD, dst, src);
+}
+
 jx_mir_instruction_t* jx_mir_maxps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_MAXPS, dst, src);
@@ -1511,6 +1598,16 @@ jx_mir_instruction_t* jx_mir_maxps(jx_mir_context_t* ctx, jx_mir_operand_t* dst,
 jx_mir_instruction_t* jx_mir_maxss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_MAXSS, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_maxpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_MAXPD, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_maxsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_MAXSD, dst, src);
 }
 
 jx_mir_instruction_t* jx_mir_minps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
@@ -1523,6 +1620,16 @@ jx_mir_instruction_t* jx_mir_minss(jx_mir_context_t* ctx, jx_mir_operand_t* dst,
 	return jmir_instrAlloc2(ctx, JMIR_OP_MINSS, dst, src);
 }
 
+jx_mir_instruction_t* jx_mir_minpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_MINPD, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_minsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_MINSD, dst, src);
+}
+
 jx_mir_instruction_t* jx_mir_mulps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_MULPS, dst, src);
@@ -1533,9 +1640,24 @@ jx_mir_instruction_t* jx_mir_mulss(jx_mir_context_t* ctx, jx_mir_operand_t* dst,
 	return jmir_instrAlloc2(ctx, JMIR_OP_MULSS, dst, src);
 }
 
+jx_mir_instruction_t* jx_mir_mulpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_MULPD, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_mulsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_MULSD, dst, src);
+}
+
 jx_mir_instruction_t* jx_mir_orps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_ORPS, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_orpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_ORPD, dst, src);
 }
 
 jx_mir_instruction_t* jx_mir_rcpps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
@@ -1564,6 +1686,12 @@ jx_mir_instruction_t* jx_mir_shufps(jx_mir_context_t* ctx, jx_mir_operand_t* dst
 	return NULL;
 }
 
+jx_mir_instruction_t* jx_mir_shufpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src, uint8_t imm8)
+{
+	JX_NOT_IMPLEMENTED();
+	return NULL;
+}
+
 jx_mir_instruction_t* jx_mir_sqrtps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_SQRTPS, dst, src);
@@ -1572,6 +1700,16 @@ jx_mir_instruction_t* jx_mir_sqrtps(jx_mir_context_t* ctx, jx_mir_operand_t* dst
 jx_mir_instruction_t* jx_mir_sqrtss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_SQRTSS, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_sqrtpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_SQRTPD, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_sqrtsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_SQRTSD, dst, src);
 }
 
 jx_mir_instruction_t* jx_mir_subps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
@@ -1584,9 +1722,24 @@ jx_mir_instruction_t* jx_mir_subss(jx_mir_context_t* ctx, jx_mir_operand_t* dst,
 	return jmir_instrAlloc2(ctx, JMIR_OP_SUBSS, dst, src);
 }
 
+jx_mir_instruction_t* jx_mir_subpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_SUBPD, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_subsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_SUBSD, dst, src);
+}
+
 jx_mir_instruction_t* jx_mir_ucomiss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_UCOMISS, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_ucomisd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_UCOMISD, dst, src);
 }
 
 jx_mir_instruction_t* jx_mir_unpckhps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
@@ -1594,14 +1747,29 @@ jx_mir_instruction_t* jx_mir_unpckhps(jx_mir_context_t* ctx, jx_mir_operand_t* d
 	return jmir_instrAlloc2(ctx, JMIR_OP_UNPCKHPS, dst, src);
 }
 
+jx_mir_instruction_t* jx_mir_unpckhpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_UNPCKHPD, dst, src);
+}
+
 jx_mir_instruction_t* jx_mir_unpcklps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_UNPCKLPS, dst, src);
 }
 
+jx_mir_instruction_t* jx_mir_unpcklpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_UNPCKLPD, dst, src);
+}
+
 jx_mir_instruction_t* jx_mir_xorps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_XORPS, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_xorpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_XORPD, dst, src);
 }
 
 static bool jmir_opcodeIsTerminator(uint32_t opcode)

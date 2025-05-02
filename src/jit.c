@@ -409,8 +409,10 @@ bool jx64_globalVarDefine(jx_x64_context_t* ctx, jx_x64_symbol_t* gv, const uint
 	const uint32_t alignedPos = ((curPos + (alignment - 1)) / alignment) * alignment;
 	const uint32_t alignmentSize = alignedPos - curPos;
 
-	if (alignmentSize && !jx64_nop(ctx, alignmentSize)) {
-		return false;
+	if (alignmentSize) {
+		const uint8_t zeros[] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+		JX_CHECK(alignmentSize <= JX_COUNTOF(zeros), "Need more zeroes!");
+		jx64_emitBytes(ctx, JX64_SECTION_DATA, zeros, alignmentSize);
 	}
 
 	jx64_labelBind(ctx, gv->m_Label);
@@ -1476,9 +1478,24 @@ bool jx64_addss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x58, false, dst, src);
 }
 
+bool jx64_addpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_66, 0x58, false, dst, src);
+}
+
+bool jx64_addsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F2, 0x58, false, dst, src);
+}
+
 bool jx64_andnps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x55, false, dst, src);
+}
+
+bool jx64_andnpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_66, 0x55, false, dst, src);
 }
 
 bool jx64_andps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
@@ -1486,24 +1503,33 @@ bool jx64_andps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x54, false, dst, src);
 }
 
+bool jx64_andpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_66, 0x54, false, dst, src);
+}
+
 bool jx64_cmpps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src, uint8_t imm8)
 {
-#if 1
 	JX_NOT_IMPLEMENTED();
 	return false;
-#else
-	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0xC2, false, dst, src);
-#endif
 }
 
 bool jx64_cmpss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src, uint8_t imm8)
 {
-#if 1
 	JX_NOT_IMPLEMENTED();
 	return false;
-#else
-	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0xC2, false, dst, src);
-#endif
+}
+
+bool jx64_cmppd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src, uint8_t imm8)
+{
+	JX_NOT_IMPLEMENTED();
+	return false;
+}
+
+bool jx64_cmpsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src, uint8_t imm8)
+{
+	JX_NOT_IMPLEMENTED();
+	return false;
 }
 
 bool jx64_comiss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
@@ -1511,34 +1537,45 @@ bool jx64_comiss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t s
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x2F, false, dst, src);
 }
 
+bool jx64_comisd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_66, 0x2F, false, dst, src);
+}
+
 bool jx64_cvtsi2ss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
-#if 1
 	JX_NOT_IMPLEMENTED();
 	return false;
-#else
-	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x2A, false, dst, src);
-#endif
+}
+
+bool jx64_cvtsi2sd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	JX_NOT_IMPLEMENTED();
+	return false;
 }
 
 bool jx64_cvtss2si(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
-#if 1
 	JX_NOT_IMPLEMENTED();
 	return false;
-#else
-	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x2D, false, dst, src);
-#endif
+}
+
+bool jx64_cvtsd2si(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	JX_NOT_IMPLEMENTED();
+	return false;
 }
 
 bool jx64_cvttss2si(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
-#if 1
 	JX_NOT_IMPLEMENTED();
 	return false;
-#else
-	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x2C, false, dst, src);
-#endif
+}
+
+bool jx64_cvttsd2si(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	JX_NOT_IMPLEMENTED();
+	return false;
 }
 
 bool jx64_cvtsd2ss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
@@ -1561,6 +1598,16 @@ bool jx64_divss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x5E, false, dst, src);
 }
 
+bool jx64_divpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_66, 0x5E, false, dst, src);
+}
+
+bool jx64_divsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F2, 0x5E, false, dst, src);
+}
+
 bool jx64_maxps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x5F, false, dst, src);
@@ -1569,6 +1616,16 @@ bool jx64_maxps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 bool jx64_maxss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x5F, false, dst, src);
+}
+
+bool jx64_maxpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_66, 0x5F, false, dst, src);
+}
+
+bool jx64_maxsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F2, 0x5F, false, dst, src);
 }
 
 bool jx64_minps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
@@ -1581,6 +1638,16 @@ bool jx64_minss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x5D, false, dst, src);
 }
 
+bool jx64_minpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_66, 0x5D, false, dst, src);
+}
+
+bool jx64_minsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F2, 0x5D, false, dst, src);
+}
+
 bool jx64_mulps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x59, false, dst, src);
@@ -1591,9 +1658,24 @@ bool jx64_mulss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x59, false, dst, src);
 }
 
+bool jx64_mulpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_66, 0x59, false, dst, src);
+}
+
+bool jx64_mulsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F2, 0x59, false, dst, src);
+}
+
 bool jx64_orps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x56, false, dst, src);
+}
+
+bool jx64_orpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_66, 0x56, false, dst, src);
 }
 
 bool jx64_rcpps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
@@ -1618,12 +1700,14 @@ bool jx64_rsqrtss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t 
 
 bool jx64_shufps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src, uint8_t imm8)
 {
-#if 1
 	JX_NOT_IMPLEMENTED();
 	return false;
-#else
-	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0xC6, false, dst, src);
-#endif
+}
+
+bool jx64_shufpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src, uint8_t imm8)
+{
+	JX_NOT_IMPLEMENTED();
+	return false;
 }
 
 bool jx64_sqrtps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
@@ -1636,6 +1720,16 @@ bool jx64_sqrtss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t s
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x51, false, dst, src);
 }
 
+bool jx64_sqrtpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_66, 0x51, false, dst, src);
+}
+
+bool jx64_sqrtsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F2, 0x51, false, dst, src);
+}
+
 bool jx64_subps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x5C, false, dst, src);
@@ -1646,9 +1740,24 @@ bool jx64_subss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x5C, false, dst, src);
 }
 
+bool jx64_subpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_66, 0x5C, false, dst, src);
+}
+
+bool jx64_subsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F2, 0x5C, false, dst, src);
+}
+
 bool jx64_ucomiss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x2E, false, dst, src);
+}
+
+bool jx64_ucomisd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_66, 0x2E, false, dst, src);
 }
 
 bool jx64_unpckhps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
@@ -1656,14 +1765,29 @@ bool jx64_unpckhps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x15, false, dst, src);
 }
 
+bool jx64_unpckhpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_66, 0x15, false, dst, src);
+}
+
 bool jx64_unpcklps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x14, false, dst, src);
 }
 
+bool jx64_unpcklpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_66, 0x14, false, dst, src);
+}
+
 bool jx64_xorps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
 	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x57, false, dst, src);
+}
+
+bool jx64_xorpd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_66, 0x57, false, dst, src);
 }
 
 static jx_x64_symbol_t* jx64_symbolAlloc(jx_x64_context_t* ctx, jx_x64_symbol_kind kind, const char* name)
