@@ -733,6 +733,7 @@ static inline bool jx_mir_typeIsFloatingPoint(jx_mir_type_kind type)
 	return false
 		|| type == JMIR_TYPE_F32 
 		|| type == JMIR_TYPE_F64
+		|| type == JMIR_TYPE_F128
 		;
 }
 

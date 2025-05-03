@@ -2202,6 +2202,86 @@ static inline bool jmir_movIs(const jmir_mov_instr_t* mov, jmir_mov_instr_state 
 }
 
 //////////////////////////////////////////////////////////////////////////
+// Peephole optimizations
+//
+static void jmir_funcPass_peepholeDestroy(jx_mir_function_pass_o* inst, jx_allocator_i* allocator);
+static bool jmir_funcPass_peepholeRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func);
+
+static bool jmir_peephole_isFloatConst(jx_mir_operand_t* op, double val);
+
+bool jx_mir_funcPassCreate_peephole(jx_mir_function_pass_t* pass, jx_allocator_i* allocator)
+{
+	pass->m_Inst = NULL;
+	pass->run = jmir_funcPass_peepholeRun;
+	pass->destroy = jmir_funcPass_peepholeDestroy;
+
+	return true;
+}
+
+static void jmir_funcPass_peepholeDestroy(jx_mir_function_pass_o* inst, jx_allocator_i* allocator)
+{
+}
+
+static bool jmir_funcPass_peepholeRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
+{
+	bool changed = true;
+
+	while (changed) {
+		changed = false;
+
+		jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
+		while (bb) {
+			jx_mir_instruction_t* instr = bb->m_InstrListHead;
+			while (instr) {
+				jx_mir_instruction_t* instrNext = instr->m_Next;
+
+				if (instr->m_OpCode == JMIR_OP_MOVSS && jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
+					// movss xmm, 0.0
+					//  =>
+					// xorps xmm, xmm
+					jx_mir_instruction_t* xorInstr = jx_mir_xorps(ctx, instr->m_Operands[0], instr->m_Operands[0]);
+					jx_mir_bbInsertInstrBefore(ctx, bb, instr, xorInstr);
+					jx_mir_bbRemoveInstr(ctx, bb, instr);
+					jx_mir_instrFree(ctx, instr);
+
+					changed = true;
+				} else if (instr->m_OpCode == JMIR_OP_MOVSD && jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
+					JX_CHECK(false, "Implement like the movss above.");
+				} else if ((instr->m_OpCode == JMIR_OP_UCOMISS || instr->m_OpCode == JMIR_OP_COMISS) && jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
+					// ucomiss xmm, 0.0
+					//  => 
+					// xorps xmmtmp, xmmtmp
+					// ucomiss xmm, xmmtmp
+					jx_mir_operand_t* tmp = jx_mir_opVirtualReg(ctx, func, JMIR_TYPE_F128);
+					jx_mir_instruction_t* xorInstr = jx_mir_xorps(ctx, tmp, tmp);
+					jx_mir_bbInsertInstrBefore(ctx, bb, instr, xorInstr);
+					instr->m_Operands[1] = tmp;
+
+					changed = true;
+				} else if ((instr->m_OpCode == JMIR_OP_UCOMISD || instr->m_OpCode == JMIR_OP_COMISD) && jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
+					JX_CHECK(false, "Implement like the ucomiss/comiss above.");
+				}
+
+				instr = instrNext;
+			}
+
+			bb = bb->m_Next;
+		}
+	}
+
+	return false;
+}
+
+static bool jmir_peephole_isFloatConst(jx_mir_operand_t* op, double val)
+{
+	return true
+		&& jx_mir_typeIsFloatingPoint(op->m_Type)
+		&& op->m_Kind == JMIR_OPERAND_CONST
+		&& op->u.m_ConstF64 == val
+		;
+}
+
+//////////////////////////////////////////////////////////////////////////
 // Bitset
 //
 static jx_bitset_t* jx_bitsetCreate(uint32_t numBits, jx_allocator_i* allocator)

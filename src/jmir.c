@@ -247,6 +247,24 @@ jx_mir_context_t* jx_mir_createContext(jx_allocator_i* allocator)
 			}
 		}
 
+		// Peephole optimizations
+		{
+			jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_pass_t));
+			if (!pass) {
+				jx_mir_destroyContext(ctx);
+				return NULL;
+			}
+
+			jx_memset(pass, 0, sizeof(jx_mir_function_pass_t));
+			if (!jx_mir_funcPassCreate_peephole(pass, ctx->m_Allocator)) {
+				JX_CHECK(false, "Failed to initialize function pass!");
+				JX_FREE(ctx->m_Allocator, pass);
+			} else {
+				cur->m_Next = pass;
+				cur = cur->m_Next;
+			}
+		}
+
 #if 1
 		// Register allocator
 		{
@@ -1081,16 +1099,16 @@ void jx_mir_opPrint(jx_mir_context_t* ctx, jx_mir_operand_t* op, jx_string_buffe
 			JX_CHECK(false, "void constant?");
 		} break;
 		case JMIR_TYPE_I8: {
-			jx_strbuf_printf(sb, "%d", (int8_t)op->u.m_ConstI64);
+			jx_strbuf_printf(sb, "0x%02X", (int8_t)op->u.m_ConstI64);
 		} break;
 		case JMIR_TYPE_I16: {
-			jx_strbuf_printf(sb, "%d", (int16_t)op->u.m_ConstI64);
+			jx_strbuf_printf(sb, "0x%04X", (int16_t)op->u.m_ConstI64);
 		} break;
 		case JMIR_TYPE_I32: {
-			jx_strbuf_printf(sb, "%d", (int32_t)op->u.m_ConstI64);
+			jx_strbuf_printf(sb, "0x%08X", (int32_t)op->u.m_ConstI64);
 		} break;
 		case JMIR_TYPE_I64: {
-			jx_strbuf_printf(sb, "%lld", op->u.m_ConstI64);
+			jx_strbuf_printf(sb, "0x%016llX", op->u.m_ConstI64);
 		} break;
 		case JMIR_TYPE_F32:
 		case JMIR_TYPE_F64: {
