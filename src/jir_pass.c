@@ -1141,8 +1141,12 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 				case JIR_OP_PTR_TO_INT:
 				case JIR_OP_INT_TO_PTR:
 				case JIR_OP_BITCAST: 
-				case JIR_OP_FPEXT: 
-				case JIR_OP_FPTRUNC: {
+				case JIR_OP_FPEXT:   // TODO: 
+				case JIR_OP_FPTRUNC: // TODO: 
+				case JIR_OP_FP2UI:	 // TODO: 
+				case JIR_OP_FP2SI: 	 // TODO: 
+				case JIR_OP_UI2FP:	 // TODO: 
+				case JIR_OP_SI2FP: { // TODO: 
 					// No op
 				} break;
 				default:
@@ -1617,4 +1621,223 @@ static jx_ir_constant_t* jir_constFold_sextConst(jx_ir_context_t* ctx, jx_ir_con
 	}
 
 	return res;
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Peephole optimizations
+//
+typedef struct jir_func_pass_peephole_t
+{
+	jx_allocator_i* m_Allocator;
+} jir_func_pass_peephole_t;
+
+static void jir_funcPass_peepholeDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator);
+static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func);
+
+static bool jir_peephole_isSetcc(jx_ir_opcode opcode);
+static bool jir_peephole_isUnusedInstr(jx_ir_instruction_t* instr);
+
+bool jx_ir_funcPassCreate_peephole(jx_ir_function_pass_t* pass, jx_allocator_i* allocator)
+{
+	jir_func_pass_peephole_t* inst = (jir_func_pass_peephole_t*)JX_ALLOC(allocator, sizeof(jir_func_pass_peephole_t));
+	if (!inst) {
+		return false;
+	}
+
+	jx_memset(inst, 0, sizeof(jir_func_pass_peephole_t));
+	inst->m_Allocator = allocator;
+
+	pass->m_Inst = (jx_ir_function_pass_o*)inst;
+	pass->run = jir_funcPass_peepholeRun;
+	pass->destroy = jir_funcPass_peepholeDestroy;
+
+	return true;
+}
+
+static void jir_funcPass_peepholeDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator)
+{
+	jir_func_pass_peephole_t* pass = (jir_func_pass_peephole_t*)inst;
+	JX_FREE(allocator, pass);
+}
+
+static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
+{
+	jir_func_pass_peephole_t* pass = (jir_func_pass_peephole_t*)inst;
+
+	bool changed = true;
+	while (changed) {
+		changed = false;
+
+		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
+		while (bb) {
+			jx_ir_instruction_t* instr = bb->m_InstrListHead;
+			while (instr) {
+				jx_ir_instruction_t* instrNext = instr->m_Next;
+
+				jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+
+				if (instr->m_OpCode == JIR_OP_SET_EQ || instr->m_OpCode == JIR_OP_SET_NE) {
+					jx_ir_instruction_t* instrOp0 = jx_ir_valueToInstr(instrUser->m_OperandArr[0]->m_Value);
+					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(instrUser->m_OperandArr[1]->m_Value);
+					if (instrOp0 && constOp1 && jir_peephole_isSetcc(instrOp0->m_OpCode)) {
+						// %res = setcc bool, %a, %b
+						// %cmp = seteq/setne bool, %res, true/false
+						//   =>
+						// %cmp = setcc bool, %a, %b // cc might be different than original cc
+						if (instr->m_OpCode == JIR_OP_SET_EQ) {
+							if (constOp1->u.m_Bool) {
+								JX_CHECK(false, "Should be the same as SetNE/false. Implement when assert is hit.");
+							} else {
+								JX_CHECK(false, "Should probably invert cc. Implement when assert is hit.");
+							}
+						} else if (instr->m_OpCode == JIR_OP_SET_NE) {
+							if (constOp1->u.m_Bool) {
+								JX_CHECK(false, "Should probably invert cc. Implement when assert is hit.");
+							} else {
+								// %res = setcc bool, %a, %b
+								// %cmp = setne bool %res, false
+								//  =>
+								// %cmp = setcc bool, %a, %b
+								// 
+								// Create new setcc instruction with the same opcode as the 
+								// original instruction.
+								jx_ir_condition_code cc = instrOp0->m_OpCode - JIR_OP_SET_CC_BASE;
+								jx_ir_instruction_t* newSetcc = jx_ir_instrSetCC(ctx, cc, instrOp0->super.m_OperandArr[0]->m_Value, instrOp0->super.m_OperandArr[1]->m_Value);
+								jx_ir_bbInsertInstrBefore(ctx, bb, instr, newSetcc);
+
+								// Replace existing value with new instruction
+								jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(newSetcc));
+
+								// Remove old instruction
+								jx_ir_bbRemoveInstr(ctx, bb, instr);
+								jx_ir_instrFree(ctx, instr);
+
+								changed = true;
+							}
+						}
+					}
+				}
+
+				instr = instrNext;
+			}
+
+			bb = bb->m_Next;
+		}
+	}
+
+#if 1
+	// Remove dead instructions...
+	// TODO: Turn into a function?
+	{
+		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
+		while (bb) {
+			jx_ir_instruction_t* instr = bb->m_InstrListHead;
+			while (instr) {
+				jx_ir_instruction_t* instrNext = instr->m_Next;
+
+				if (jir_peephole_isUnusedInstr(instr)) {
+					jx_ir_bbRemoveInstr(ctx, bb, instr);
+					jx_ir_instrFree(ctx, instr);
+				}
+
+				instr = instrNext;
+			}
+
+			bb = bb->m_Next;
+		}
+	}
+#endif
+
+	return false;
+}
+
+static bool jir_peephole_isSetcc(jx_ir_opcode opcode)
+{
+	return false
+		|| opcode == JIR_OP_SET_LE
+		|| opcode == JIR_OP_SET_GE
+		|| opcode == JIR_OP_SET_LT
+		|| opcode == JIR_OP_SET_GT
+		|| opcode == JIR_OP_SET_EQ
+		|| opcode == JIR_OP_SET_NE
+		;
+}
+
+static bool jir_peephole_isUnusedInstr(jx_ir_instruction_t* instr)
+{
+	if (instr->super.super.m_UsesListHead) {
+		return false;
+	}
+
+	if (instr->m_OpCode == JIR_OP_BRANCH || instr->m_OpCode == JIR_OP_CALL || instr->m_OpCode == JIR_OP_RET || instr->m_OpCode == JIR_OP_STORE) {
+		return false;
+	}
+
+	return true;
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Canonicalize operand order
+//
+static void jir_funcPass_canonicalizeOperandsDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator);
+static bool jir_funcPass_canonicalizeOperandsRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func);
+
+bool jx_ir_funcPassCreate_canonicalizeOperands(jx_ir_function_pass_t* pass, jx_allocator_i* allocator)
+{
+	pass->m_Inst = NULL;
+	pass->run = jir_funcPass_canonicalizeOperandsRun;
+	pass->destroy = jir_funcPass_canonicalizeOperandsDestroy;
+
+	return true;
+}
+
+static void jir_funcPass_canonicalizeOperandsDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator)
+{
+}
+
+static bool jir_funcPass_canonicalizeOperandsRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
+{
+	jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
+	while (bb) {
+		jx_ir_instruction_t* instr = bb->m_InstrListHead;
+		while (instr) {
+			jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+
+			const bool isCommutativeBinaryOp = false
+				|| instr->m_OpCode == JIR_OP_ADD
+				|| instr->m_OpCode == JIR_OP_MUL
+				|| instr->m_OpCode == JIR_OP_AND
+				|| instr->m_OpCode == JIR_OP_OR
+				|| instr->m_OpCode == JIR_OP_XOR
+				;
+
+			const bool isSetCC = false
+				|| instr->m_OpCode == JIR_OP_SET_LE
+				|| instr->m_OpCode == JIR_OP_SET_GE
+				|| instr->m_OpCode == JIR_OP_SET_LT
+				|| instr->m_OpCode == JIR_OP_SET_GT
+				|| instr->m_OpCode == JIR_OP_SET_EQ
+				|| instr->m_OpCode == JIR_OP_SET_NE
+				;
+
+			if (isCommutativeBinaryOp && jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value)) {
+				// binop const, %x => binop %x, const
+				jx_ir_use_t* tmp = instrUser->m_OperandArr[0];
+				instrUser->m_OperandArr[0] = instrUser->m_OperandArr[1];
+				instrUser->m_OperandArr[1] = tmp;
+			} else if (isSetCC && jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value)) {
+				// setcc const, %x => setcc %x, const with swapped cc
+				jx_ir_use_t* tmp = instrUser->m_OperandArr[0];
+				instrUser->m_OperandArr[0] = instrUser->m_OperandArr[1];
+				instrUser->m_OperandArr[1] = tmp;
+				instr->m_OpCode = JIR_OP_SET_CC_BASE + jx_ir_ccSwapOperands(instr->m_OpCode - JIR_OP_SET_CC_BASE);
+			}
+
+			instr = instr->m_Next;
+		}
+
+		bb = bb->m_Next;
+	}
+
+	return false;
 }

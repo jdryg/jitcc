@@ -12,5 +12,6 @@ bool jx_mir_funcPassCreate_removeRedundantMoves(jx_mir_function_pass_t* pass, jx
 bool jx_mir_funcPassCreate_simplifyCondJmp(jx_mir_function_pass_t* pass, jx_allocator_i* allocator);
 bool jx_mir_funcPassCreate_fixMemMemOps(jx_mir_function_pass_t* pass, jx_allocator_i* allocator);
 bool jx_mir_funcPassCreate_regAlloc(jx_mir_function_pass_t* pass, jx_allocator_i* allocator);
+bool jx_mir_funcPassCreate_peephole(jx_mir_function_pass_t* pass, jx_allocator_i* allocator);
 
 #endif // JX_MIR_PASS_H

@@ -374,6 +374,8 @@ bool jx64_cdqe(jx_x64_context_t* ctx); // RAX := sign-extend of EAX
 
 bool jx64_movss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
 bool jx64_movsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_movaps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
+bool jx64_movapd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
 bool jx64_movd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
 bool jx64_movq(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
 bool jx64_addps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);

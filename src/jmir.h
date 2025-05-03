@@ -25,6 +25,7 @@ typedef enum jx_mir_type_kind
 	JMIR_TYPE_I64,
 	JMIR_TYPE_F32,
 	JMIR_TYPE_F64,
+	JMIR_TYPE_F128,
 	JMIR_TYPE_PTR,
 
 	JMIR_TYPE_COUNT
@@ -94,6 +95,8 @@ typedef enum jx_mir_opcode
 
 	JMIR_OP_MOVSS,
 	JMIR_OP_MOVSD,
+	JMIR_OP_MOVAPS,
+	JMIR_OP_MOVAPD,
 	JMIR_OP_MOVD,
 	JMIR_OP_MOVQ,
 	JMIR_OP_ADDPS,
@@ -520,6 +523,8 @@ jx_mir_instruction_t* jx_mir_cqo(jx_mir_context_t* ctx);
 
 jx_mir_instruction_t* jx_mir_movss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_movsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_movaps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_movapd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_movd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_movq(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_addps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
@@ -697,6 +702,7 @@ static inline uint32_t jx_mir_typeGetSize(jx_mir_type_kind type)
 		[JMIR_TYPE_I64]  = 8,
 		[JMIR_TYPE_F32]  = 4,
 		[JMIR_TYPE_F64]  = 8,
+		[JMIR_TYPE_F128] = 16,
 		[JMIR_TYPE_PTR]  = 8,
 	};
 	uint32_t sz = kTypeSize[type];
@@ -714,6 +720,7 @@ static inline uint32_t jx_mir_typeGetAlignment(jx_mir_type_kind type)
 		[JMIR_TYPE_I64]  = 8,
 		[JMIR_TYPE_F32]  = 4,
 		[JMIR_TYPE_F64]  = 8,
+		[JMIR_TYPE_F128] = 16,
 		[JMIR_TYPE_PTR]  = 8,
 	};
 	uint32_t sz = kTypeAlignment[type];
@@ -726,6 +733,7 @@ static inline bool jx_mir_typeIsFloatingPoint(jx_mir_type_kind type)
 	return false
 		|| type == JMIR_TYPE_F32 
 		|| type == JMIR_TYPE_F64
+		|| type == JMIR_TYPE_F128
 		;
 }
 

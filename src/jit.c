@@ -1444,6 +1444,26 @@ bool jx64_movsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 	return false;
 }
 
+bool jx64_movaps(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	if (dst.m_Type == JX64_OPERAND_REG) {
+		return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x28, false, dst, src);
+	} else if (dst.m_Type == JX64_OPERAND_MEM || dst.m_Type == JX64_OPERAND_SYM) {
+		// Same encoding as reg, r/m but with different opcode and reversed
+		// operands.
+		return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_NONE, 0x29, false, src, dst);
+	} else {
+		JX_NOT_IMPLEMENTED();
+	}
+	return false;
+}
+
+bool jx64_movapd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
+{
+	JX_NOT_IMPLEMENTED();
+	return false;
+}
+
 bool jx64_movd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
 	JX_NOT_IMPLEMENTED();
@@ -1544,8 +1564,7 @@ bool jx64_comisd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t s
 
 bool jx64_cvtsi2ss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
-	JX_NOT_IMPLEMENTED();
-	return false;
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x2A, false, dst, src);
 }
 
 bool jx64_cvtsi2sd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
@@ -1556,8 +1575,7 @@ bool jx64_cvtsi2sd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t
 
 bool jx64_cvtss2si(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
-	JX_NOT_IMPLEMENTED();
-	return false;
+	return jx64_sse_binary_op(ctx, JX64_SSE_PREFIX_F3, 0x2D, false, dst, src);
 }
 
 bool jx64_cvtsd2si(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)

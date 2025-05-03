@@ -52,5 +52,7 @@ int main(void)
 		return 1;
 	}
 
-	return 0;
+	float x = 5.0f * 2.0f - 10.0f;
+
+	return (int)x;
 }

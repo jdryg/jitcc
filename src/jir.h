@@ -112,6 +112,10 @@ typedef enum jx_ir_opcode
 	JIR_OP_BITCAST,         // OK -
 	JIR_OP_FPEXT,           // OK - 
 	JIR_OP_FPTRUNC,         // OK - 
+	JIR_OP_FP2UI,           // OK - 
+	JIR_OP_FP2SI,           // OK - 
+	JIR_OP_UI2FP,           // OK - 
+	JIR_OP_SI2FP,           // OK - 
 
 	JIR_OP_SET_CC_BASE = JIR_OP_SET_LE
 } jx_ir_opcode;
@@ -157,6 +161,10 @@ static const char* kOpcodeMnemonic[] = {
 	[JIR_OP_BITCAST]         = "bitcast",
 	[JIR_OP_FPEXT]           = "fpext",
 	[JIR_OP_FPTRUNC]         = "fptrunc",
+	[JIR_OP_FP2UI]           = "fp2ui",
+	[JIR_OP_FP2SI]           = "fp2si",
+	[JIR_OP_UI2FP]           = "ui2fp",
+	[JIR_OP_SI2FP]           = "si2fp",
 };
 
 // NOTE: Order must match the order of JIR_OP_SET_cc opcodes above
@@ -402,6 +410,7 @@ void jx_ir_bbFree(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb);
 jx_ir_instruction_t* jx_ir_bbGetLastInstr(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb);
 bool jx_ir_bbAppendInstr(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_instruction_t* instr);
 bool jx_ir_bbPrependInstr(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_instruction_t* instr);
+bool jx_ir_bbInsertInstrBefore(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_instruction_t* anchor, jx_ir_instruction_t* instr);
 void jx_ir_bbRemoveInstr(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_instruction_t* instr);
 bool jx_ir_bbConvertCondBranch(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, bool condVal);
 void jx_ir_bbPrint(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_string_buffer_t* sb);
@@ -437,6 +446,10 @@ jx_ir_instruction_t* jx_ir_instrIntToPtr(jx_ir_context_t* ctx, jx_ir_value_t* va
 jx_ir_instruction_t* jx_ir_instrBitcast(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
 jx_ir_instruction_t* jx_ir_instrFPExt(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
 jx_ir_instruction_t* jx_ir_instrFPTrunc(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
+jx_ir_instruction_t* jx_ir_instrFP2UI(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
+jx_ir_instruction_t* jx_ir_instrFP2SI(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
+jx_ir_instruction_t* jx_ir_instrUI2FP(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
+jx_ir_instruction_t* jx_ir_instrSI2FP(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
 jx_ir_instruction_t* jx_ir_instrCall(jx_ir_context_t* ctx, jx_ir_value_t* func, uint32_t numParams, jx_ir_value_t** params);
 jx_ir_instruction_t* jx_ir_instrAlloca(jx_ir_context_t* ctx, jx_ir_type_t* type, jx_ir_value_t* arraySize);
 jx_ir_instruction_t* jx_ir_instrLoad(jx_ir_context_t* ctx, jx_ir_type_t* type, jx_ir_value_t* ptr);
@@ -533,5 +546,19 @@ jx_ir_constant_t* jx_ir_constPointerToGlobalVal(jx_ir_context_t* ctx, jx_ir_glob
 jx_ir_constant_t* jx_ir_constGetZero(jx_ir_context_t* ctx, jx_ir_type_t* type);
 jx_ir_constant_t* jx_ir_constGetOnes(jx_ir_context_t* ctx, jx_ir_type_t* type);
 void jx_ir_constPrint(jx_ir_context_t* ctx, jx_ir_constant_t* c, jx_string_buffer_t* sb);
+
+static inline jx_ir_condition_code jx_ir_ccSwapOperands(jx_ir_condition_code cc)
+{
+	static jx_ir_condition_code kSwappedCC[] = {
+		[JIR_CC_LE] = JIR_CC_GE, // A <= B => B >= A
+		[JIR_CC_GE] = JIR_CC_LE, // A >= B => B <= A
+		[JIR_CC_LT] = JIR_CC_GT, // A < B => B > A
+		[JIR_CC_GT] = JIR_CC_LT, // A > B => B < A
+		[JIR_CC_EQ] = JIR_CC_EQ, // A == B => B == A
+		[JIR_CC_NE] = JIR_CC_NE, // A != B => B != A
+	};
+
+	return kSwappedCC[cc];
+}
 
 #endif // JX_IR_H

@@ -276,6 +276,26 @@ jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator)
 		jx_ir_function_pass_t head = { 0 };
 		jx_ir_function_pass_t* cur = &head;
 
+#if 1
+		// Canonicalize operands
+		{
+			jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));
+			if (!pass) {
+				jx_ir_destroyContext(ctx);
+				return NULL;
+			}
+
+			jx_memset(pass, 0, sizeof(jx_ir_function_pass_t));
+			if (!jx_ir_funcPassCreate_canonicalizeOperands(pass, ctx->m_Allocator)) {
+				JX_CHECK(false, "Failed to initialize function pass!");
+				JX_FREE(ctx->m_Allocator, pass);
+			} else {
+				cur->m_Next = pass;
+				cur = cur->m_Next;
+			}
+		}
+#endif
+
 		// Single return block
 		{
 			jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));
@@ -343,6 +363,26 @@ jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator)
 
 			jx_memset(pass, 0, sizeof(jx_ir_function_pass_t));
 			if (!jx_ir_funcPassCreate_constantFolding(pass, ctx->m_Allocator)) {
+				JX_CHECK(false, "Failed to initialize function pass!");
+				JX_FREE(ctx->m_Allocator, pass);
+			} else {
+				cur->m_Next = pass;
+				cur = cur->m_Next;
+			}
+		}
+#endif
+
+#if 1
+		// Peephole optimizations
+		{
+			jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));
+			if (!pass) {
+				jx_ir_destroyContext(ctx);
+				return NULL;
+			}
+
+			jx_memset(pass, 0, sizeof(jx_ir_function_pass_t));
+			if (!jx_ir_funcPassCreate_peephole(pass, ctx->m_Allocator)) {
 				JX_CHECK(false, "Failed to initialize function pass!");
 				JX_FREE(ctx->m_Allocator, pass);
 			} else {
@@ -1239,6 +1279,55 @@ bool jx_ir_bbPrependInstr(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_i
 	return true;
 }
 
+bool jx_ir_bbInsertInstrBefore(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_instruction_t* anchor, jx_ir_instruction_t* instr)
+{
+	if (!instr) {
+		JX_CHECK(false, "NULL instruction passed to basic block!");
+		return false;
+	}
+
+	JX_UNUSED(ctx);
+	JX_CHECK(!instr->m_ParentBB && !instr->m_Prev && !instr->m_Next, "Instruction already part of a basic block?");
+	JX_CHECK(anchor->m_ParentBB == bb, "Anchor instruction not part of this basic block");
+
+	instr->m_ParentBB = bb;
+
+	if (anchor->m_Prev) {
+		instr->m_Prev = anchor->m_Prev;
+		anchor->m_Prev->m_Next = instr;
+	} else {
+		instr->m_Prev = NULL;
+	}
+
+	anchor->m_Prev = instr;
+	instr->m_Next = anchor;
+
+	if (bb->m_InstrListHead == anchor) {
+		bb->m_InstrListHead = instr;
+	}
+
+#if JX_IR_CONFIG_FORCE_VALUE_NAMES
+	if (bb->m_ParentFunc) {
+		jx_ir_function_t* func = bb->m_ParentFunc;
+
+		jx_ir_value_t* instrVal = jx_ir_instrToValue(instr);
+		if (!instrVal->m_Name) {
+			jx_ir_valueSetName(ctx, instrVal, jir_funcGenTempName(ctx, func));
+		}
+
+		const uint32_t numOperands = (uint32_t)jx_array_sizeu(instr->super.m_OperandArr);
+		for (uint32_t iOperand = 0; iOperand < numOperands; ++iOperand) {
+			jx_ir_value_t* operandVal = instr->super.m_OperandArr[iOperand]->m_Value;
+			if (!operandVal->m_Name && (operandVal->m_Kind == JIR_VALUE_BASIC_BLOCK || operandVal->m_Kind == JIR_VALUE_INSTRUCTION)) {
+				jx_ir_valueSetName(ctx, operandVal, jir_funcGenTempName(ctx, func));
+			}
+		}
+	}
+#endif
+
+	return true;
+}
+
 // NOTE: Does not destroy the instruction. The instruction is still valid and can be inserted 
 // into a basic block just like if it was new.
 void jx_ir_bbRemoveInstr(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_instruction_t* instr)
@@ -1679,6 +1768,79 @@ jx_ir_instruction_t* jx_ir_instrFPTrunc(jx_ir_context_t* ctx, jx_ir_value_t* val
 
 	return instr;
 }
+
+jx_ir_instruction_t* jx_ir_instrFP2UI(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType)
+{
+	jx_ir_type_t* valType = val->m_Type;
+	if (!jx_ir_typeIsFloatingPoint(valType) || !jx_ir_typeIsInteger(targetType)) {
+		JX_CHECK(false, "fp2ui can only be applied from one floating point type to an integer type.");
+		return NULL;
+	}
+
+	jx_ir_instruction_t* instr = jir_instrAlloc(ctx, targetType, JIR_OP_FP2UI, 1);
+	if (!instr) {
+		return NULL;
+	}
+
+	jir_instrAddOperand(ctx, instr, val);
+
+	return instr;
+}
+
+jx_ir_instruction_t* jx_ir_instrFP2SI(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType)
+{
+	jx_ir_type_t* valType = val->m_Type;
+	if (!jx_ir_typeIsFloatingPoint(valType) || !jx_ir_typeIsInteger(targetType)) {
+		JX_CHECK(false, "fp2si can only be applied from one floating point type to an integer type.");
+		return NULL;
+	}
+
+	jx_ir_instruction_t* instr = jir_instrAlloc(ctx, targetType, JIR_OP_FP2SI, 1);
+	if (!instr) {
+		return NULL;
+	}
+
+	jir_instrAddOperand(ctx, instr, val);
+
+	return instr;
+}
+
+jx_ir_instruction_t* jx_ir_instrUI2FP(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType)
+{
+	jx_ir_type_t* valType = val->m_Type;
+	if (!jx_ir_typeIsInteger(valType) || !jx_ir_typeIsFloatingPoint(targetType)) {
+		JX_CHECK(false, "ui2fp can only be applied from one integer type to a floating point type.");
+		return NULL;
+	}
+
+	jx_ir_instruction_t* instr = jir_instrAlloc(ctx, targetType, JIR_OP_UI2FP, 1);
+	if (!instr) {
+		return NULL;
+	}
+
+	jir_instrAddOperand(ctx, instr, val);
+
+	return instr;
+}
+
+jx_ir_instruction_t* jx_ir_instrSI2FP(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType)
+{
+	jx_ir_type_t* valType = val->m_Type;
+	if (!jx_ir_typeIsInteger(valType) || !jx_ir_typeIsFloatingPoint(targetType)) {
+		JX_CHECK(false, "si2fp can only be applied from one integer type to a floating point type.");
+		return NULL;
+	}
+
+	jx_ir_instruction_t* instr = jir_instrAlloc(ctx, targetType, JIR_OP_SI2FP, 1);
+	if (!instr) {
+		return NULL;
+	}
+
+	jir_instrAddOperand(ctx, instr, val);
+
+	return instr;
+}
+
 
 jx_ir_instruction_t* jx_ir_instrCall(jx_ir_context_t* ctx, jx_ir_value_t* funcVal, uint32_t numArgs, jx_ir_value_t** argValues)
 {

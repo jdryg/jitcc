@@ -10,6 +10,7 @@
 
 #include <stdlib.h> // calloc
 #include <stdio.h>  // printf
+#include <math.h>   // cosf/sinf
 #include <memory.h> // memset/memcpy
 
 typedef bool (*jx64VoidFunc)(jx_x64_context_t* ctx);
@@ -104,6 +105,8 @@ static const jx64gen_instr_desc_t kInstrDesc[] = {
 	[JMIR_OP_JNLE]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NLE },
 	[JMIR_OP_MOVSS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movss },
 	[JMIR_OP_MOVSD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movsd },
+	[JMIR_OP_MOVAPS]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movaps },
+	[JMIR_OP_MOVAPD]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movapd },
 	[JMIR_OP_MOVD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movd },
 	[JMIR_OP_MOVQ]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movq },
 	[JMIR_OP_ADDPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_addps },
@@ -389,6 +392,16 @@ bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
 		if (sprintfSymbol) {
 			jx64_symbolSetExternalAddress(jitCtx, sprintfSymbol, (void*)sprintf);
 		}
+
+		jx_x64_symbol_t* cosfSymbol = jx64_symbolGetByName(jitCtx, "cosf");
+		if (cosfSymbol) {
+			jx64_symbolSetExternalAddress(jitCtx, cosfSymbol, (void*)cosf);
+		}
+
+		jx_x64_symbol_t* sinfSymbol = jx64_symbolGetByName(jitCtx, "sinf");
+		if (sinfSymbol) {
+			jx64_symbolSetExternalAddress(jitCtx, sinfSymbol, (void*)sinf);
+		}
 	}
 
 	jx64_finalize(jitCtx);
@@ -424,11 +437,9 @@ static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64gen_context_t* ctx, co
 			JX_CHECK(mirOp->u.m_Reg.m_Class == JMIR_REG_CLASS_GP, "Expected GP register.");
 			op = jx64_opReg((jx_x64_reg)(JX64_REG_RAX + mirOp->u.m_Reg.m_ID));
 		} break;
-		case JMIR_TYPE_F32: {
-			JX_CHECK(mirOp->u.m_Reg.m_Class == JMIR_REG_CLASS_XMM, "Expected XMM register.");
-			op = jx64_opReg((jx_x64_reg)(JX64_REG_XMM0 + mirOp->u.m_Reg.m_ID));
-		} break;
-		case JMIR_TYPE_F64: {
+		case JMIR_TYPE_F32:
+		case JMIR_TYPE_F64:
+		case JMIR_TYPE_F128: {
 			JX_CHECK(mirOp->u.m_Reg.m_Class == JMIR_REG_CLASS_XMM, "Expected XMM register.");
 			op = jx64_opReg((jx_x64_reg)(JX64_REG_XMM0 + mirOp->u.m_Reg.m_ID));
 		} break;
@@ -547,6 +558,9 @@ static jx_x64_size jx_x64gen_convertMIRTypeToSize(jx_mir_type_kind type)
 	case JMIR_TYPE_PTR: 
 	case JMIR_TYPE_F64: {
 		sz = JX64_SIZE_64;
+	} break;
+	case JMIR_TYPE_F128: {
+		sz = JX64_SIZE_128;
 	} break;
 	default:
 		JX_CHECK(false, "Unknown mir type");

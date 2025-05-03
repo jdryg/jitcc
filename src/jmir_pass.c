@@ -162,7 +162,7 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 			if (instr->m_OpCode == JMIR_OP_JE || instr->m_OpCode == JMIR_OP_JNE) {
 				// Turn the following sequence
 				//
-				// cmp ...
+				// cmp/ucomiss/comiss ...
 				// setcc %vrb
 				// test %vrb, %vrb
 				// je/jne bb.target
@@ -193,7 +193,14 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 								;
 							if (isValidSetcc) {
 								jx_mir_instruction_t* cmpInstr = setccInstr->m_Prev;
-								if (cmpInstr && cmpInstr->m_OpCode == JMIR_OP_CMP) {
+								const bool isCmpInstr = cmpInstr && (false
+									|| cmpInstr->m_OpCode == JMIR_OP_CMP
+									|| cmpInstr->m_OpCode == JMIR_OP_COMISS
+									|| cmpInstr->m_OpCode == JMIR_OP_COMISD
+									|| cmpInstr->m_OpCode == JMIR_OP_UCOMISS
+									|| cmpInstr->m_OpCode == JMIR_OP_UCOMISD)
+									;
+								if (isCmpInstr) {
 									const jx_mir_condition_code jumpCC = (jx_mir_condition_code)(instr->m_OpCode - JMIR_OP_JCC_BASE);
 									jx_mir_condition_code setCC = (jx_mir_condition_code)(setccInstr->m_OpCode - JMIR_OP_SETCC_BASE);
 									if (jumpCC == JMIR_CC_E) {
@@ -1563,16 +1570,52 @@ static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass)
 				}
 
 				if (use && def) {
-					jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, temp, stackSlot));
+					if (temp->m_Type == JMIR_TYPE_F32) {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movss(ctx, temp, stackSlot));
+					} else if (temp->m_Type == JMIR_TYPE_F64) {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movsd(ctx, temp, stackSlot));
+					} else if (temp->m_Type == JMIR_TYPE_F128) {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movaps(ctx, temp, stackSlot));
+					} else {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, temp, stackSlot));
+					}
+
 					jmir_regAlloc_replaceInstrRegUse(instr, vreg, temp);
-					jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_mov(ctx, stackSlot, temp));
+
+					if (temp->m_Type == JMIR_TYPE_F32) {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movss(ctx, stackSlot, temp));
+					} else if (temp->m_Type == JMIR_TYPE_F64) {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movsd(ctx, stackSlot, temp));
+					} else if (temp->m_Type == JMIR_TYPE_F128) {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movaps(ctx, stackSlot, temp));
+					} else {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_mov(ctx, stackSlot, temp));
+					}
 				} else if (use) {
 					// Load from stack into new temporary
-					jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, temp, stackSlot));
+					if (temp->m_Type == JMIR_TYPE_F32) {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movss(ctx, temp, stackSlot));
+					} else if (temp->m_Type == JMIR_TYPE_F64) {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movsd(ctx, temp, stackSlot));
+					} else if (temp->m_Type == JMIR_TYPE_F128) {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movaps(ctx, temp, stackSlot));
+					} else {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, temp, stackSlot));
+					}
+
 					jmir_regAlloc_replaceInstrRegUse(instr, vreg, temp);
 				} else if (def) {
 					jmir_regAlloc_replaceInstrRegDef(instr, vreg, temp);
-					jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_mov(ctx, stackSlot, temp));
+
+					if (temp->m_Type == JMIR_TYPE_F32) {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movss(ctx, stackSlot, temp));
+					} else if (temp->m_Type == JMIR_TYPE_F64) {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movsd(ctx, stackSlot, temp));
+					} else if (temp->m_Type == JMIR_TYPE_F128) {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movaps(ctx, stackSlot, temp));
+					} else {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_mov(ctx, stackSlot, temp));
+					}
 				}
 			}
 		}
@@ -2156,6 +2199,86 @@ static void jmir_regAlloc_movSetState(jmir_func_pass_regalloc_t* pass, jmir_mov_
 static inline bool jmir_movIs(const jmir_mov_instr_t* mov, jmir_mov_instr_state state)
 {
 	return mov->m_State == state;
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Peephole optimizations
+//
+static void jmir_funcPass_peepholeDestroy(jx_mir_function_pass_o* inst, jx_allocator_i* allocator);
+static bool jmir_funcPass_peepholeRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func);
+
+static bool jmir_peephole_isFloatConst(jx_mir_operand_t* op, double val);
+
+bool jx_mir_funcPassCreate_peephole(jx_mir_function_pass_t* pass, jx_allocator_i* allocator)
+{
+	pass->m_Inst = NULL;
+	pass->run = jmir_funcPass_peepholeRun;
+	pass->destroy = jmir_funcPass_peepholeDestroy;
+
+	return true;
+}
+
+static void jmir_funcPass_peepholeDestroy(jx_mir_function_pass_o* inst, jx_allocator_i* allocator)
+{
+}
+
+static bool jmir_funcPass_peepholeRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
+{
+	bool changed = true;
+
+	while (changed) {
+		changed = false;
+
+		jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
+		while (bb) {
+			jx_mir_instruction_t* instr = bb->m_InstrListHead;
+			while (instr) {
+				jx_mir_instruction_t* instrNext = instr->m_Next;
+
+				if (instr->m_OpCode == JMIR_OP_MOVSS && jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
+					// movss xmm, 0.0
+					//  =>
+					// xorps xmm, xmm
+					jx_mir_instruction_t* xorInstr = jx_mir_xorps(ctx, instr->m_Operands[0], instr->m_Operands[0]);
+					jx_mir_bbInsertInstrBefore(ctx, bb, instr, xorInstr);
+					jx_mir_bbRemoveInstr(ctx, bb, instr);
+					jx_mir_instrFree(ctx, instr);
+
+					changed = true;
+				} else if (instr->m_OpCode == JMIR_OP_MOVSD && jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
+					JX_CHECK(false, "Implement like the movss above.");
+				} else if ((instr->m_OpCode == JMIR_OP_UCOMISS || instr->m_OpCode == JMIR_OP_COMISS) && jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
+					// ucomiss xmm, 0.0
+					//  => 
+					// xorps xmmtmp, xmmtmp
+					// ucomiss xmm, xmmtmp
+					jx_mir_operand_t* tmp = jx_mir_opVirtualReg(ctx, func, JMIR_TYPE_F128);
+					jx_mir_instruction_t* xorInstr = jx_mir_xorps(ctx, tmp, tmp);
+					jx_mir_bbInsertInstrBefore(ctx, bb, instr, xorInstr);
+					instr->m_Operands[1] = tmp;
+
+					changed = true;
+				} else if ((instr->m_OpCode == JMIR_OP_UCOMISD || instr->m_OpCode == JMIR_OP_COMISD) && jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
+					JX_CHECK(false, "Implement like the ucomiss/comiss above.");
+				}
+
+				instr = instrNext;
+			}
+
+			bb = bb->m_Next;
+		}
+	}
+
+	return false;
+}
+
+static bool jmir_peephole_isFloatConst(jx_mir_operand_t* op, double val)
+{
+	return true
+		&& jx_mir_typeIsFloatingPoint(op->m_Type)
+		&& op->m_Kind == JMIR_OPERAND_CONST
+		&& op->u.m_ConstF64 == val
+		;
 }
 
 //////////////////////////////////////////////////////////////////////////

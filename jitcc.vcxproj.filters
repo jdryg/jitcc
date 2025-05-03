@@ -914,6 +914,12 @@
     <ClCompile Include="bin\test\floats.c">
       <Filter>bin\test</Filter>
     </ClCompile>
+    <ClCompile Include="bin\test\math.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\floorf.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="3rdparty\jlib\include\jlib\inline\atomic_win32.inl">
