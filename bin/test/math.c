@@ -63,10 +63,10 @@ int printf(const char* str, ...);
 
 int main(void)
 {
-	printf("%f: (%f, %f) \n", 0.0f, _jx_cosf(0.0f), _jx_sinf(0.0f));
-	printf("%f: (%f, %f) \n", kPiHalff, _jx_cosf(kPiHalff), _jx_sinf(kPiHalff));
-	printf("%f: (%f, %f) \n", kPif, _jx_cosf(kPif), _jx_sinf(kPif));
-	printf("%f: (%f, %f) \n", kPif + kPiHalff, _jx_cosf(kPif + kPiHalff), _jx_sinf(kPif + kPiHalff));
+	const float delta = kPif / 8.0f;
+	for (float x = 0.0f; x <= kPi2f; x += delta) {
+		printf("%f: (%f, %f) \n", x, _jx_cosf(x), _jx_sinf(x));
+	}
 
 	return 0;
 }

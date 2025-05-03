@@ -702,6 +702,7 @@ static inline uint32_t jx_mir_typeGetSize(jx_mir_type_kind type)
 		[JMIR_TYPE_I64]  = 8,
 		[JMIR_TYPE_F32]  = 4,
 		[JMIR_TYPE_F64]  = 8,
+		[JMIR_TYPE_F128] = 16,
 		[JMIR_TYPE_PTR]  = 8,
 	};
 	uint32_t sz = kTypeSize[type];
@@ -719,6 +720,7 @@ static inline uint32_t jx_mir_typeGetAlignment(jx_mir_type_kind type)
 		[JMIR_TYPE_I64]  = 8,
 		[JMIR_TYPE_F32]  = 4,
 		[JMIR_TYPE_F64]  = 8,
+		[JMIR_TYPE_F128] = 16,
 		[JMIR_TYPE_PTR]  = 8,
 	};
 	uint32_t sz = kTypeAlignment[type];

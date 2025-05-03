@@ -162,7 +162,7 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 			if (instr->m_OpCode == JMIR_OP_JE || instr->m_OpCode == JMIR_OP_JNE) {
 				// Turn the following sequence
 				//
-				// cmp ...
+				// cmp/ucomiss/comiss ...
 				// setcc %vrb
 				// test %vrb, %vrb
 				// je/jne bb.target
@@ -193,7 +193,14 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 								;
 							if (isValidSetcc) {
 								jx_mir_instruction_t* cmpInstr = setccInstr->m_Prev;
-								if (cmpInstr && cmpInstr->m_OpCode == JMIR_OP_CMP) {
+								const bool isCmpInstr = cmpInstr && (false
+									|| cmpInstr->m_OpCode == JMIR_OP_CMP
+									|| cmpInstr->m_OpCode == JMIR_OP_COMISS
+									|| cmpInstr->m_OpCode == JMIR_OP_COMISD
+									|| cmpInstr->m_OpCode == JMIR_OP_UCOMISS
+									|| cmpInstr->m_OpCode == JMIR_OP_UCOMISD)
+									;
+								if (isCmpInstr) {
 									const jx_mir_condition_code jumpCC = (jx_mir_condition_code)(instr->m_OpCode - JMIR_OP_JCC_BASE);
 									jx_mir_condition_code setCC = (jx_mir_condition_code)(setccInstr->m_OpCode - JMIR_OP_SETCC_BASE);
 									if (jumpCC == JMIR_CC_E) {
@@ -1563,16 +1570,52 @@ static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass)
 				}
 
 				if (use && def) {
-					jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, temp, stackSlot));
+					if (temp->m_Type == JMIR_TYPE_F32) {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movss(ctx, temp, stackSlot));
+					} else if (temp->m_Type == JMIR_TYPE_F64) {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movsd(ctx, temp, stackSlot));
+					} else if (temp->m_Type == JMIR_TYPE_F128) {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movaps(ctx, temp, stackSlot));
+					} else {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, temp, stackSlot));
+					}
+
 					jmir_regAlloc_replaceInstrRegUse(instr, vreg, temp);
-					jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_mov(ctx, stackSlot, temp));
+
+					if (temp->m_Type == JMIR_TYPE_F32) {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movss(ctx, stackSlot, temp));
+					} else if (temp->m_Type == JMIR_TYPE_F64) {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movsd(ctx, stackSlot, temp));
+					} else if (temp->m_Type == JMIR_TYPE_F128) {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movaps(ctx, stackSlot, temp));
+					} else {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_mov(ctx, stackSlot, temp));
+					}
 				} else if (use) {
 					// Load from stack into new temporary
-					jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, temp, stackSlot));
+					if (temp->m_Type == JMIR_TYPE_F32) {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movss(ctx, temp, stackSlot));
+					} else if (temp->m_Type == JMIR_TYPE_F64) {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movsd(ctx, temp, stackSlot));
+					} else if (temp->m_Type == JMIR_TYPE_F128) {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movaps(ctx, temp, stackSlot));
+					} else {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, temp, stackSlot));
+					}
+
 					jmir_regAlloc_replaceInstrRegUse(instr, vreg, temp);
 				} else if (def) {
 					jmir_regAlloc_replaceInstrRegDef(instr, vreg, temp);
-					jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_mov(ctx, stackSlot, temp));
+
+					if (temp->m_Type == JMIR_TYPE_F32) {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movss(ctx, stackSlot, temp));
+					} else if (temp->m_Type == JMIR_TYPE_F64) {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movsd(ctx, stackSlot, temp));
+					} else if (temp->m_Type == JMIR_TYPE_F128) {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movaps(ctx, stackSlot, temp));
+					} else {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_mov(ctx, stackSlot, temp));
+					}
 				}
 			}
 		}
