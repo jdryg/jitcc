@@ -352,6 +352,26 @@ jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator)
 		}
 #endif
 
+#if 1
+		// Peephole optimizations
+		{
+			jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));
+			if (!pass) {
+				jx_ir_destroyContext(ctx);
+				return NULL;
+			}
+
+			jx_memset(pass, 0, sizeof(jx_ir_function_pass_t));
+			if (!jx_ir_funcPassCreate_peephole(pass, ctx->m_Allocator)) {
+				JX_CHECK(false, "Failed to initialize function pass!");
+				JX_FREE(ctx->m_Allocator, pass);
+			} else {
+				cur->m_Next = pass;
+				cur = cur->m_Next;
+			}
+		}
+#endif
+
 		ctx->m_OnFuncEndPasses = head.m_Next;
 	}
 
@@ -1216,6 +1236,55 @@ bool jx_ir_bbPrependInstr(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_i
 	bb->m_InstrListHead = instr;
 
 	instr->m_ParentBB = bb;
+
+#if JX_IR_CONFIG_FORCE_VALUE_NAMES
+	if (bb->m_ParentFunc) {
+		jx_ir_function_t* func = bb->m_ParentFunc;
+
+		jx_ir_value_t* instrVal = jx_ir_instrToValue(instr);
+		if (!instrVal->m_Name) {
+			jx_ir_valueSetName(ctx, instrVal, jir_funcGenTempName(ctx, func));
+		}
+
+		const uint32_t numOperands = (uint32_t)jx_array_sizeu(instr->super.m_OperandArr);
+		for (uint32_t iOperand = 0; iOperand < numOperands; ++iOperand) {
+			jx_ir_value_t* operandVal = instr->super.m_OperandArr[iOperand]->m_Value;
+			if (!operandVal->m_Name && (operandVal->m_Kind == JIR_VALUE_BASIC_BLOCK || operandVal->m_Kind == JIR_VALUE_INSTRUCTION)) {
+				jx_ir_valueSetName(ctx, operandVal, jir_funcGenTempName(ctx, func));
+			}
+		}
+	}
+#endif
+
+	return true;
+}
+
+bool jx_ir_bbInsertInstrBefore(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_instruction_t* anchor, jx_ir_instruction_t* instr)
+{
+	if (!instr) {
+		JX_CHECK(false, "NULL instruction passed to basic block!");
+		return false;
+	}
+
+	JX_UNUSED(ctx);
+	JX_CHECK(!instr->m_ParentBB && !instr->m_Prev && !instr->m_Next, "Instruction already part of a basic block?");
+	JX_CHECK(anchor->m_ParentBB == bb, "Anchor instruction not part of this basic block");
+
+	instr->m_ParentBB = bb;
+
+	if (anchor->m_Prev) {
+		instr->m_Prev = anchor->m_Prev;
+		anchor->m_Prev->m_Next = instr;
+	} else {
+		instr->m_Prev = NULL;
+	}
+
+	anchor->m_Prev = instr;
+	instr->m_Next = anchor;
+
+	if (bb->m_InstrListHead == anchor) {
+		bb->m_InstrListHead = instr;
+	}
 
 #if JX_IR_CONFIG_FORCE_VALUE_NAMES
 	if (bb->m_ParentFunc) {
