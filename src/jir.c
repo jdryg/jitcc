@@ -276,6 +276,26 @@ jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator)
 		jx_ir_function_pass_t head = { 0 };
 		jx_ir_function_pass_t* cur = &head;
 
+#if 1
+		// Canonicalize operands
+		{
+			jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));
+			if (!pass) {
+				jx_ir_destroyContext(ctx);
+				return NULL;
+			}
+
+			jx_memset(pass, 0, sizeof(jx_ir_function_pass_t));
+			if (!jx_ir_funcPassCreate_canonicalizeOperands(pass, ctx->m_Allocator)) {
+				JX_CHECK(false, "Failed to initialize function pass!");
+				JX_FREE(ctx->m_Allocator, pass);
+			} else {
+				cur->m_Next = pass;
+				cur = cur->m_Next;
+			}
+		}
+#endif
+
 		// Single return block
 		{
 			jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));

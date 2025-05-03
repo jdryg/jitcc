@@ -60,12 +60,32 @@ static float _jx_cosf(float x)
 }
 
 int printf(const char* str, ...);
+float sinf(float x);
+float cosf(float x);
 
 int main(void)
 {
-	const float delta = kPif / 8.0f;
+	const float delta = kPif / 128.0f;
 	for (float x = 0.0f; x <= kPi2f; x += delta) {
-		printf("%f: (%f, %f) \n", x, _jx_cosf(x), _jx_sinf(x));
+		const float mycos = _jx_cosf(x);
+		const float truecos = cosf(x);
+		if (jx_absf(truecos - mycos) > 1e-5f) {
+			printf("cos(%f): %f != %f\n", x, truecos, mycos);
+			return 1;
+		}
+
+		const float mysin = _jx_sinf(x);
+		const float truesin = sinf(x);
+		if (jx_absf(truesin - mysin) > 1e-5f) {
+			printf("sin(%f): %f != %f\n", x, truesin, mysin);
+			return 2;
+		}
+
+		const float sqr = mycos * mycos + mysin * mysin;
+		if (jx_absf(sqr - 1.0f) > 1e-5f) {
+			printf("cos(%f)^2 + sin(%f)^2 != 1.0\n", x, x);
+			return 3;
+		}
 	}
 
 	return 0;

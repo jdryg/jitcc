@@ -1775,3 +1775,69 @@ static bool jir_peephole_isUnusedInstr(jx_ir_instruction_t* instr)
 
 	return true;
 }
+
+//////////////////////////////////////////////////////////////////////////
+// Canonicalize operand order
+//
+static void jir_funcPass_canonicalizeOperandsDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator);
+static bool jir_funcPass_canonicalizeOperandsRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func);
+
+bool jx_ir_funcPassCreate_canonicalizeOperands(jx_ir_function_pass_t* pass, jx_allocator_i* allocator)
+{
+	pass->m_Inst = NULL;
+	pass->run = jir_funcPass_canonicalizeOperandsRun;
+	pass->destroy = jir_funcPass_canonicalizeOperandsDestroy;
+
+	return true;
+}
+
+static void jir_funcPass_canonicalizeOperandsDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator)
+{
+}
+
+static bool jir_funcPass_canonicalizeOperandsRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
+{
+	jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
+	while (bb) {
+		jx_ir_instruction_t* instr = bb->m_InstrListHead;
+		while (instr) {
+			jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+
+			const bool isCommutativeBinaryOp = false
+				|| instr->m_OpCode == JIR_OP_ADD
+				|| instr->m_OpCode == JIR_OP_MUL
+				|| instr->m_OpCode == JIR_OP_AND
+				|| instr->m_OpCode == JIR_OP_OR
+				|| instr->m_OpCode == JIR_OP_XOR
+				;
+
+			const bool isSetCC = false
+				|| instr->m_OpCode == JIR_OP_SET_LE
+				|| instr->m_OpCode == JIR_OP_SET_GE
+				|| instr->m_OpCode == JIR_OP_SET_LT
+				|| instr->m_OpCode == JIR_OP_SET_GT
+				|| instr->m_OpCode == JIR_OP_SET_EQ
+				|| instr->m_OpCode == JIR_OP_SET_NE
+				;
+
+			if (isCommutativeBinaryOp && jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value)) {
+				// binop const, %x => binop %x, const
+				jx_ir_use_t* tmp = instrUser->m_OperandArr[0];
+				instrUser->m_OperandArr[0] = instrUser->m_OperandArr[1];
+				instrUser->m_OperandArr[1] = tmp;
+			} else if (isSetCC && jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value)) {
+				// setcc const, %x => setcc %x, const with swapped cc
+				jx_ir_use_t* tmp = instrUser->m_OperandArr[0];
+				instrUser->m_OperandArr[0] = instrUser->m_OperandArr[1];
+				instrUser->m_OperandArr[1] = tmp;
+				instr->m_OpCode = JIR_OP_SET_CC_BASE + jx_ir_ccSwapOperands(instr->m_OpCode - JIR_OP_SET_CC_BASE);
+			}
+
+			instr = instr->m_Next;
+		}
+
+		bb = bb->m_Next;
+	}
+
+	return false;
+}

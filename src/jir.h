@@ -547,4 +547,18 @@ jx_ir_constant_t* jx_ir_constGetZero(jx_ir_context_t* ctx, jx_ir_type_t* type);
 jx_ir_constant_t* jx_ir_constGetOnes(jx_ir_context_t* ctx, jx_ir_type_t* type);
 void jx_ir_constPrint(jx_ir_context_t* ctx, jx_ir_constant_t* c, jx_string_buffer_t* sb);
 
+static inline jx_ir_condition_code jx_ir_ccSwapOperands(jx_ir_condition_code cc)
+{
+	static jx_ir_condition_code kSwappedCC[] = {
+		[JIR_CC_LE] = JIR_CC_GE, // A <= B => B >= A
+		[JIR_CC_GE] = JIR_CC_LE, // A >= B => B <= A
+		[JIR_CC_LT] = JIR_CC_GT, // A < B => B > A
+		[JIR_CC_GT] = JIR_CC_LT, // A > B => B < A
+		[JIR_CC_EQ] = JIR_CC_EQ, // A == B => B == A
+		[JIR_CC_NE] = JIR_CC_NE, // A != B => B != A
+	};
+
+	return kSwappedCC[cc];
+}
+
 #endif // JX_IR_H

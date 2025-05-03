@@ -10,6 +10,7 @@
 
 #include <stdlib.h> // calloc
 #include <stdio.h>  // printf
+#include <math.h>   // cosf/sinf
 #include <memory.h> // memset/memcpy
 
 typedef bool (*jx64VoidFunc)(jx_x64_context_t* ctx);
@@ -390,6 +391,16 @@ bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
 		jx_x64_symbol_t* sprintfSymbol = jx64_symbolGetByName(jitCtx, "sprintf");
 		if (sprintfSymbol) {
 			jx64_symbolSetExternalAddress(jitCtx, sprintfSymbol, (void*)sprintf);
+		}
+
+		jx_x64_symbol_t* cosfSymbol = jx64_symbolGetByName(jitCtx, "cosf");
+		if (cosfSymbol) {
+			jx64_symbolSetExternalAddress(jitCtx, cosfSymbol, (void*)cosf);
+		}
+
+		jx_x64_symbol_t* sinfSymbol = jx64_symbolGetByName(jitCtx, "sinf");
+		if (sinfSymbol) {
+			jx64_symbolSetExternalAddress(jitCtx, sinfSymbol, (void*)sinf);
 		}
 	}
 
