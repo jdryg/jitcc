@@ -1141,8 +1141,12 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 				case JIR_OP_PTR_TO_INT:
 				case JIR_OP_INT_TO_PTR:
 				case JIR_OP_BITCAST: 
-				case JIR_OP_FPEXT: 
-				case JIR_OP_FPTRUNC: {
+				case JIR_OP_FPEXT:   // TODO: 
+				case JIR_OP_FPTRUNC: // TODO: 
+				case JIR_OP_FP2UI:	 // TODO: 
+				case JIR_OP_FP2SI: 	 // TODO: 
+				case JIR_OP_UI2FP:	 // TODO: 
+				case JIR_OP_SI2FP: { // TODO: 
 					// No op
 				} break;
 				default:

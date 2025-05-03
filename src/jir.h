@@ -112,6 +112,10 @@ typedef enum jx_ir_opcode
 	JIR_OP_BITCAST,         // OK -
 	JIR_OP_FPEXT,           // OK - 
 	JIR_OP_FPTRUNC,         // OK - 
+	JIR_OP_FP2UI,           // OK - 
+	JIR_OP_FP2SI,           // OK - 
+	JIR_OP_UI2FP,           // OK - 
+	JIR_OP_SI2FP,           // OK - 
 
 	JIR_OP_SET_CC_BASE = JIR_OP_SET_LE
 } jx_ir_opcode;
@@ -157,6 +161,10 @@ static const char* kOpcodeMnemonic[] = {
 	[JIR_OP_BITCAST]         = "bitcast",
 	[JIR_OP_FPEXT]           = "fpext",
 	[JIR_OP_FPTRUNC]         = "fptrunc",
+	[JIR_OP_FP2UI]           = "fp2ui",
+	[JIR_OP_FP2SI]           = "fp2si",
+	[JIR_OP_UI2FP]           = "ui2fp",
+	[JIR_OP_SI2FP]           = "si2fp",
 };
 
 // NOTE: Order must match the order of JIR_OP_SET_cc opcodes above
@@ -437,6 +445,10 @@ jx_ir_instruction_t* jx_ir_instrIntToPtr(jx_ir_context_t* ctx, jx_ir_value_t* va
 jx_ir_instruction_t* jx_ir_instrBitcast(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
 jx_ir_instruction_t* jx_ir_instrFPExt(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
 jx_ir_instruction_t* jx_ir_instrFPTrunc(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
+jx_ir_instruction_t* jx_ir_instrFP2UI(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
+jx_ir_instruction_t* jx_ir_instrFP2SI(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
+jx_ir_instruction_t* jx_ir_instrUI2FP(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
+jx_ir_instruction_t* jx_ir_instrSI2FP(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType);
 jx_ir_instruction_t* jx_ir_instrCall(jx_ir_context_t* ctx, jx_ir_value_t* func, uint32_t numParams, jx_ir_value_t** params);
 jx_ir_instruction_t* jx_ir_instrAlloca(jx_ir_context_t* ctx, jx_ir_type_t* type, jx_ir_value_t* arraySize);
 jx_ir_instruction_t* jx_ir_instrLoad(jx_ir_context_t* ctx, jx_ir_type_t* type, jx_ir_value_t* ptr);

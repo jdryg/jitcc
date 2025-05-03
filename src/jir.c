@@ -1680,6 +1680,79 @@ jx_ir_instruction_t* jx_ir_instrFPTrunc(jx_ir_context_t* ctx, jx_ir_value_t* val
 	return instr;
 }
 
+jx_ir_instruction_t* jx_ir_instrFP2UI(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType)
+{
+	jx_ir_type_t* valType = val->m_Type;
+	if (!jx_ir_typeIsFloatingPoint(valType) || !jx_ir_typeIsInteger(targetType)) {
+		JX_CHECK(false, "fp2ui can only be applied from one floating point type to an integer type.");
+		return NULL;
+	}
+
+	jx_ir_instruction_t* instr = jir_instrAlloc(ctx, targetType, JIR_OP_FP2UI, 1);
+	if (!instr) {
+		return NULL;
+	}
+
+	jir_instrAddOperand(ctx, instr, val);
+
+	return instr;
+}
+
+jx_ir_instruction_t* jx_ir_instrFP2SI(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType)
+{
+	jx_ir_type_t* valType = val->m_Type;
+	if (!jx_ir_typeIsFloatingPoint(valType) || !jx_ir_typeIsInteger(targetType)) {
+		JX_CHECK(false, "fp2si can only be applied from one floating point type to an integer type.");
+		return NULL;
+	}
+
+	jx_ir_instruction_t* instr = jir_instrAlloc(ctx, targetType, JIR_OP_FP2SI, 1);
+	if (!instr) {
+		return NULL;
+	}
+
+	jir_instrAddOperand(ctx, instr, val);
+
+	return instr;
+}
+
+jx_ir_instruction_t* jx_ir_instrUI2FP(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType)
+{
+	jx_ir_type_t* valType = val->m_Type;
+	if (!jx_ir_typeIsInteger(valType) || !jx_ir_typeIsFloatingPoint(targetType)) {
+		JX_CHECK(false, "ui2fp can only be applied from one integer type to a floating point type.");
+		return NULL;
+	}
+
+	jx_ir_instruction_t* instr = jir_instrAlloc(ctx, targetType, JIR_OP_UI2FP, 1);
+	if (!instr) {
+		return NULL;
+	}
+
+	jir_instrAddOperand(ctx, instr, val);
+
+	return instr;
+}
+
+jx_ir_instruction_t* jx_ir_instrSI2FP(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* targetType)
+{
+	jx_ir_type_t* valType = val->m_Type;
+	if (!jx_ir_typeIsInteger(valType) || !jx_ir_typeIsFloatingPoint(targetType)) {
+		JX_CHECK(false, "si2fp can only be applied from one integer type to a floating point type.");
+		return NULL;
+	}
+
+	jx_ir_instruction_t* instr = jir_instrAlloc(ctx, targetType, JIR_OP_SI2FP, 1);
+	if (!instr) {
+		return NULL;
+	}
+
+	jir_instrAddOperand(ctx, instr, val);
+
+	return instr;
+}
+
+
 jx_ir_instruction_t* jx_ir_instrCall(jx_ir_context_t* ctx, jx_ir_value_t* funcVal, uint32_t numArgs, jx_ir_value_t** argValues)
 {
 	// NOTE: Don't assume funcVal is a function value. It might be an instruction pointing to a function

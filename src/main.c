@@ -867,7 +867,7 @@ int main(int argc, char** argv)
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
 //	const char* sourceFile = "test/c-testsuite/00140.c";
-	const char* sourceFile = "test/floats.c";
+	const char* sourceFile = "test/math.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
 	jx_cc_translation_unit_t* tu = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_INSTALL, sourceFile);

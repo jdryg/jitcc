@@ -1087,8 +1087,6 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 				castInstr = jx_ir_instrIntToPtr(irctx, originalVal, dstType);
 			} else if (srcIsPointer && dstIsInteger) {
 				castInstr = jx_ir_instrPtrToInt(irctx, originalVal, dstType);
-			} else if (srcSize == dstSize) {
-				castInstr = jx_ir_instrBitcast(irctx, originalVal, dstType);
 			} else if (srcIsFP && dstIsFP) {
 				if (srcSize < dstSize) {
 					castInstr = jx_ir_instrFPExt(irctx, originalVal, dstType);
@@ -1097,9 +1095,25 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 					castInstr = jx_ir_instrFPTrunc(irctx, originalVal, dstType);
 				}
 			} else if (srcIsFP && dstIsInteger) {
-				JX_NOT_IMPLEMENTED();
+				if (jx_ir_typeIsUnsigned(dstType)) {
+					castInstr = jx_ir_instrFP2UI(irctx, originalVal, dstType);
+				} else {
+					castInstr = jx_ir_instrFP2SI(irctx, originalVal, dstType);
+				}
 			} else if (srcIsInteger && dstIsFP) {
-				JX_NOT_IMPLEMENTED();
+				if (jx_ir_typeIsUnsigned(srcType)) {
+					castInstr = jx_ir_instrUI2FP(irctx, originalVal, dstType);
+				} else {
+					castInstr = jx_ir_instrSI2FP(irctx, originalVal, dstType);
+				}
+			} else if (srcIsPointer && dstIsPointer) {
+				castInstr = jx_ir_instrBitcast(irctx, originalVal, dstType);
+			} else if (srcSize == dstSize) {
+#if 1
+				JX_NOT_IMPLEMENTED(); // TODO: Check when this is hit and fix/enable again.
+#else
+				castInstr = jx_ir_instrBitcast(irctx, originalVal, dstType);
+#endif
 			} else {
 				JX_NOT_IMPLEMENTED();
 			}
