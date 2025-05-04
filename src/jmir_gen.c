@@ -81,6 +81,7 @@ static jx_mir_operand_t* jmirgen_instrBuild_ui2fp(jx_mirgen_context_t* ctx, jx_i
 static jx_mir_operand_t* jmirgen_instrBuild_si2fp(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
 static jx_mir_basic_block_t* jmirgen_getOrCreateBasicBlock(jx_mirgen_context_t* ctx, jx_ir_basic_block_t* irBB);
 static jx_mir_operand_t* jmirgen_getOperand(jx_mirgen_context_t* ctx, jx_ir_value_t* val);
+static bool jmirgen_genMov(jx_mirgen_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 static bool jmirgen_processPhis(jx_mirgen_context_t* ctx);
 static jx_mir_type_kind jmirgen_convertType(jx_ir_type_t* irType);
 static uint64_t jmir_funcItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
@@ -1182,7 +1183,7 @@ static jx_mir_operand_t* jmirgen_instrBuild_call(jx_mirgen_context_t* ctx, jx_ir
 				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, dstArgReg, tmp));
 			} else {
 				jx_mir_operand_t* dstArgReg = jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, jmirgen_convertType(argType), kMIRRegGP_SP, kMIRRegGPNone, 1, 32 + (argID - JX_COUNTOF(kMIRFuncArgIReg)) * 8);
-				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, dstArgReg, srcArgOp));
+				jmirgen_genMov(ctx, dstArgReg, srcArgOp);
 			}
 		}
 	}
@@ -1616,6 +1617,36 @@ static jx_mir_operand_t* jmirgen_getOperand(jx_mirgen_context_t* ctx, jx_ir_valu
 	JX_CHECK(operand, "Failed to find operand for value!");
 
 	return operand;
+}
+
+static bool jmirgen_genMov(jx_mirgen_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	if (jx_mir_typeIsFloatingPoint(dst->m_Type)) {
+		// If dst is a memory reference, make sure src is a reg.
+		if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF || dst->m_Kind == JMIR_OPERAND_STACK_OBJECT) {
+			jx_mir_operand_t* tmp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, dst->m_Type);
+			if (!jmirgen_genMov(ctx, tmp, src)) {
+				return false;
+			}
+			src = tmp;
+		} else if (dst->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+			JX_NOT_IMPLEMENTED();
+		} else {
+			JX_CHECK(dst->m_Kind == JMIR_OPERAND_REGISTER, "Expected register operand");
+		}
+
+		if (dst->m_Type == JMIR_TYPE_F32) {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movss(ctx->m_MIRCtx, dst, src));
+		} else if (dst->m_Type == JMIR_TYPE_F64) {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movsd(ctx->m_MIRCtx, dst, src));
+		} else {
+			JX_CHECK(false, "Unknown floating point type");
+		}
+	} else {
+		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, dst, src));
+	}
+
+	return true;
 }
 
 static bool jmirgen_processPhis(jx_mirgen_context_t* ctx)

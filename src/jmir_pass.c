@@ -264,7 +264,11 @@ static bool jmir_funcPass_fixMemMemOpsRun(jx_mir_function_pass_o* inst, jx_mir_c
 			case JMIR_OP_MOV:
 			case JMIR_OP_MOVSX:
 			case JMIR_OP_MOVZX:
-			case JMIR_OP_CMP: {
+			case JMIR_OP_CMP: 
+			case JMIR_OP_MOVSS: 
+			case JMIR_OP_MOVSD:
+			case JMIR_OP_MOVD: 
+			case JMIR_OP_MOVQ: {
 				jx_mir_operand_t* lhs = instr->m_Operands[0];
 				jx_mir_operand_t* rhs = instr->m_Operands[1];
 				const bool isLhsMem = lhs->m_Kind == JMIR_OPERAND_MEMORY_REF || lhs->m_Kind == JMIR_OPERAND_STACK_OBJECT;

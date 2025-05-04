@@ -182,6 +182,63 @@ static jx_x64_size jx_x64gen_convertMIRTypeToSize(jx_mir_type_kind type);
 static jx_x64_reg jx_x64gen_convertMIRReg(jx_mir_reg_t mirReg, jx_x64_size sz);
 static jx_x64_scale jx_x64gen_convertMIRScale(uint32_t mirScale);
 
+// TEST/DEBUG
+static int func1(int a, int b, int c, int d, int e, int f)
+{
+	return a == 1 && b == 2 && c == 3 && d == 4 && e == 5 && f == 6
+		? 0
+		: 1
+		;
+}
+
+static int func2(float a, double b, float c, double d, float e, float f)
+{
+	return a == 1.0f && b == 2.0 && c == 3.0f && d == 4.0 && e == 5.0f && f == 6.0f
+		? 0
+		: 1
+		;
+}
+
+static int func3(int a, double b, int c, float d, int e, float f)
+{
+	return a == 1 && b == 2.0 && c == 3 && d == 4.0f && e == 5 && f == 6.0f
+		? 0
+		: 1
+		;
+}
+
+static int64_t func5(int a, float b, int c, int d, int e)
+{
+	return a == 1 && b == 2.0f && c == 3 && d == 4 && e == 5
+		? 0
+		: 1
+		;
+}
+
+typedef struct Struct1
+{
+	int j, k, l;    // Struct1 exceeds 64 bits.
+} Struct1;
+static Struct1 func7(int a, double b, int c, float d)
+{
+	return a == 1 && b == 2.0 && c == 3 && d == 4.0f
+		? (Struct1) { 1, -1, 0 }
+		: (Struct1) { 1, 2, 3 }
+		;
+}
+
+typedef struct Struct2
+{
+	int j, k;    // Struct2 fits in 64 bits, and meets requirements for return by value.
+} Struct2;
+static Struct2 func8(int a, double b, int c, float d)
+{
+	return a == 1 && b == 2.0 && c == 3 && d == 4.0f
+		? (Struct2) { 2, -2 }
+		: (Struct2) { 1, 2 }
+		;
+}
+
 jx_x64gen_context_t* jx_x64gen_createContext(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allocator_i* allocator)
 {
 	jx_x64gen_context_t* ctx = (jx_x64gen_context_t*)JX_ALLOC(allocator, sizeof(jx_x64gen_context_t));
@@ -401,6 +458,36 @@ bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
 		jx_x64_symbol_t* sinfSymbol = jx64_symbolGetByName(jitCtx, "sinf");
 		if (sinfSymbol) {
 			jx64_symbolSetExternalAddress(jitCtx, sinfSymbol, (void*)sinf);
+		}
+
+		jx_x64_symbol_t* func1Symbol = jx64_symbolGetByName(jitCtx, "func1");
+		if (func1Symbol) {
+			jx64_symbolSetExternalAddress(jitCtx, func1Symbol, (void*)func1);
+		}
+
+		jx_x64_symbol_t* func2Symbol = jx64_symbolGetByName(jitCtx, "func2");
+		if (func2Symbol) {
+			jx64_symbolSetExternalAddress(jitCtx, func2Symbol, (void*)func2);
+		}
+
+		jx_x64_symbol_t* func3Symbol = jx64_symbolGetByName(jitCtx, "func3");
+		if (func3Symbol) {
+			jx64_symbolSetExternalAddress(jitCtx, func3Symbol, (void*)func3);
+		}
+
+		jx_x64_symbol_t* func5Symbol = jx64_symbolGetByName(jitCtx, "func5");
+		if (func5Symbol) {
+			jx64_symbolSetExternalAddress(jitCtx, func5Symbol, (void*)func5);
+		}
+
+		jx_x64_symbol_t* func7Symbol = jx64_symbolGetByName(jitCtx, "func7");
+		if (func7Symbol) {
+			jx64_symbolSetExternalAddress(jitCtx, func7Symbol, (void*)func7);
+		}
+
+		jx_x64_symbol_t* func8Symbol = jx64_symbolGetByName(jitCtx, "func8");
+		if (func8Symbol) {
+			jx64_symbolSetExternalAddress(jitCtx, func8Symbol, (void*)func8);
 		}
 	}
 
