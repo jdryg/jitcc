@@ -3257,10 +3257,19 @@ static bool jx64_sse_binary_op(jx_x64_context_t* ctx, jx_x64_sse_mandatory_prefi
 		const jx_x64_reg src_r = src.u.m_Reg;
 
 		const bool needsREX = forceREXW
+			|| (JX64_REG_GET_SIZE(src_r) == JX64_SIZE_64)
+			|| (JX64_REG_GET_SIZE(dst_r) == JX64_SIZE_64)
 			|| JX64_REG_IS_HI(dst_r)
 			|| JX64_REG_IS_HI(src_r)
 			;
-		jx64_instrEnc_rex(enc, needsREX, forceREXW ? 1 : 0, JX64_REG_HI(dst_r), 0, JX64_REG_HI(src_r));
+		const uint8_t rex_w = (false
+			|| forceREXW 
+			|| (JX64_REG_GET_SIZE(src_r) == JX64_SIZE_64) 
+			|| (JX64_REG_GET_SIZE(dst_r) == JX64_SIZE_64)) 
+			? 1 
+			: 0
+			;
+		jx64_instrEnc_rex(enc, needsREX, rex_w, JX64_REG_HI(dst_r), 0, JX64_REG_HI(src_r));
 		jx64_instrEnc_modrm(enc, 0b11, JX64_REG_LO(dst_r), JX64_REG_LO(src_r));
 	} else if (src.m_Type == JX64_OPERAND_MEM) {
 		jx_x64_mem_t* mem = &src.u.m_Mem;
