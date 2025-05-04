@@ -1406,19 +1406,13 @@ static jx_mir_operand_t* jmirgen_instrBuild_fpext(jx_mirgen_context_t* ctx, jx_i
 
 	jx_ir_value_t* operandVal = irInstr->super.m_OperandArr[0]->m_Value;
 	JX_CHECK(jx_ir_typeIsFloatingPoint(operandVal->m_Type), "Expected floating point operand!");
+
 	jx_mir_operand_t* operand = jmirgen_getOperand(ctx, operandVal);
+	operand = jmirgen_ensureOperandRegOrMem(ctx, operand);
 
 	jx_mir_type_kind targetType = jmirgen_convertType(instrVal->m_Type);
-	jx_mir_type_kind operandType = jmirgen_convertType(operandVal->m_Type);
-	JX_CHECK(targetType > operandType, "Expected target type to be larger than operand type!");
-
-	if (operand->m_Kind != JMIR_OPERAND_REGISTER && operand->m_Kind != JMIR_OPERAND_MEMORY_REF && operand->m_Kind != JMIR_OPERAND_STACK_OBJECT) {
-		jx_mir_operand_t* tmp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, operand->m_Type);
-		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movss(ctx->m_MIRCtx, tmp, operand));
-		operand = tmp;
-	}
-
 	JX_CHECK(targetType == JMIR_TYPE_F64 && operand->m_Type == JMIR_TYPE_F32, "Only know how to extend 32-bit FP to 64-bit FP.");
+
 	jx_mir_operand_t* resReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, targetType);
 	jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cvtss2sd(ctx->m_MIRCtx, resReg, operand));
 
@@ -1434,19 +1428,13 @@ static jx_mir_operand_t* jmirgen_instrBuild_fptrunc(jx_mirgen_context_t* ctx, jx
 
 	jx_ir_value_t* operandVal = irInstr->super.m_OperandArr[0]->m_Value;
 	JX_CHECK(jx_ir_typeIsFloatingPoint(operandVal->m_Type), "Expected floating point operand!");
+
 	jx_mir_operand_t* operand = jmirgen_getOperand(ctx, operandVal);
+	operand = jmirgen_ensureOperandRegOrMem(ctx, operand);
 
 	jx_mir_type_kind targetType = jmirgen_convertType(instrVal->m_Type);
-	jx_mir_type_kind operandType = jmirgen_convertType(operandVal->m_Type);
-	JX_CHECK(targetType > operandType, "Expected target type to be larger than operand type!");
+	JX_CHECK(targetType == JMIR_TYPE_F32 && operand->m_Type == JMIR_TYPE_F64, "Only know how to truncate 64-bit FP to 32-bit FP.");
 
-	if (operand->m_Kind != JMIR_OPERAND_REGISTER && operand->m_Kind != JMIR_OPERAND_MEMORY_REF && operand->m_Kind != JMIR_OPERAND_STACK_OBJECT) {
-		jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, operand->m_Type);
-		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movsd(ctx->m_MIRCtx, tmpReg, operand));
-		operand = tmpReg;
-	}
-
-	JX_CHECK(targetType == JMIR_TYPE_F32 && operand->m_Type == JMIR_TYPE_F64, "Only know how to extend 32-bit FP to 64-bit FP.");
 	jx_mir_operand_t* resReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, targetType);
 	jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cvtsd2ss(ctx->m_MIRCtx, resReg, operand));
 

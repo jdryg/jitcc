@@ -923,7 +923,7 @@
     <ClCompile Include="bin\test\param_passing.c">
       <Filter>bin\test</Filter>
     </ClCompile>
-    <ClCompile Include="bin\test\float_int_conv.c">
+    <ClCompile Include="bin\test\float_conv.c">
       <Filter>bin\test</Filter>
     </ClCompile>
   </ItemGroup>

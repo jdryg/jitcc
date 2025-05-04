@@ -1085,7 +1085,7 @@
     <ClCompile Include="bin\test\floats.c">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="bin\test\float_int_conv.c">
+    <ClCompile Include="bin\test\float_conv.c">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="bin\test\floorf.c">
