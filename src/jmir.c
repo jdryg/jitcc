@@ -127,6 +127,14 @@ static const char* kMIROpcodeMnemonic[] = {
 	[JMIR_OP_UNPCKLPD] = "unpcklpd",
 	[JMIR_OP_XORPS] = "xorps",
 	[JMIR_OP_XORPD] = "xorpd",
+	[JMIR_OP_PUNPCKLBW] = "punpcklbw",
+	[JMIR_OP_PUNPCKLWD] = "punpcklwd",
+	[JMIR_OP_PUNPCKLDQ] = "punpckldq",
+	[JMIR_OP_PUNPCKLQDQ] = "punpcklqdq",
+	[JMIR_OP_PUNPCKHBW] = "punpckhbw",
+	[JMIR_OP_PUNPCKHWD] = "punpckhwd",
+	[JMIR_OP_PUNPCKHDQ] = "punpckhdq",
+	[JMIR_OP_PUNPCKHQDQ] = "punpckhqdq",
 };
 
 typedef struct jx_mir_frame_info_t
@@ -1818,6 +1826,46 @@ jx_mir_instruction_t* jx_mir_xorps(jx_mir_context_t* ctx, jx_mir_operand_t* dst,
 jx_mir_instruction_t* jx_mir_xorpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_XORPD, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_punpcklbw(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_PUNPCKLBW, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_punpcklwd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_PUNPCKLWD, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_punpckldq(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_PUNPCKLDQ, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_punpcklqdq(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_PUNPCKLQDQ, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_punpckhbw(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_PUNPCKHBW, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_punpckhwd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_PUNPCKHWD, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_punpckhdq(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_PUNPCKHDQ, dst, src);
+}
+
+jx_mir_instruction_t* jx_mir_punpckhqdq(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
+{
+	return jmir_instrAlloc2(ctx, JMIR_OP_PUNPCKHQDQ, dst, src);
 }
 
 static bool jmir_opcodeIsTerminator(uint32_t opcode)
