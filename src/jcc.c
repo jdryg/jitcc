@@ -783,7 +783,7 @@ static jx_cc_ast_expr_t* jcc_astAllocExprUnary(jx_cc_context_t* ctx, jx_cc_ast_n
 
 static jx_cc_ast_expr_t* jcc_astAllocExprIConst(jx_cc_context_t* ctx, int64_t val, jx_cc_type_t* type, jx_cc_token_t* tok)
 {
-	jx_cc_ast_expr_iconst_t* node = (jx_cc_ast_expr_iconst_t*)jcc_astAllocExpr(ctx, JCC_NODE_NUMBER, tok, NULL, sizeof(jx_cc_ast_expr_iconst_t));
+	jx_cc_ast_expr_iconst_t* node = (jx_cc_ast_expr_iconst_t*)jcc_astAllocExpr(ctx, JCC_NODE_NUMBER, tok, type, sizeof(jx_cc_ast_expr_iconst_t));
 	if (!node) {
 		return NULL;
 	}

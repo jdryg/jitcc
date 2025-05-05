@@ -721,9 +721,38 @@ static void astCleanupObject(jx_cc_object_t* obj)
 }
 
 #include <Windows.h>
+#include <math.h>
+
+static double u64_to_f64(uint64_t x)
+{
+	const double tmp = ldexp(1.0, 52);
+	const uint64_t clow = 0x4330000000000000ull;
+	const uint64_t chigh = 0x4530000000000000ull;
+
+	const uint64_t xlow = x & 0x00000000FFFFFFFFull;
+	const uint64_t xhigh = (x & 0xFFFFFFFF00000000ull) >> 32;
+
+	const uint64_t cxlow = xlow | clow;
+	const uint64_t cxhigh = xhigh | chigh;
+
+	const double dclow = *(double*)&clow;
+	const double dchigh = *(double*)&chigh;
+	const double dcxlow = *(double*)&cxlow;
+	const double dcxhigh = *(double*)&cxhigh;
+
+	const double delta_low = dcxlow - dclow;
+	const double delta_high = dcxhigh - dchigh;
+
+	const double res = delta_low + delta_high;
+	return res;
+}
 
 int main(int argc, char** argv)
 {
+	{
+		double d = u64_to_f64(0x0000000100000001ull);
+	}
+
 	jx_kernel_initAPI();
 
 	// Redirect system logger to file and console
@@ -867,7 +896,7 @@ int main(int argc, char** argv)
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
 //	const char* sourceFile = "test/c-testsuite/00140.c";
-	const char* sourceFile = "test/math.c";
+	const char* sourceFile = "test/float_conv.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
 	jx_cc_translation_unit_t* tu = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_INSTALL, sourceFile);

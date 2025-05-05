@@ -1943,14 +1943,10 @@ jx_ir_instruction_t* jx_ir_instrStore(jx_ir_context_t* ctx, jx_ir_value_t* ptr, 
 		return NULL;
 	}
 
-#if 0
-	// NOTE: Removed because this is required when passing structs less than 8 bytes by value.
-	// TODO: Check if it's a first class type and if it's not, check its size. It must be 1, 2, 4 or 8 bytes.
-	if (!jx_ir_typeIsFirstClass(val->m_Type)) {
+	if (!jx_ir_typeIsFirstClass(val->m_Type) && !jx_ir_typeIsSmallPow2Struct(val->m_Type)) {
 		JX_CHECK(false, "Store instruction source operand must have a first class type.");
 		return NULL;
 	}
-#endif
 
 	jx_ir_instruction_t* instr = jir_instrAlloc(ctx, ctx->m_BuildinTypes[JIR_TYPE_VOID], JIR_OP_STORE, 2);
 	if (!instr) {
@@ -3118,6 +3114,16 @@ bool jx_ir_typeIsFuncPtr(jx_ir_type_t* type)
 	}
 
 	return jx_ir_typeToFunction(ptrType->m_BaseType) != NULL;
+}
+
+bool jx_ir_typeIsSmallPow2Struct(jx_ir_type_t* type)
+{
+	if (type->m_Kind != JIR_TYPE_STRUCT) {
+		return false;
+	}
+
+	const uint32_t sz = (uint32_t)jx_ir_typeGetSize(type);
+	return sz <= 8 && jx_isPow2_u32(sz);
 }
 
 size_t jx_ir_typeGetAlignment(jx_ir_type_t* type)

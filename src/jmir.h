@@ -155,6 +155,14 @@ typedef enum jx_mir_opcode
 	JMIR_OP_UNPCKLPD,
 	JMIR_OP_XORPS,
 	JMIR_OP_XORPD,
+	JMIR_OP_PUNPCKLBW,
+	JMIR_OP_PUNPCKLWD,
+	JMIR_OP_PUNPCKLDQ,
+	JMIR_OP_PUNPCKLQDQ,
+	JMIR_OP_PUNPCKHBW,
+	JMIR_OP_PUNPCKHWD,
+	JMIR_OP_PUNPCKHDQ,
+	JMIR_OP_PUNPCKHQDQ,
 
 	JMIR_OP_SETCC_BASE = JMIR_OP_SETO,
 	JMIR_OP_JCC_BASE = JMIR_OP_JO,
@@ -589,6 +597,14 @@ jx_mir_instruction_t* jx_mir_unpcklps(jx_mir_context_t* ctx, jx_mir_operand_t* d
 jx_mir_instruction_t* jx_mir_unpcklpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_xorps(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_xorpd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_punpcklbw(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_punpcklwd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_punpckldq(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_punpcklqdq(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_punpckhbw(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_punpckhwd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_punpckhdq(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_punpckhqdq(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 
 static inline bool jx_mir_regIsValid(jx_mir_reg_t reg)
 {

@@ -808,11 +808,15 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 		jx_ir_value_t* rhs = jirgenGenExpression(ctx, assignExpr->m_ExprRHS);
 
 		jx_ir_type_t* rhsExprType = jccTypeToIRType(ctx, assignExpr->m_ExprRHS->m_Type);
-		if (rhsExprType != rhs->m_Type && !(rhsExprType->m_Kind == JIR_TYPE_ARRAY && rhs->m_Type->m_Kind == JIR_TYPE_POINTER)) {
+		if (rhsExprType != rhs->m_Type && !((rhsExprType->m_Kind == JIR_TYPE_ARRAY || rhsExprType->m_Kind == JIR_TYPE_STRUCT) && rhs->m_Type->m_Kind == JIR_TYPE_POINTER)) {
 			// This can happen when assigning (e.g.) a boolean (setcc instruction) to an integer (c-testsuite 00133.c).
 			// If I don't cast rhs to the correct type, jirgenGenStore() asserts.
 			if (jx_ir_typeIsIntegral(rhsExprType) && jx_ir_typeIsIntegral(rhs->m_Type)) {
 				rhs = jirgenConvertType(ctx, rhs, rhsExprType);
+			} else if (rhsExprType->m_Kind == JIR_TYPE_STRUCT && jx_ir_typeIsIntegral(rhs->m_Type) && jx_ir_typeGetSize(rhsExprType) == jx_ir_typeGetSize(rhs->m_Type)) {
+				jx_ir_instruction_t* bitcastInstr = jx_ir_instrBitcast(irctx, rhs, rhsExprType);
+				jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, bitcastInstr);
+				rhs = jx_ir_instrToValue(bitcastInstr);
 			} else {
 				JX_NOT_IMPLEMENTED();
 			}
@@ -1491,7 +1495,7 @@ static void jirgenGenStore(jx_irgen_context_t* ctx, jx_ir_value_t* ptr, jx_ir_va
 
 	jx_ir_type_t* baseType = ptrType->m_BaseType;
 	if (baseType == val->m_Type) {
-		JX_CHECK(jx_ir_typeIsFirstClass(baseType), "store value operand expected to have a first-class type");
+		JX_CHECK(jx_ir_typeIsFirstClass(baseType) || jx_ir_typeIsSmallPow2Struct(baseType), "store value operand expected to have a first-class type");
 		jx_ir_instruction_t* storeInstr = jx_ir_instrStore(irctx, ptr, val);
 		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, storeInstr);
 	} else {

@@ -46,125 +46,134 @@ typedef struct jx64gen_instr_desc_t
 } jx64gen_instr_desc_t;
 
 static const jx64gen_instr_desc_t kInstrDesc[] = {
-	[JMIR_OP_RET]       = { .m_Kind = JX64GEN_INSTR_VOID,   .u.m_VoidFunc = jx64_retn },
-	[JMIR_OP_CMP]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cmp },
-	[JMIR_OP_TEST]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_test },
-	[JMIR_OP_JMP]       = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_jmp },
-	[JMIR_OP_PHI]       = { 0 },
-	[JMIR_OP_MOV]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_mov },
-	[JMIR_OP_MOVSX]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movsx },
-	[JMIR_OP_MOVZX]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movzx },
-	[JMIR_OP_IMUL]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_imul },
-	[JMIR_OP_IDIV]      = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_idiv },
-	[JMIR_OP_DIV]       = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_idiv },
-	[JMIR_OP_ADD]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_add },
-	[JMIR_OP_SUB]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_sub },
-	[JMIR_OP_LEA]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_lea },
-	[JMIR_OP_XOR]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_xor },
-	[JMIR_OP_AND]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_and },
-	[JMIR_OP_OR]        = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_or },
-	[JMIR_OP_SAR]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_sar },
-	[JMIR_OP_SHR]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_shr },
-	[JMIR_OP_SHL]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_shl },
-	[JMIR_OP_CALL]      = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_call },
-	[JMIR_OP_PUSH]      = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_push },
-	[JMIR_OP_POP]       = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_pop },
-	[JMIR_OP_CDQ]       = { .m_Kind = JX64GEN_INSTR_VOID,   .u.m_VoidFunc = jx64_cdq },
-	[JMIR_OP_CQO]       = { .m_Kind = JX64GEN_INSTR_VOID,   .u.m_VoidFunc = jx64_cqo },
-	[JMIR_OP_SETO]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_O },
-	[JMIR_OP_SETNO]     = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NO },
-	[JMIR_OP_SETB]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_B },
-	[JMIR_OP_SETNB]     = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NB },
-	[JMIR_OP_SETE]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_E },
-	[JMIR_OP_SETNE]     = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NE },
-	[JMIR_OP_SETBE]     = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_BE },
-	[JMIR_OP_SETNBE]    = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NBE },
-	[JMIR_OP_SETS]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_S },
-	[JMIR_OP_SETNS]     = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NS },
-	[JMIR_OP_SETP]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_P },
-	[JMIR_OP_SETNP]     = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NP },
-	[JMIR_OP_SETL]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_L },
-	[JMIR_OP_SETNL]     = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NL },
-	[JMIR_OP_SETLE]     = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_LE },
-	[JMIR_OP_SETNLE]    = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NLE },
-	[JMIR_OP_JO]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_O },
-	[JMIR_OP_JNO]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NO },
-	[JMIR_OP_JB]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_B },
-	[JMIR_OP_JNB]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NB },
-	[JMIR_OP_JE]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_E },
-	[JMIR_OP_JNE]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NE },
-	[JMIR_OP_JBE]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_BE },
-	[JMIR_OP_JNBE]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NBE },
-	[JMIR_OP_JS]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_S },
-	[JMIR_OP_JNS]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NS },
-	[JMIR_OP_JP]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_P },
-	[JMIR_OP_JNP]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NP },
-	[JMIR_OP_JL]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_L },
-	[JMIR_OP_JNL]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NL },
-	[JMIR_OP_JLE]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_LE },
-	[JMIR_OP_JNLE]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NLE },
-	[JMIR_OP_MOVSS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movss },
-	[JMIR_OP_MOVSD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movsd },
-	[JMIR_OP_MOVAPS]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movaps },
-	[JMIR_OP_MOVAPD]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movapd },
-	[JMIR_OP_MOVD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movd },
-	[JMIR_OP_MOVQ]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movq },
-	[JMIR_OP_ADDPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_addps },
-	[JMIR_OP_ADDSS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_addss },
-	[JMIR_OP_ADDPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_addpd },
-	[JMIR_OP_ADDSD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_addsd },
-	[JMIR_OP_ANDNPS]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_andnps },
-	[JMIR_OP_ANDNPD]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_andnpd },
-	[JMIR_OP_ANDPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_andps },
-	[JMIR_OP_ANDPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_andpd },
-	[JMIR_OP_COMISS]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_comiss },
-	[JMIR_OP_COMISD]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_comisd },
-	[JMIR_OP_CVTSI2SS]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvtsi2ss },
-	[JMIR_OP_CVTSI2SD]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvtsi2sd },
-	[JMIR_OP_CVTSS2SI]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvtss2si },
-	[JMIR_OP_CVTSD2SI]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvtsd2si },
-	[JMIR_OP_CVTTSS2SI] = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvttss2si },
-	[JMIR_OP_CVTTSD2SI] = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvttsd2si },
-	[JMIR_OP_CVTSD2SS]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvtsd2ss },
-	[JMIR_OP_CVTSS2SD]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvtss2sd },
-	[JMIR_OP_DIVPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_divps },
-	[JMIR_OP_DIVSS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_divss },
-	[JMIR_OP_DIVPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_divpd },
-	[JMIR_OP_DIVSD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_divsd },
-	[JMIR_OP_MAXPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_maxps },
-	[JMIR_OP_MAXSS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_maxss },
-	[JMIR_OP_MAXPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_maxpd },
-	[JMIR_OP_MAXSD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_maxsd },
-	[JMIR_OP_MINPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_minps },
-	[JMIR_OP_MINSS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_minss },
-	[JMIR_OP_MINPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_minpd },
-	[JMIR_OP_MINSD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_minsd },
-	[JMIR_OP_MULPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_mulps },
-	[JMIR_OP_MULSS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_mulss },
-	[JMIR_OP_MULPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_mulpd },
-	[JMIR_OP_MULSD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_mulsd },
-	[JMIR_OP_ORPS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_orps },
-	[JMIR_OP_ORPD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_orpd },
-	[JMIR_OP_RCPPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_rcpps },
-	[JMIR_OP_RCPSS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_rcpss },
-	[JMIR_OP_RSQRTPS]   = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_rsqrtps },
-	[JMIR_OP_RSQRTSS]   = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_rsqrtss },
-	[JMIR_OP_SQRTPS]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_sqrtps },
-	[JMIR_OP_SQRTSS]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_sqrtss },
-	[JMIR_OP_SQRTPD]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_sqrtpd },
-	[JMIR_OP_SQRTSD]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_sqrtsd },
-	[JMIR_OP_SUBPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_subps },
-	[JMIR_OP_SUBSS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_subss },
-	[JMIR_OP_SUBPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_subpd },
-	[JMIR_OP_SUBSD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_subsd },
-	[JMIR_OP_UCOMISS]   = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_ucomiss },
-	[JMIR_OP_UCOMISD]   = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_ucomisd },
-	[JMIR_OP_UNPCKHPS]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_unpckhps },
-	[JMIR_OP_UNPCKHPD]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_unpckhpd },
-	[JMIR_OP_UNPCKLPS]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_unpcklps },
-	[JMIR_OP_UNPCKLPD]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_unpcklpd },
-	[JMIR_OP_XORPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_xorps },
-	[JMIR_OP_XORPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_xorpd },
+	[JMIR_OP_RET]        = { .m_Kind = JX64GEN_INSTR_VOID,   .u.m_VoidFunc = jx64_retn },
+	[JMIR_OP_CMP]        = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cmp },
+	[JMIR_OP_TEST]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_test },
+	[JMIR_OP_JMP]        = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_jmp },
+	[JMIR_OP_PHI]        = { 0 },
+	[JMIR_OP_MOV]        = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_mov },
+	[JMIR_OP_MOVSX]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movsx },
+	[JMIR_OP_MOVZX]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movzx },
+	[JMIR_OP_IMUL]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_imul },
+	[JMIR_OP_IDIV]       = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_idiv },
+	[JMIR_OP_DIV]        = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_idiv },
+	[JMIR_OP_ADD]        = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_add },
+	[JMIR_OP_SUB]        = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_sub },
+	[JMIR_OP_LEA]        = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_lea },
+	[JMIR_OP_XOR]        = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_xor },
+	[JMIR_OP_AND]        = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_and },
+	[JMIR_OP_OR]         = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_or },
+	[JMIR_OP_SAR]        = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_sar },
+	[JMIR_OP_SHR]        = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_shr },
+	[JMIR_OP_SHL]        = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_shl },
+	[JMIR_OP_CALL]       = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_call },
+	[JMIR_OP_PUSH]       = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_push },
+	[JMIR_OP_POP]        = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_pop },
+	[JMIR_OP_CDQ]        = { .m_Kind = JX64GEN_INSTR_VOID,   .u.m_VoidFunc = jx64_cdq },
+	[JMIR_OP_CQO]        = { .m_Kind = JX64GEN_INSTR_VOID,   .u.m_VoidFunc = jx64_cqo },
+	[JMIR_OP_SETO]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_O },
+	[JMIR_OP_SETNO]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NO },
+	[JMIR_OP_SETB]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_B },
+	[JMIR_OP_SETNB]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NB },
+	[JMIR_OP_SETE]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_E },
+	[JMIR_OP_SETNE]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NE },
+	[JMIR_OP_SETBE]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_BE },
+	[JMIR_OP_SETNBE]     = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NBE },
+	[JMIR_OP_SETS]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_S },
+	[JMIR_OP_SETNS]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NS },
+	[JMIR_OP_SETP]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_P },
+	[JMIR_OP_SETNP]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NP },
+	[JMIR_OP_SETL]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_L },
+	[JMIR_OP_SETNL]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NL },
+	[JMIR_OP_SETLE]      = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_LE },
+	[JMIR_OP_SETNLE]     = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NLE },
+	[JMIR_OP_JO]         = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_O },
+	[JMIR_OP_JNO]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NO },
+	[JMIR_OP_JB]         = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_B },
+	[JMIR_OP_JNB]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NB },
+	[JMIR_OP_JE]         = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_E },
+	[JMIR_OP_JNE]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NE },
+	[JMIR_OP_JBE]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_BE },
+	[JMIR_OP_JNBE]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NBE },
+	[JMIR_OP_JS]         = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_S },
+	[JMIR_OP_JNS]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NS },
+	[JMIR_OP_JP]         = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_P },
+	[JMIR_OP_JNP]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NP },
+	[JMIR_OP_JL]         = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_L },
+	[JMIR_OP_JNL]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NL },
+	[JMIR_OP_JLE]        = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_LE },
+	[JMIR_OP_JNLE]       = { .m_Kind = JX64GEN_INSTR_COND,   .u.m_Cond.m_Func = jx64_jcc, .u.m_Cond.m_Code = JMIR_CC_NLE },
+	[JMIR_OP_MOVSS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movss },
+	[JMIR_OP_MOVSD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movsd },
+	[JMIR_OP_MOVAPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movaps },
+	[JMIR_OP_MOVAPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movapd },
+	[JMIR_OP_MOVD]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movd },
+	[JMIR_OP_MOVQ]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movq },
+	[JMIR_OP_ADDPS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_addps },
+	[JMIR_OP_ADDSS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_addss },
+	[JMIR_OP_ADDPD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_addpd },
+	[JMIR_OP_ADDSD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_addsd },
+	[JMIR_OP_ANDNPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_andnps },
+	[JMIR_OP_ANDNPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_andnpd },
+	[JMIR_OP_ANDPS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_andps },
+	[JMIR_OP_ANDPD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_andpd },
+	[JMIR_OP_COMISS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_comiss },
+	[JMIR_OP_COMISD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_comisd },
+	[JMIR_OP_CVTSI2SS]   = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvtsi2ss },
+	[JMIR_OP_CVTSI2SD]   = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvtsi2sd },
+	[JMIR_OP_CVTSS2SI]   = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvtss2si },
+	[JMIR_OP_CVTSD2SI]   = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvtsd2si },
+	[JMIR_OP_CVTTSS2SI]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvttss2si },
+	[JMIR_OP_CVTTSD2SI]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvttsd2si },
+	[JMIR_OP_CVTSD2SS]   = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvtsd2ss },
+	[JMIR_OP_CVTSS2SD]   = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cvtss2sd },
+	[JMIR_OP_DIVPS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_divps },
+	[JMIR_OP_DIVSS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_divss },
+	[JMIR_OP_DIVPD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_divpd },
+	[JMIR_OP_DIVSD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_divsd },
+	[JMIR_OP_MAXPS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_maxps },
+	[JMIR_OP_MAXSS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_maxss },
+	[JMIR_OP_MAXPD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_maxpd },
+	[JMIR_OP_MAXSD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_maxsd },
+	[JMIR_OP_MINPS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_minps },
+	[JMIR_OP_MINSS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_minss },
+	[JMIR_OP_MINPD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_minpd },
+	[JMIR_OP_MINSD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_minsd },
+	[JMIR_OP_MULPS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_mulps },
+	[JMIR_OP_MULSS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_mulss },
+	[JMIR_OP_MULPD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_mulpd },
+	[JMIR_OP_MULSD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_mulsd },
+	[JMIR_OP_ORPS]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_orps },
+	[JMIR_OP_ORPD]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_orpd },
+	[JMIR_OP_RCPPS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_rcpps },
+	[JMIR_OP_RCPSS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_rcpss },
+	[JMIR_OP_RSQRTPS]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_rsqrtps },
+	[JMIR_OP_RSQRTSS]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_rsqrtss },
+	[JMIR_OP_SQRTPS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_sqrtps },
+	[JMIR_OP_SQRTSS]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_sqrtss },
+	[JMIR_OP_SQRTPD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_sqrtpd },
+	[JMIR_OP_SQRTSD]     = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_sqrtsd },
+	[JMIR_OP_SUBPS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_subps },
+	[JMIR_OP_SUBSS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_subss },
+	[JMIR_OP_SUBPD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_subpd },
+	[JMIR_OP_SUBSD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_subsd },
+	[JMIR_OP_UCOMISS]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_ucomiss },
+	[JMIR_OP_UCOMISD]    = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_ucomisd },
+	[JMIR_OP_UNPCKHPS]   = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_unpckhps },
+	[JMIR_OP_UNPCKHPD]   = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_unpckhpd },
+	[JMIR_OP_UNPCKLPS]   = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_unpcklps },
+	[JMIR_OP_UNPCKLPD]   = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_unpcklpd },
+	[JMIR_OP_XORPS]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_xorps },
+	[JMIR_OP_XORPD]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_xorpd },
+	[JMIR_OP_PUNPCKLBW]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_punpcklbw },
+	[JMIR_OP_PUNPCKLWD]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_punpcklwd },
+	[JMIR_OP_PUNPCKLDQ]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_punpckldq },
+	[JMIR_OP_PUNPCKLQDQ] = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_punpcklqdq },
+	[JMIR_OP_PUNPCKHBW]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_punpckhbw },
+	[JMIR_OP_PUNPCKHWD]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_punpckhwd },
+	[JMIR_OP_PUNPCKHDQ]  = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_punpckhdq },
+	[JMIR_OP_PUNPCKHQDQ] = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_punpckhqdq },
+
 };
 
 typedef struct jx_x64gen_context_t
@@ -181,6 +190,63 @@ static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64gen_context_t* ctx, co
 static jx_x64_size jx_x64gen_convertMIRTypeToSize(jx_mir_type_kind type);
 static jx_x64_reg jx_x64gen_convertMIRReg(jx_mir_reg_t mirReg, jx_x64_size sz);
 static jx_x64_scale jx_x64gen_convertMIRScale(uint32_t mirScale);
+
+// TEST/DEBUG
+static int func1(int a, int b, int c, int d, int e, int f)
+{
+	return a == 1 && b == 2 && c == 3 && d == 4 && e == 5 && f == 6
+		? 0
+		: 1
+		;
+}
+
+static int func2(float a, double b, float c, double d, float e, float f)
+{
+	return a == 1.0f && b == 2.0 && c == 3.0f && d == 4.0 && e == 5.0f && f == 6.0f
+		? 0
+		: 1
+		;
+}
+
+static int func3(int a, double b, int c, float d, int e, float f)
+{
+	return a == 1 && b == 2.0 && c == 3 && d == 4.0f && e == 5 && f == 6.0f
+		? 0
+		: 1
+		;
+}
+
+static int64_t func5(int a, float b, int c, int d, int e)
+{
+	return a == 1 && b == 2.0f && c == 3 && d == 4 && e == 5
+		? 0
+		: 1
+		;
+}
+
+typedef struct Struct1
+{
+	int j, k, l;    // Struct1 exceeds 64 bits.
+} Struct1;
+static Struct1 func7(int a, double b, int c, float d)
+{
+	return a == 1 && b == 2.0 && c == 3 && d == 4.0f
+		? (Struct1) { 1, -1, 0 }
+		: (Struct1) { 1, 2, 3 }
+		;
+}
+
+typedef struct Struct2
+{
+	int j, k;    // Struct2 fits in 64 bits, and meets requirements for return by value.
+} Struct2;
+static Struct2 func8(int a, double b, int c, float d)
+{
+	return a == 1 && b == 2.0 && c == 3 && d == 4.0f
+		? (Struct2) { 2, -2 }
+		: (Struct2) { 1, 2 }
+		;
+}
 
 jx_x64gen_context_t* jx_x64gen_createContext(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allocator_i* allocator)
 {
@@ -401,6 +467,36 @@ bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
 		jx_x64_symbol_t* sinfSymbol = jx64_symbolGetByName(jitCtx, "sinf");
 		if (sinfSymbol) {
 			jx64_symbolSetExternalAddress(jitCtx, sinfSymbol, (void*)sinf);
+		}
+
+		jx_x64_symbol_t* func1Symbol = jx64_symbolGetByName(jitCtx, "func1");
+		if (func1Symbol) {
+			jx64_symbolSetExternalAddress(jitCtx, func1Symbol, (void*)func1);
+		}
+
+		jx_x64_symbol_t* func2Symbol = jx64_symbolGetByName(jitCtx, "func2");
+		if (func2Symbol) {
+			jx64_symbolSetExternalAddress(jitCtx, func2Symbol, (void*)func2);
+		}
+
+		jx_x64_symbol_t* func3Symbol = jx64_symbolGetByName(jitCtx, "func3");
+		if (func3Symbol) {
+			jx64_symbolSetExternalAddress(jitCtx, func3Symbol, (void*)func3);
+		}
+
+		jx_x64_symbol_t* func5Symbol = jx64_symbolGetByName(jitCtx, "func5");
+		if (func5Symbol) {
+			jx64_symbolSetExternalAddress(jitCtx, func5Symbol, (void*)func5);
+		}
+
+		jx_x64_symbol_t* func7Symbol = jx64_symbolGetByName(jitCtx, "func7");
+		if (func7Symbol) {
+			jx64_symbolSetExternalAddress(jitCtx, func7Symbol, (void*)func7);
+		}
+
+		jx_x64_symbol_t* func8Symbol = jx64_symbolGetByName(jitCtx, "func8");
+		if (func8Symbol) {
+			jx64_symbolSetExternalAddress(jitCtx, func8Symbol, (void*)func8);
 		}
 	}
 

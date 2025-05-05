@@ -516,6 +516,7 @@ bool jx_ir_typeIsFirstClass(jx_ir_type_t* type);
 bool jx_ir_typeIsSized(jx_ir_type_t* type);
 bool jx_ir_typeIsComposite(jx_ir_type_t* type);
 bool jx_ir_typeIsFuncPtr(jx_ir_type_t* type);
+bool jx_ir_typeIsSmallPow2Struct(jx_ir_type_t* type);
 size_t jx_ir_typeGetAlignment(jx_ir_type_t* type);
 size_t jx_ir_typeGetSize(jx_ir_type_t* type);
 uint32_t jx_ir_typeGetIntegerConversionRank(jx_ir_type_t* type);
