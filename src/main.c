@@ -721,9 +721,38 @@ static void astCleanupObject(jx_cc_object_t* obj)
 }
 
 #include <Windows.h>
+#include <math.h>
+
+static double u64_to_f64(uint64_t x)
+{
+	const double tmp = ldexp(1.0, 52);
+	const uint64_t clow = 0x4330000000000000ull;
+	const uint64_t chigh = 0x4530000000000000ull;
+
+	const uint64_t xlow = x & 0x00000000FFFFFFFFull;
+	const uint64_t xhigh = (x & 0xFFFFFFFF00000000ull) >> 32;
+
+	const uint64_t cxlow = xlow | clow;
+	const uint64_t cxhigh = xhigh | chigh;
+
+	const double dclow = *(double*)&clow;
+	const double dchigh = *(double*)&chigh;
+	const double dcxlow = *(double*)&cxlow;
+	const double dcxhigh = *(double*)&cxhigh;
+
+	const double delta_low = dcxlow - dclow;
+	const double delta_high = dcxhigh - dchigh;
+
+	const double res = delta_low + delta_high;
+	return res;
+}
 
 int main(int argc, char** argv)
 {
+	{
+		double d = u64_to_f64(0x0000000100000001ull);
+	}
+
 	jx_kernel_initAPI();
 
 	// Redirect system logger to file and console

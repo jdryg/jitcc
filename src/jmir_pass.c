@@ -827,6 +827,8 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 	case JMIR_OP_MOVSD: 
 	case JMIR_OP_MOVD:
 	case JMIR_OP_MOVQ:
+	case JMIR_OP_MOVAPS:
+	case JMIR_OP_MOVAPD:
 	case JMIR_OP_CVTSI2SS:
 	case JMIR_OP_CVTSI2SD:
 	case JMIR_OP_CVTSS2SI:
@@ -915,8 +917,20 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 	case JMIR_OP_SUBSS:
 	case JMIR_OP_SUBPD:
 	case JMIR_OP_SUBSD:
+	case JMIR_OP_UNPCKHPS:
+	case JMIR_OP_UNPCKHPD:
+	case JMIR_OP_UNPCKLPS:
+	case JMIR_OP_UNPCKLPD:
 	case JMIR_OP_XORPS:
-	case JMIR_OP_XORPD: {
+	case JMIR_OP_XORPD: 
+	case JMIR_OP_PUNPCKLBW:
+	case JMIR_OP_PUNPCKLWD:
+	case JMIR_OP_PUNPCKLDQ:
+	case JMIR_OP_PUNPCKLQDQ:
+	case JMIR_OP_PUNPCKHBW:
+	case JMIR_OP_PUNPCKHWD:
+	case JMIR_OP_PUNPCKHDQ:
+	case JMIR_OP_PUNPCKHQDQ: {
 		jx_mir_operand_t* src = instr->m_Operands[1];
 		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
 			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_Reg);
@@ -1028,12 +1042,6 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_in
 	case JMIR_OP_JMP: {
 		jx_mir_operand_t* src = instr->m_Operands[0];
 		JX_CHECK(src->m_Kind == JMIR_OPERAND_BASIC_BLOCK, "I don't know how to handle non-basic block jump targets atm!");
-	} break;
-	case JMIR_OP_UNPCKHPS: {
-		JX_NOT_IMPLEMENTED();
-	} break;
-	case JMIR_OP_UNPCKLPS: {
-		JX_NOT_IMPLEMENTED();
 	} break;
 	default:
 		JX_CHECK(false, "Unknown mir opcode!");
