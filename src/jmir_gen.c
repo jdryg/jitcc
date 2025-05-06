@@ -1334,11 +1334,12 @@ static jx_mir_operand_t* jmirgen_instrBuild_zext(jx_mirgen_context_t* ctx, jx_ir
 
 	jx_ir_value_t* operandVal = irInstr->super.m_OperandArr[0]->m_Value;
 	JX_CHECK(jx_ir_typeIsIntegral(operandVal->m_Type), "Expected integer operand!");
+
 	jx_mir_operand_t* operand = jmirgen_getOperand(ctx, operandVal);
+	operand = jmirgen_ensureOperandRegOrMem(ctx, operand);
 
 	jx_mir_type_kind targetType = jmirgen_convertType(instrVal->m_Type);
-	jx_mir_type_kind operandType = jmirgen_convertType(operandVal->m_Type);
-	JX_CHECK(targetType > operandType, "Expected target type to be larger than operand type!");
+	JX_CHECK(targetType > operand->m_Type, "Expected target type to be larger than operand type!");
 
 	jx_mir_operand_t* resReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, targetType);
 	jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movzx(ctx->m_MIRCtx, resReg, operand));
@@ -1355,17 +1356,12 @@ static jx_mir_operand_t* jmirgen_instrBuild_sext(jx_mirgen_context_t* ctx, jx_ir
 
 	jx_ir_value_t* operandVal = irInstr->super.m_OperandArr[0]->m_Value;
 	JX_CHECK(jx_ir_typeIsIntegral(operandVal->m_Type), "Expected integer operand!");
+
 	jx_mir_operand_t* operand = jmirgen_getOperand(ctx, operandVal);
+	operand = jmirgen_ensureOperandRegOrMem(ctx, operand);
 
 	jx_mir_type_kind targetType = jmirgen_convertType(instrVal->m_Type);
-	jx_mir_type_kind operandType = jmirgen_convertType(operandVal->m_Type);
-	JX_CHECK(targetType > operandType, "Expected target type to be larger than operand type!");
-
-	if (operand->m_Kind != JMIR_OPERAND_REGISTER && operand->m_Kind != JMIR_OPERAND_MEMORY_REF && operand->m_Kind != JMIR_OPERAND_STACK_OBJECT) {
-		jx_mir_operand_t* tmp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, operand->m_Type);
-		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, tmp, operand));
-		operand = tmp;
-	}
+	JX_CHECK(targetType > operand->m_Type, "Expected target type to be larger than operand type!");
 
 	jx_mir_operand_t* resReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, targetType);
 	jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movsx(ctx->m_MIRCtx, resReg, operand));
@@ -1828,6 +1824,7 @@ static bool jmirgen_genMov(jx_mirgen_context_t* ctx, jx_mir_operand_t* dst, jx_m
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movsd(ctx->m_MIRCtx, dst, src));
 		} else {
 			JX_CHECK(false, "Unknown floating point type");
+			return false;
 		}
 	} else {
 		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, dst, src));
