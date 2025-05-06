@@ -781,9 +781,9 @@ static jx_cc_ast_expr_t* jcc_astAllocExprUnary(jx_cc_context_t* ctx, jx_cc_ast_n
 	return &node->super;
 }
 
-static jx_cc_ast_expr_t* jcc_astAllocExprIConst(jx_cc_context_t* ctx, int64_t val, jx_cc_type_t* type, jx_cc_token_t* tok)
+static jx_cc_ast_expr_t* jcc_astAllocExprIConst(jx_cc_context_t* ctx, int64_t val, jx_cc_token_t* tok)
 {
-	jx_cc_ast_expr_iconst_t* node = (jx_cc_ast_expr_iconst_t*)jcc_astAllocExpr(ctx, JCC_NODE_NUMBER, tok, type, sizeof(jx_cc_ast_expr_iconst_t));
+	jx_cc_ast_expr_iconst_t* node = (jx_cc_ast_expr_iconst_t*)jcc_astAllocExpr(ctx, JCC_NODE_NUMBER, tok, NULL, sizeof(jx_cc_ast_expr_iconst_t));
 	if (!node) {
 		return NULL;
 	}
@@ -795,12 +795,26 @@ static jx_cc_ast_expr_t* jcc_astAllocExprIConst(jx_cc_context_t* ctx, int64_t va
 
 static jx_cc_ast_expr_t* jcc_astAllocExprIConst_long(jx_cc_context_t* ctx, int64_t val, jx_cc_token_t* tok)
 {
-	return jcc_astAllocExprIConst(ctx, val, kType_long, tok);
+	jx_cc_ast_expr_t* expr = jcc_astAllocExprIConst(ctx, val, tok);
+	if (!expr) {
+		return NULL;
+	}
+
+	expr->m_Type = kType_long;
+
+	return expr;
 }
 
 static jx_cc_ast_expr_t* jcc_astAllocExprIConst_ulong(jx_cc_context_t* ctx, uint64_t val, jx_cc_token_t* tok)
 {
-	return jcc_astAllocExprIConst(ctx, (int64_t)val, kType_ulong, tok);
+	jx_cc_ast_expr_t* expr = jcc_astAllocExprIConst(ctx, (int64_t)val, tok);
+	if (!expr) {
+		return NULL;
+	}
+
+	expr->m_Type = kType_ulong;
+
+	return expr;
 }
 
 static jx_cc_ast_expr_t* jcc_astAllocExprFConst(jx_cc_context_t* ctx, double val, jx_cc_type_t* type, jx_cc_token_t* tok)
@@ -1055,7 +1069,7 @@ static jx_cc_ast_expr_t* jcc_astAllocExprSub(jx_cc_context_t* ctx, jx_cc_ast_exp
 		node = jcc_astAllocExprBinary(ctx
 			, JCC_NODE_EXPR_DIV
 			, sub
-			, jcc_astAllocExprIConst(ctx, lhs->m_Type->m_BaseType->m_Size, kType_long, tok)
+			, jcc_astAllocExprIConst(ctx, lhs->m_Type->m_BaseType->m_Size, tok)
 			, tok
 		);
 	}
@@ -2582,7 +2596,7 @@ static bool jcc_parseStringInitializer(jx_cc_context_t* ctx, jcc_translation_uni
 	case 1: {
 		const char* str = tok->m_Val_string;
 		for (int i = 0; i < len; i++) {
-			jx_cc_ast_expr_t* constExpr = jcc_astAllocExprIConst(ctx, (int64_t)str[i], kType_int, tok);
+			jx_cc_ast_expr_t* constExpr = jcc_astAllocExprIConst(ctx, (int64_t)str[i], tok);
 			if (!constExpr) {
 				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return false;
@@ -2594,7 +2608,7 @@ static bool jcc_parseStringInitializer(jx_cc_context_t* ctx, jcc_translation_uni
 	case 2: {
 		const uint16_t* str = (const uint16_t*)tok->m_Val_string;
 		for (int i = 0; i < len; i++) {
-			jx_cc_ast_expr_t* constExpr = jcc_astAllocExprIConst(ctx, (int64_t)str[i], kType_int, tok);
+			jx_cc_ast_expr_t* constExpr = jcc_astAllocExprIConst(ctx, (int64_t)str[i], tok);
 			if (!constExpr) {
 				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return false;
@@ -2606,7 +2620,7 @@ static bool jcc_parseStringInitializer(jx_cc_context_t* ctx, jcc_translation_uni
 	case 4: {
 		const uint32_t* str = (const uint32_t*)tok->m_Val_string;
 		for (int i = 0; i < len; i++) {
-			jx_cc_ast_expr_t* constExpr = jcc_astAllocExprIConst(ctx, (int64_t)str[i], kType_int, tok);
+			jx_cc_ast_expr_t* constExpr = jcc_astAllocExprIConst(ctx, (int64_t)str[i], tok);
 			if (!constExpr) {
 				jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 				return false;
@@ -3376,7 +3390,7 @@ static jx_cc_ast_expr_t* jcc_astInitDesgExpr(jx_cc_context_t* ctx, jcc_translati
 			, JCC_NODE_EXPR_DEREF
 			, jcc_astAllocExprAdd(ctx
 				, jcc_astInitDesgExpr(ctx, tu, desg->m_Next, tok)
-				, jcc_astAllocExprIConst(ctx, desg->m_ID, kType_int, tok)
+				, jcc_astAllocExprIConst(ctx, desg->m_ID, tok)
 				, tok)
 			, tok
 		);
@@ -5288,11 +5302,11 @@ static jx_cc_ast_expr_t* jcc_parseUnary(jx_cc_context_t* ctx, jcc_translation_un
 	} else if (jcc_tokExpect(&tok, JCC_TOKEN_INC)) {
 		// Read ++i as i+=1
 		// TODO: Constant type should be the same as the unary expression's type?
-		node = jcc_astConvertToAssign(ctx, tu, jcc_astAllocExprAdd(ctx, jcc_parseUnary(ctx, tu, &tok), jcc_astAllocExprIConst(ctx, 1, kType_int, tok), tok));
+		node = jcc_astConvertToAssign(ctx, tu, jcc_astAllocExprAdd(ctx, jcc_parseUnary(ctx, tu, &tok), jcc_astAllocExprIConst(ctx, 1, tok), tok));
 	} else if (jcc_tokExpect(&tok, JCC_TOKEN_DEC)) {
 		// Read --i as i-=1
 		// TODO: Constant type should be the same as the unary expression's type?
-		node = jcc_astConvertToAssign(ctx, tu, jcc_astAllocExprSub(ctx, jcc_parseUnary(ctx, tu, &tok), jcc_astAllocExprIConst(ctx, 1, kType_int, tok), tok));
+		node = jcc_astConvertToAssign(ctx, tu, jcc_astAllocExprSub(ctx, jcc_parseUnary(ctx, tu, &tok), jcc_astAllocExprIConst(ctx, 1, tok), tok));
 	} else {
 		node = jcc_parsePostfix(ctx, tu, &tok);
 	}
@@ -5766,10 +5780,10 @@ static jx_cc_ast_expr_t* jcc_astAllocIncDecNode(jx_cc_context_t* ctx, jcc_transl
 			, jcc_astConvertToAssign(ctx, tu
 				, jcc_astAllocExprAdd(ctx
 					, node
-					, jcc_astAllocExprIConst(ctx, addend, kType_int, tok) // TODO: Constant type same as node's type?
+					, jcc_astAllocExprIConst(ctx, addend, tok)
 					, tok
 				))
-			, jcc_astAllocExprIConst(ctx, -addend, kType_int, tok) // TODO: Constant type same as node's type?
+			, jcc_astAllocExprIConst(ctx, -addend, tok)
 			, tok)
 		, node->m_Type)
 		;
@@ -6303,7 +6317,7 @@ static jx_cc_ast_expr_t* jcc_parsePrimaryExpression(jx_cc_context_t* ctx, jcc_tr
 			if (sc->m_Var) {
 				node = jcc_astAllocExprVar(ctx, sc->m_Var, tok);
 			} else if (sc->m_Enum) {
-				node = jcc_astAllocExprIConst(ctx, sc->m_EnumValue, kType_int, tok);
+				node = jcc_astAllocExprIConst(ctx, sc->m_EnumValue, tok);
 			}
 		}
 		
@@ -6323,7 +6337,8 @@ static jx_cc_ast_expr_t* jcc_parsePrimaryExpression(jx_cc_context_t* ctx, jcc_tr
 		if (jx_cc_typeIsFloat(tok->m_Type)) {
 			node = jcc_astAllocExprFConst(ctx, tok->m_Val_float, tok->m_Type, tok);
 		} else {
-			node = jcc_astAllocExprIConst(ctx, tok->m_Val_int, tok->m_Type, tok);
+			node = jcc_astAllocExprIConst(ctx, tok->m_Val_int, tok);
+			node->m_Type = tok->m_Type;
 		}
 		
 		if (!node) {
@@ -7945,6 +7960,121 @@ static bool jcc_convertPreprocessorInteger(jx_cc_token_t* tok)
 
 	int64_t val = jx_strto_int(p, UINT32_MAX, &p, base, INT64_MAX);
 
+#if 1
+	uint32_t num_l = 0;
+	bool u = false;
+	if (jx_tolower(p[0]) == 'u') {
+		// u, ul, ull
+		++p;
+		u = true;
+
+		if (jx_tolower(p[0]) == 'l') {
+			if (p[1] == p[0]) {
+				p += 2;
+				num_l = 2;
+			} else {
+				++p;
+				num_l = 1;
+			}
+		}
+	} else if (jx_tolower(p[0]) == 'l') {
+		num_l = 1;
+
+		if (p[0] == p[1]) {
+			p += 2;
+			num_l = 2;
+			if (jx_tolower(p[0] == 'u')) {
+				u = true;
+				++p;
+			}
+		} else {
+			++p;
+			if (jx_tolower(p[0]) == 'u') {
+				u = true;
+				p++;
+			}
+		}
+	}
+
+	if (*p != '\0') {
+		return false;
+	}
+
+	// Infer a type.
+	jx_cc_type_t* ty = kType_int;
+	if (base == 10) {
+		if (num_l != 0 && u) {
+#if JCC_CONFIG_LLP64
+			ty = num_l == 1 ? kType_uint : kType_ulong;
+#else
+			ty = kType_ulong;
+#endif
+		} else if (num_l != 0) {
+#if JCC_CONFIG_LLP64
+			ty = num_l == 1 ? kType_int : kType_long;
+#else
+			ty = kType_long;
+#endif
+		} else if (u) {
+			ty = (val >> 32)
+				? kType_ulong
+				: kType_uint
+				;
+		} else {
+#if JCC_CONFIG_LLP64
+			ty = (val >> 32)
+				? kType_long
+				: kType_int
+				;
+#else
+			ty = (val >> 31)
+				? kType_long
+				: kType_int
+				;
+#endif
+		}
+	} else {
+		if (num_l != 0 && u) {
+#if JCC_CONFIG_LLP64
+			ty = num_l == 1 ? kType_uint : kType_ulong;
+#else
+			ty = kType_ulong;
+#endif
+		} else if (num_l != 0) {
+#if JCC_CONFIG_LLP64
+			if (num_l == 1) {
+				ty = (val >> 31)
+					? kType_uint
+					: kType_int
+					;
+			} else {
+				ty = (val >> 63)
+					? kType_ulong
+					: kType_long
+					;
+			}
+#else
+			ty = (val >> 63)
+				? kType_ulong
+				: kType_long
+				;
+#endif
+		} else if (u) {
+			ty = (val >> 32)
+				? kType_ulong
+				: kType_uint
+				;
+		} else if (val >> 63) {
+			ty = kType_ulong;
+		} else if (val >> 32) {
+			ty = kType_long;
+		} else if (val >> 31) {
+			ty = kType_uint;
+		} else {
+			ty = kType_int;
+		}
+	}
+#else
 	// Read U, L or LL suffixes.
 	bool l = false;
 	bool u = false;
@@ -8034,6 +8164,7 @@ static bool jcc_convertPreprocessorInteger(jx_cc_token_t* tok)
 			ty = kType_int;
 		}
 	}
+#endif
 
 	tok->m_Kind = JCC_TOKEN_NUMBER;
 	tok->m_Val_int = val;
