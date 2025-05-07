@@ -805,7 +805,7 @@ int main(int argc, char** argv)
 			|| iTest == 152 // #line+#error
 			|| iTest == 162 // const/static/volatile/restrict in array declaration
 			|| iTest == 170 // forward enum
-			|| iTest == 174 // math.h functions
+//			|| iTest == 174 // math.h functions
 			|| iTest == 179 // string.h functions
 			|| iTest == 180 // string.h functions
 			|| iTest == 187 // file functions
@@ -889,7 +889,7 @@ int main(int argc, char** argv)
 #elif 1
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-	const char* sourceFile = "test/c-testsuite/00175.c";
+	const char* sourceFile = "test/c-testsuite/00174.c";
 //	const char* sourceFile = "test/float_conv.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);

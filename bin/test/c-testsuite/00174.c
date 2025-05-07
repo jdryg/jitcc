@@ -1,5 +1,7 @@
-#include <stdio.h>
-#include <math.h>
+//#include <stdio.h>
+//#include <math.h>
+int printf(const char* str, ...);
+double sin(double x);
 
 int main()
 {

@@ -1,7 +1,4 @@
 // IR generator: Converts jcc AST into IR.
-// TODO: 
-// - float constants (JCC_NODE_NUMBER)
-// - bitfields
 #include "jir_gen.h"
 #include "jir.h"
 #include "jcc.h"
@@ -1662,37 +1659,59 @@ static jx_ir_type_t* jirgenUsualArithmeticConversions(jx_irgen_context_t* ctx, j
 
 static jx_ir_value_t* jirgenConvertType(jx_irgen_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* type)
 {
-	JX_CHECK(jx_ir_typeIsIntegral(val->m_Type), "Can only convert integral values.");
-	JX_CHECK(jx_ir_typeIsIntegral(type), "Can only convert to integral types.");
-
 	if (type->m_Kind == JIR_TYPE_BOOL) {
 		return jirgenConvertToBool(ctx, val);
 	}
 
-	const uint32_t valSz = (uint32_t)jx_ir_typeGetSize(val->m_Type);
-	const uint32_t typeSz = (uint32_t)jx_ir_typeGetSize(type);
+	const bool valTypeIsIntegral = jx_ir_typeIsIntegral(val->m_Type);
+	const bool valTypeIsFloat = jx_ir_typeIsFloatingPoint(val->m_Type);
+	const bool typeIsInteral = jx_ir_typeIsIntegral(type);
+	const bool typeIsFloat = jx_ir_typeIsFloatingPoint(type);
+	if (valTypeIsIntegral && typeIsInteral) {
+		const uint32_t valSz = (uint32_t)jx_ir_typeGetSize(val->m_Type);
+		const uint32_t typeSz = (uint32_t)jx_ir_typeGetSize(type);
 
-	if (typeSz > valSz) {
-		// Extension
-		if (jx_ir_typeIsUnsigned(val->m_Type)) {
-			jx_ir_instruction_t* zextInstr = jx_ir_instrZeroExt(ctx->m_IRCtx, val, type);
-			jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, zextInstr);
-			val = jx_ir_instrToValue(zextInstr);
+		if (typeSz > valSz) {
+			// Extension
+			if (jx_ir_typeIsUnsigned(val->m_Type)) {
+				jx_ir_instruction_t* zextInstr = jx_ir_instrZeroExt(ctx->m_IRCtx, val, type);
+				jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, zextInstr);
+				val = jx_ir_instrToValue(zextInstr);
+			} else {
+				jx_ir_instruction_t* sextInstr = jx_ir_instrSignExt(ctx->m_IRCtx, val, type);
+				jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, sextInstr);
+				val = jx_ir_instrToValue(sextInstr);
+			}
+		} else if (typeSz < valSz) {
+			// Truncation
+			jx_ir_instruction_t* truncInstr = jx_ir_instrTrunc(ctx->m_IRCtx, val, type);
+			jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, truncInstr);
+			val = jx_ir_instrToValue(truncInstr);
 		} else {
-			jx_ir_instruction_t* sextInstr = jx_ir_instrSignExt(ctx->m_IRCtx, val, type);
-			jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, sextInstr);
-			val = jx_ir_instrToValue(sextInstr);
+			// Bitcast
+			jx_ir_instruction_t* bitcastInstr = jx_ir_instrBitcast(ctx->m_IRCtx, val, type);
+			jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, bitcastInstr);
+			val = jx_ir_instrToValue(bitcastInstr);
 		}
-	} else if (typeSz < valSz) {
-		// Truncation
-		jx_ir_instruction_t* truncInstr = jx_ir_instrTrunc(ctx->m_IRCtx, val, type);
-		jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, truncInstr);
-		val = jx_ir_instrToValue(truncInstr);
+	} else if (valTypeIsFloat && typeIsFloat) {
+		// F32 to F64 or F64 to F32
+		if (val->m_Type->m_Kind == JIR_TYPE_F32 && type->m_Kind == JIR_TYPE_F64) {
+			jx_ir_instruction_t* fpextInstr = jx_ir_instrFPExt(ctx->m_IRCtx, val, type);
+			jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, fpextInstr);
+			val = jx_ir_instrToValue(fpextInstr);
+		} else if (val->m_Type->m_Kind == JIR_TYPE_F64 && type->m_Kind == JIR_TYPE_F32) {
+			jx_ir_instruction_t* fpextInstr = jx_ir_instrFPTrunc(ctx->m_IRCtx, val, type);
+			jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, fpextInstr);
+			val = jx_ir_instrToValue(fpextInstr);
+		} else {
+			JX_CHECK(val->m_Type->m_Kind == type->m_Kind, "Unknown floating point conversion");
+		}
+	} else if (valTypeIsIntegral && typeIsFloat) {
+		JX_NOT_IMPLEMENTED();
+	} else if (valTypeIsFloat && typeIsInteral) {
+		JX_NOT_IMPLEMENTED();
 	} else {
-		// Bitcast
-		jx_ir_instruction_t* bitcastInstr = jx_ir_instrBitcast(ctx->m_IRCtx, val, type);
-		jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, bitcastInstr);
-		val = jx_ir_instrToValue(bitcastInstr);
+		JX_CHECK(false, "Unknown type conversion.");
 	}
 
 	return val;

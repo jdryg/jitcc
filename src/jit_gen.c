@@ -469,6 +469,11 @@ bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
 			jx64_symbolSetExternalAddress(jitCtx, sinfSymbol, (void*)sinf);
 		}
 
+		jx_x64_symbol_t* sinSymbol = jx64_symbolGetByName(jitCtx, "sin");
+		if (sinSymbol) {
+			jx64_symbolSetExternalAddress(jitCtx, sinSymbol, (void*)sin);
+		}
+
 		jx_x64_symbol_t* func1Symbol = jx64_symbolGetByName(jitCtx, "func1");
 		if (func1Symbol) {
 			jx64_symbolSetExternalAddress(jitCtx, func1Symbol, (void*)func1);
