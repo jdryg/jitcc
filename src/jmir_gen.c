@@ -9,6 +9,9 @@
 #include <jlib/memory.h>
 #include <jlib/string.h>
 
+#define JX_MIRGEN_CONFIG_INLINE_MEMSET_LIMIT 128
+#define JX_MIRGEN_CONFIG_INLINE_MEMCPY_LIMIT 128
+
 typedef struct jmir_func_item_t
 {
 	jx_ir_function_t* m_IRFunc;
@@ -54,11 +57,6 @@ static jx_mir_operand_t* jmirgen_instrBuild_and(jx_mirgen_context_t* ctx, jx_ir_
 static jx_mir_operand_t* jmirgen_instrBuild_or(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
 static jx_mir_operand_t* jmirgen_instrBuild_xor(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
 static jx_mir_operand_t* jmirgen_instrBuild_setcc(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
-static jx_mir_operand_t* jmirgen_instrBuild_setcc(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
-static jx_mir_operand_t* jmirgen_instrBuild_setcc(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
-static jx_mir_operand_t* jmirgen_instrBuild_setcc(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
-static jx_mir_operand_t* jmirgen_instrBuild_setcc(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
-static jx_mir_operand_t* jmirgen_instrBuild_setcc(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
 static jx_mir_operand_t* jmirgen_instrBuild_alloca(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
 static jx_mir_operand_t* jmirgen_instrBuild_load(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
 static jx_mir_operand_t* jmirgen_instrBuild_store(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
@@ -81,6 +79,8 @@ static jx_mir_operand_t* jmirgen_instrBuild_ui2fp(jx_mirgen_context_t* ctx, jx_i
 static jx_mir_operand_t* jmirgen_instrBuild_si2fp(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
 static jx_mir_basic_block_t* jmirgen_getOrCreateBasicBlock(jx_mirgen_context_t* ctx, jx_ir_basic_block_t* irBB);
 static jx_mir_operand_t* jmirgen_getOperand(jx_mirgen_context_t* ctx, jx_ir_value_t* val);
+static bool jmirgen_genMemSet(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
+static bool jmirgen_genMemCpy(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
 static bool jmirgen_genMov(jx_mirgen_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 static jx_mir_operand_t* jmirgen_ensureOperandRegOrMem(jx_mirgen_context_t* ctx, jx_mir_operand_t* operand);
 static jx_mir_operand_t* jmirgen_ensureOperandReg(jx_mirgen_context_t* ctx, jx_mir_operand_t* operand);
@@ -1108,8 +1108,23 @@ static jx_mir_operand_t* jmirgen_instrBuild_call(jx_mirgen_context_t* ctx, jx_ir
 	const uint32_t numOperands = (uint32_t)jx_array_sizeu(irInstr->super.m_OperandArr);
 	jx_ir_value_t* funcPtrVal = irInstr->super.m_OperandArr[0]->m_Value;
 
-	// TODO: If funcPtrVal->m_Name is a build-in/intrinsic function, handle it here before generating
+	// If funcPtrVal->m_Name is a build-in/intrinsic function, handle it here before generating
 	// any code for the actual call. E.g. replace memset/memcpy with movs, etc.
+	const char* funcName = funcPtrVal->m_Name;
+	if (!jx_strncmp(funcName, "jir.", 4)) {
+		// Intrinsic function
+		if (!jx_strncmp(funcName, "jir.memset.", 11)) {
+			if (jmirgen_genMemSet(ctx, irInstr)) {
+				return NULL;
+			}
+		} else if (!jx_strncmp(funcName, "jir.memcpy.", 11)) {
+			if (jmirgen_genMemCpy(ctx, irInstr)) {
+				return NULL;
+			}
+		} else {
+			JX_CHECK(false, "Unknown intrinsic function");
+		}
+	}
 
 	jx_ir_type_pointer_t* funcPtrType = jx_ir_typeToPointer(funcPtrVal->m_Type);
 	JX_CHECK(funcPtrType, "Expected pointer to function");
@@ -1800,6 +1815,101 @@ static jx_mir_operand_t* jmirgen_getOperand(jx_mirgen_context_t* ctx, jx_ir_valu
 	JX_CHECK(operand, "Failed to find operand for value!");
 
 	return operand;
+}
+
+static bool jmirgen_genMemSet(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr)
+{
+	jx_ir_value_t* ptrVal = irInstr->super.m_OperandArr[1]->m_Value;
+	jx_ir_value_t* valVal = irInstr->super.m_OperandArr[2]->m_Value;
+	jx_ir_value_t* sizeVal = irInstr->super.m_OperandArr[3]->m_Value;
+
+	// TODO: Do the same even if value is not constant or not 0 (imul val_reg64, 0x0101010101010101).
+	// TODO: Try rep stosb for larger sizes (e.g. 128 to 512 bytes) if ERMSB is supported.
+	jx_ir_constant_t* valConst = jx_ir_valueToConst(valVal);
+	jx_ir_constant_t* sizeConst = jx_ir_valueToConst(sizeVal);
+	if (valConst && sizeConst && valConst->u.m_I64 == 0 && sizeConst->u.m_I64 <= JX_MIRGEN_CONFIG_INLINE_MEMSET_LIMIT) {
+		// memset(ptr, 0, size);
+		int64_t sz = sizeConst->u.m_I64;
+
+		// xor rax, rax
+		jx_mir_operand_t* zeroReg64 = jx_mir_opHWReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64, kMIRRegGP_A);
+		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_xor(ctx->m_MIRCtx, zeroReg64, zeroReg64));
+
+		// lea vr, [ptr]
+		jx_mir_operand_t* ptrOp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
+		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, ptrOp, jmirgen_getOperand(ctx, ptrVal)));
+
+		int32_t offset = 0;
+		while (sz > 0) {
+			jx_mir_type_kind movType = JMIR_TYPE_I8;
+			if (sz >= 8) {
+				movType = JMIR_TYPE_I64;
+			} else if (sz >= 4) {
+				movType = JMIR_TYPE_I32;
+			} else if (sz >= 2) {
+				movType = JMIR_TYPE_I16;
+			}
+
+			// mov [vr + offset], rax/eax/ax/al
+			jx_mir_operand_t* zeroReg = jx_mir_opHWReg(ctx->m_MIRCtx, ctx->m_Func, movType, kMIRRegGP_A);
+			jx_mir_operand_t* memRef = jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, movType, ptrOp->u.m_Reg, kMIRRegGPNone, 1, offset);
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, memRef, zeroReg));
+
+			const uint32_t typeSz = jx_mir_typeGetSize(movType);
+			sz -= typeSz;
+			offset += typeSz;
+		}
+
+		return true;
+	}
+
+	return false;
+}
+
+static bool jmirgen_genMemCpy(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr)
+{
+	jx_ir_constant_t* sizeConst = jx_ir_valueToConst(irInstr->super.m_OperandArr[3]->m_Value);
+	if (sizeConst && sizeConst->u.m_I64 <= JX_MIRGEN_CONFIG_INLINE_MEMCPY_LIMIT) {
+		int64_t sz = sizeConst->u.m_I64;
+		
+		// lea dst_vr, [dstPtr]
+		jx_mir_operand_t* dstOp = jmirgen_getOperand(ctx, irInstr->super.m_OperandArr[1]->m_Value);
+		jx_mir_operand_t* dstPtrOp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
+		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstPtrOp, dstOp));
+
+		// lea src_vr, [srcPtr]
+		jx_mir_operand_t* srcOp = jmirgen_getOperand(ctx, irInstr->super.m_OperandArr[2]->m_Value);
+		jx_mir_operand_t* srcPtrOp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
+		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, srcPtrOp, srcOp));
+
+		int32_t offset = 0;
+		while (sz > 0) {
+			jx_mir_type_kind movType = JMIR_TYPE_I8;
+			if (sz >= 8) {
+				movType = JMIR_TYPE_I64;
+			} else if (sz >= 4) {
+				movType = JMIR_TYPE_I32;
+			} else if (sz >= 2) {
+				movType = JMIR_TYPE_I16;
+			}
+
+			// mov tmp, [src_vr + offset]
+			// mov [dst_vr + offset], tmp
+			jx_mir_operand_t* tmpReg = jx_mir_opHWReg(ctx->m_MIRCtx, ctx->m_Func, movType, kMIRRegGP_A);
+			jx_mir_operand_t* srcMemRef = jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, movType, srcPtrOp->u.m_Reg, kMIRRegGPNone, 1, offset);
+			jx_mir_operand_t* dstMemRef = jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, movType, dstPtrOp->u.m_Reg, kMIRRegGPNone, 1, offset);
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, tmpReg, srcMemRef));
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, dstMemRef, tmpReg));
+
+			const uint32_t typeSz = jx_mir_typeGetSize(movType);
+			sz -= typeSz;
+			offset += typeSz;
+		}
+
+		return true; // memcpy call handled. 
+	}
+
+	return false; // let the caller generate a call to CRT's memcpy
 }
 
 static bool jmirgen_genMov(jx_mirgen_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)

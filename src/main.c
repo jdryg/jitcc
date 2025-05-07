@@ -787,7 +787,7 @@ int main(int argc, char** argv)
 
 	jx_allocator_i* allocator = allocator_api->createAllocator("jcc");
 
-#if 0
+#if 1
 	uint32_t totalTests = 0;
 	uint32_t numSkipped = 0;
 	uint32_t numPass = 0;
