@@ -2106,6 +2106,10 @@ static bool jx64_math_binary_op(jx_x64_context_t* ctx, uint8_t opcode_imm, uint8
 			}
 		}
 
+		if (src.u.m_ImmI64 >= INT8_MIN && src.u.m_ImmI64 <= INT8_MAX) {
+			immSize = JX64_SIZE_8;
+		}
+
 		if (!jx64_math_binary_op_reg_imm(enc, opcode_imm, modrm_reg, dst.u.m_Reg, src.u.m_ImmI64, immSize)) {
 			return false;
 		}
