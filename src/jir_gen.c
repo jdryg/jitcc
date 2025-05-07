@@ -514,7 +514,7 @@ static bool jirgenGenStatement(jx_irgen_context_t* ctx, jx_cc_ast_stmt_t* stmt)
 			jx_cc_type_t* exprType = retNode->m_Expr->m_Type;
 
 			if (exprType->m_Kind == JCC_TYPE_STRUCT || exprType->m_Kind == JCC_TYPE_UNION) {
-				const bool hasBeenConvertedToPtr = !jx_ir_typeIsSmallPow2Struct(exprType);
+				const bool hasBeenConvertedToPtr = !jx_ir_typeIsSmallPow2Struct(jccTypeToIRType(ctx, exprType));
 				if (hasBeenConvertedToPtr) {
 					// Copy retVal to hidden 1st function argument and return that pointer.
 					jx_ir_argument_t* retBufArg = jx_ir_funcGetArgument(irctx, ctx->m_Func, 0);
@@ -1094,6 +1094,50 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 			// TODO: Check all possible struct sizes. This code assumes that the struct does not fit in a
 			// register so it has to be converted to pointer.
 			jx_cc_type_t* ccArgType = argExpr->m_Type;
+#if 1
+			jx_ir_type_t* argType = jccTypeToIRType(ctx, ccArgType);
+			if (jx_ir_typeIsSmallPow2Struct(argType)) {
+				JX_CHECK(jx_ir_typeToPointer(argVal->m_Type), "Argument value expected to have pointer type!");
+
+				const uint32_t structSize = (uint32_t)jx_ir_typeGetSize(argType);
+				jx_ir_type_t* trueArgType = NULL;
+				if (structSize == 1) {
+					trueArgType = jx_ir_typeGetPrimitive(ctx->m_IRCtx, JIR_TYPE_I8);
+				} else if (structSize == 2) {
+					trueArgType = jx_ir_typeGetPrimitive(ctx->m_IRCtx, JIR_TYPE_I16);
+				} else if (structSize == 4) {
+					trueArgType = jx_ir_typeGetPrimitive(ctx->m_IRCtx, JIR_TYPE_I32);
+				} else {
+					JX_CHECK(structSize == 8, "Invalid struct size; shouldn't have landed here!");
+					trueArgType = jx_ir_typeGetPrimitive(ctx->m_IRCtx, JIR_TYPE_I64);
+				}
+
+				JX_CHECK(trueArgType != NULL, "Something went really wrong!");
+				jx_ir_type_t* trueArgTypePtr = jx_ir_typeGetPointer(ctx->m_IRCtx, trueArgType);
+
+				jx_ir_value_t* gepIndices[2] = {
+					jx_ir_constToValue(jx_ir_constGetI32(irctx, 0)),
+					jx_ir_constToValue(jx_ir_constGetI32(irctx, 0)),
+				};
+
+				jx_ir_instruction_t* gepInstr = jx_ir_instrGetElementPtr(ctx->m_IRCtx, argVal, 2, gepIndices);
+				jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, gepInstr);
+
+				jx_ir_instruction_t* bitcastInstr = jx_ir_instrBitcast(ctx->m_IRCtx, jx_ir_instrToValue(gepInstr), trueArgTypePtr);
+				jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, bitcastInstr);
+
+				jx_ir_instruction_t* loadInstr = jx_ir_instrLoad(ctx->m_IRCtx, trueArgType, jx_ir_instrToValue(bitcastInstr));
+				jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, loadInstr);
+
+				argVal = jx_ir_instrToValue(loadInstr);
+			} else if (argType->m_Kind == JIR_TYPE_STRUCT) {
+				JX_CHECK(jx_ir_typeToPointer(argVal->m_Type), "Argument value expected to have pointer type!");
+				jx_ir_instruction_t* tmpAlloca = jx_ir_instrAlloca(irctx, argType, NULL);
+				jx_ir_bbPrependInstr(irctx, ctx->m_Func->m_BasicBlockListHead, tmpAlloca);
+				jirgenGenMemCopy(ctx, jx_ir_instrToValue(tmpAlloca), argVal);
+				argVal = jx_ir_instrToValue(tmpAlloca);
+			}
+#else
 			if (ccArgType->m_Kind == JCC_TYPE_STRUCT) {
 				JX_CHECK(jx_ir_typeToPointer(argVal->m_Type), "Argument value expected to have pointer type!");
 				jx_ir_instruction_t* tmpAlloca = jx_ir_instrAlloca(irctx, jccTypeToIRType(ctx, ccArgType), NULL);
@@ -1107,6 +1151,7 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 			} else if (ccArgType->m_Kind == JCC_TYPE_FUNC) {
 //				JX_NOT_IMPLEMENTED();
 			}
+#endif
 
 			// default argument promotions
 			if (isVariadic && iArg >= numFuncArgs) {
@@ -1845,6 +1890,11 @@ static jx_ir_type_t* jccFuncArgGetType(jx_irgen_context_t* ctx, jx_cc_type_t* cc
 
 	jx_ir_type_t* argType = jccTypeToIRType(ctx, ccType);
 
+#if 1
+	if (argType->m_Kind == JIR_TYPE_STRUCT && !jx_ir_typeIsSmallPow2Struct(argType)) {
+		return jx_ir_typeGetPointer(irctx, argType);
+	}
+#else
 	if (ccType->m_Kind == JCC_TYPE_STRUCT || ccType->m_Kind == JCC_TYPE_UNION) {
 		const bool shouldConvertToPtr = false
 			|| ccType->m_Size > 8
@@ -1854,6 +1904,7 @@ static jx_ir_type_t* jccFuncArgGetType(jx_irgen_context_t* ctx, jx_cc_type_t* cc
 			return jx_ir_typeGetPointer(irctx, argType);
 		}
 	}
+#endif
 
 	return argType;
 }
