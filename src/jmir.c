@@ -348,6 +348,24 @@ jx_mir_context_t* jx_mir_createContext(jx_allocator_i* allocator)
 			}
 		}
 
+		// Remove redundant consts
+		{
+			jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_pass_t));
+			if (!pass) {
+				jx_mir_destroyContext(ctx);
+				return NULL;
+			}
+
+			jx_memset(pass, 0, sizeof(jx_mir_function_pass_t));
+			if (!jx_mir_funcPassCreate_redundantConstElimination(pass, ctx->m_Allocator)) {
+				JX_CHECK(false, "Failed to initialize function pass!");
+				JX_FREE(ctx->m_Allocator, pass);
+			} else {
+				cur->m_Next = pass;
+				cur = cur->m_Next;
+			}
+		}
+
 		// Simplify conditional jumps
 		// NOTE: Rerun this pass because the register allocator + the removal of redundant moves might have
 		// created more opportunities for conditional jump simplifications.

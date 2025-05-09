@@ -3310,6 +3310,304 @@ static bool jmir_dce_isMoveInstr(jmir_dce_instr_info_t* instrInfo)
 }
 
 //////////////////////////////////////////////////////////////////////////
+// Redundant Const Elimination 
+//
+typedef struct jmir_func_pass_rce_t
+{
+	jx_allocator_i* m_Allocator;
+	jx_hashmap_t* m_RegConstMap;
+} jmir_func_pass_rce_t;
+
+static void jmir_funcPass_redundantConstEliminationDestroy(jx_mir_function_pass_o* inst, jx_allocator_i* allocator);
+static bool jmir_funcPass_redundantConstEliminationRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func);
+
+bool jx_mir_funcPassCreate_redundantConstElimination(jx_mir_function_pass_t* pass, jx_allocator_i* allocator)
+{
+	jmir_func_pass_rce_t* inst = (jmir_func_pass_rce_t*)JX_ALLOC(allocator, sizeof(jmir_func_pass_rce_t));
+	if (!inst) {
+		return false;
+	}
+
+	jx_memset(inst, 0, sizeof(jmir_func_pass_rce_t));
+	inst->m_Allocator = allocator;
+
+	inst->m_RegConstMap = jx_hashmapCreate(allocator, sizeof(jmir_reg_value_item_t), 64, 0, 0, jir_regValueItemHash, jir_regValueItemCompare, NULL, NULL);
+	if (!inst->m_RegConstMap) {
+		jmir_funcPass_redundantConstEliminationDestroy((jx_mir_function_pass_o*)inst, allocator);
+		return false;
+	}
+
+	pass->m_Inst = (jx_mir_function_pass_o*)inst;
+	pass->run = jmir_funcPass_redundantConstEliminationRun;
+	pass->destroy = jmir_funcPass_redundantConstEliminationDestroy;
+
+	return true;
+}
+
+static void jmir_funcPass_redundantConstEliminationDestroy(jx_mir_function_pass_o* inst, jx_allocator_i* allocator)
+{
+	jmir_func_pass_rce_t* pass = (jmir_func_pass_rce_t*)inst;
+
+	if (pass->m_RegConstMap) {
+		jx_hashmapDestroy(pass->m_RegConstMap);
+		pass->m_RegConstMap = NULL;
+	}
+
+	JX_FREE(pass->m_Allocator, pass);
+}
+
+static bool jmir_funcPass_redundantConstEliminationRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
+{
+	jmir_func_pass_rce_t* pass = (jmir_func_pass_rce_t*)inst;
+
+	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
+	while (bb) {
+		jx_hashmapClear(pass->m_RegConstMap, false);
+
+		jx_mir_instruction_t* instr = bb->m_InstrListHead;
+		while (instr) {
+			jx_mir_instruction_t* instrNext = instr->m_Next;
+
+			switch (instr->m_OpCode) {
+			case JMIR_OP_RET:
+			case JMIR_OP_CMP:
+			case JMIR_OP_TEST:
+			case JMIR_OP_JMP:
+			case JMIR_OP_PHI: 
+			case JMIR_OP_PUSH:
+			case JMIR_OP_POP: 
+			case JMIR_OP_JO:
+			case JMIR_OP_JNO:
+			case JMIR_OP_JB:
+			case JMIR_OP_JNB:
+			case JMIR_OP_JE:
+			case JMIR_OP_JNE:
+			case JMIR_OP_JBE:
+			case JMIR_OP_JNBE:
+			case JMIR_OP_JS:
+			case JMIR_OP_JNS:
+			case JMIR_OP_JP:
+			case JMIR_OP_JNP:
+			case JMIR_OP_JL:
+			case JMIR_OP_JNL:
+			case JMIR_OP_JLE:
+			case JMIR_OP_JNLE: 
+			case JMIR_OP_COMISS:
+			case JMIR_OP_COMISD:
+			case JMIR_OP_UCOMISS:
+			case JMIR_OP_UCOMISD: {
+				// Nop; no register is affected
+			} break;
+
+			case JMIR_OP_MOV: 
+			case JMIR_OP_MOVSS:
+			case JMIR_OP_MOVSD: {
+				// mov reg, value
+				// If value is const and the same const is already stored in the specified reg, the 
+				// instruction is redundant and can be removed. If the value is a const but different 
+				// than what's is already stored, update the map with the new const. Otherwise, remove
+				// the entry for this reg from the map.
+				jx_mir_operand_t* dstOp = instr->m_Operands[0];
+				jx_mir_operand_t* srcOp = instr->m_Operands[1];
+				if (dstOp->m_Kind == JMIR_OPERAND_REGISTER) {
+					if (srcOp->m_Kind == JMIR_OPERAND_CONST) {
+						// Check if the same constant has already been assigned to this register.
+						// If it is, the instruction is redundant.
+						jmir_reg_value_item_t* item = (jmir_reg_value_item_t*)jx_hashmapGet(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = dstOp->u.m_Reg});
+						if (item && item->m_Value->m_Type == srcOp->m_Type && item->m_Value->u.m_ConstI64 == srcOp->u.m_ConstI64) {
+							// Redundant instruction; remove.
+							jx_mir_bbRemoveInstr(ctx, bb, instr);
+							jx_mir_instrFree(ctx, instr);
+						} else {
+							jx_hashmapSet(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = dstOp->u.m_Reg, .m_Value = srcOp});
+						}
+					} else if (srcOp->m_Kind == JMIR_OPERAND_REGISTER) {
+						// Check if source reg is a constant. If it is, add the destination reg as constant to the map.
+						// Otherwise remove the destination reg from the map.
+						jmir_reg_value_item_t* item = (jmir_reg_value_item_t*)jx_hashmapGet(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = srcOp->u.m_Reg});
+						if (item) {
+							jx_hashmapSet(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = dstOp->u.m_Reg, .m_Value = item->m_Value});
+						} else {
+							jx_hashmapDelete(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = dstOp->u.m_Reg});
+						}
+					} else {
+						jx_hashmapDelete(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = dstOp->u.m_Reg});
+					}
+				}
+			} break;
+			case JMIR_OP_MOVSX:
+			case JMIR_OP_MOVZX:
+			case JMIR_OP_IMUL: 
+			case JMIR_OP_ADD:
+			case JMIR_OP_SUB:
+			case JMIR_OP_LEA:
+			case JMIR_OP_AND:
+			case JMIR_OP_OR:
+			case JMIR_OP_SAR:
+			case JMIR_OP_SHR:
+			case JMIR_OP_SHL: 
+			case JMIR_OP_SETO:
+			case JMIR_OP_SETNO:
+			case JMIR_OP_SETB:
+			case JMIR_OP_SETNB:
+			case JMIR_OP_SETE:
+			case JMIR_OP_SETNE:
+			case JMIR_OP_SETBE:
+			case JMIR_OP_SETNBE:
+			case JMIR_OP_SETS:
+			case JMIR_OP_SETNS:
+			case JMIR_OP_SETP:
+			case JMIR_OP_SETNP:
+			case JMIR_OP_SETL:
+			case JMIR_OP_SETNL:
+			case JMIR_OP_SETLE:
+			case JMIR_OP_SETNLE:
+			case JMIR_OP_MOVAPS:
+			case JMIR_OP_MOVAPD:
+			case JMIR_OP_MOVD:
+			case JMIR_OP_MOVQ:
+			case JMIR_OP_ADDPS:
+			case JMIR_OP_ADDSS:
+			case JMIR_OP_ADDPD:
+			case JMIR_OP_ADDSD:
+			case JMIR_OP_ANDNPS:
+			case JMIR_OP_ANDNPD:
+			case JMIR_OP_ANDPS:
+			case JMIR_OP_ANDPD:
+			case JMIR_OP_CVTSI2SS:
+			case JMIR_OP_CVTSI2SD:
+			case JMIR_OP_CVTSS2SI:
+			case JMIR_OP_CVTSD2SI:
+			case JMIR_OP_CVTTSS2SI:
+			case JMIR_OP_CVTTSD2SI:
+			case JMIR_OP_CVTSD2SS:
+			case JMIR_OP_CVTSS2SD:
+			case JMIR_OP_DIVPS:
+			case JMIR_OP_DIVSS:
+			case JMIR_OP_DIVPD:
+			case JMIR_OP_DIVSD:
+			case JMIR_OP_MAXPS:
+			case JMIR_OP_MAXSS:
+			case JMIR_OP_MAXPD:
+			case JMIR_OP_MAXSD:
+			case JMIR_OP_MINPS:
+			case JMIR_OP_MINSS:
+			case JMIR_OP_MINPD:
+			case JMIR_OP_MINSD:
+			case JMIR_OP_MULPS:
+			case JMIR_OP_MULSS:
+			case JMIR_OP_MULPD:
+			case JMIR_OP_MULSD:
+			case JMIR_OP_ORPS:
+			case JMIR_OP_ORPD:
+			case JMIR_OP_RCPPS:
+			case JMIR_OP_RCPSS:
+			case JMIR_OP_RSQRTPS:
+			case JMIR_OP_RSQRTSS:
+			case JMIR_OP_SQRTPS:
+			case JMIR_OP_SQRTSS:
+			case JMIR_OP_SQRTPD:
+			case JMIR_OP_SQRTSD:
+			case JMIR_OP_SUBPS:
+			case JMIR_OP_SUBSS:
+			case JMIR_OP_SUBPD:
+			case JMIR_OP_SUBSD:
+			case JMIR_OP_UNPCKHPS:
+			case JMIR_OP_UNPCKHPD:
+			case JMIR_OP_UNPCKLPS:
+			case JMIR_OP_UNPCKLPD:
+			case JMIR_OP_PUNPCKLBW:
+			case JMIR_OP_PUNPCKLWD:
+			case JMIR_OP_PUNPCKLDQ:
+			case JMIR_OP_PUNPCKLQDQ:
+			case JMIR_OP_PUNPCKHBW:
+			case JMIR_OP_PUNPCKHWD:
+			case JMIR_OP_PUNPCKHDQ:
+			case JMIR_OP_PUNPCKHQDQ: {
+				// Any binary operation which affects the first register operand should be removed from the map.
+				jx_mir_operand_t* dstOp = instr->m_Operands[0];
+				if (dstOp->m_Kind == JMIR_OPERAND_REGISTER) {
+					jx_hashmapDelete(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = dstOp->u.m_Reg});
+				}
+			} break;
+			case JMIR_OP_IDIV:
+			case JMIR_OP_DIV: {
+				// IDIV/DIV implicitly affect RAX and RDX. Remove them from the map.
+				jx_hashmapDelete(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = kMIRRegGP_A});
+				jx_hashmapDelete(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = kMIRRegGP_D});
+			} break;
+			case JMIR_OP_CALL: {
+				// Keep callee-saved regs because they will/should be preserved by the called function.
+				jx_mir_operand_t* calleeSavedIRegVal[JX_COUNTOF(kMIRFuncCalleeSavedIReg)] = { 0 };
+				jx_mir_operand_t* calleeSavedFRegVal[JX_COUNTOF(kMIRFuncCalleeSavedFReg)] = { 0 };
+
+				for (uint32_t iReg = 0; iReg < JX_COUNTOF(kMIRFuncCalleeSavedIReg); ++iReg) {
+					jmir_reg_value_item_t* item = (jmir_reg_value_item_t*)jx_hashmapGet(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = kMIRFuncCalleeSavedIReg[iReg]});
+					if (item) {
+						calleeSavedIRegVal[iReg] = item->m_Value;
+					}
+				}
+				for (uint32_t iReg = 0; iReg < JX_COUNTOF(kMIRFuncCalleeSavedFReg); ++iReg) {
+					jmir_reg_value_item_t* item = (jmir_reg_value_item_t*)jx_hashmapGet(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = kMIRFuncCalleeSavedFReg[iReg]});
+					if (item) {
+						calleeSavedFRegVal[iReg] = item->m_Value;
+					}
+				}
+
+				jx_hashmapClear(pass->m_RegConstMap, false);
+
+				for (uint32_t iReg = 0; iReg < JX_COUNTOF(kMIRFuncCalleeSavedIReg); ++iReg) {
+					if (calleeSavedIRegVal[iReg]) {
+						jx_hashmapSet(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = kMIRFuncCalleeSavedIReg[iReg], .m_Value = calleeSavedIRegVal[iReg]});
+					}
+				}
+				for (uint32_t iReg = 0; iReg < JX_COUNTOF(kMIRFuncCalleeSavedFReg); ++iReg) {
+					if (calleeSavedFRegVal[iReg]) {
+						jx_hashmapSet(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = kMIRFuncCalleeSavedFReg[iReg], .m_Value = calleeSavedFRegVal[iReg]});
+					}
+				}
+			} break;
+			case JMIR_OP_CDQ:
+			case JMIR_OP_CQO: {
+				// CDQ/CQO implicitly affect RDX
+				jx_hashmapDelete(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = kMIRRegGP_D});
+			} break;
+			case JMIR_OP_XOR:
+			case JMIR_OP_XORPS:
+			case JMIR_OP_XORPD: {
+				// Check for xor reg, reg and treat like mov reg, 0
+				jx_mir_operand_t* dstOp = instr->m_Operands[0];
+				jx_mir_operand_t* srcOp = instr->m_Operands[1];
+				if (dstOp->m_Kind == JMIR_OPERAND_REGISTER && srcOp->m_Kind == JMIR_OPERAND_REGISTER && jx_mir_regEqual(dstOp->u.m_Reg, srcOp->u.m_Reg)) {
+					// xor reg, reg
+					jmir_reg_value_item_t* item = (jmir_reg_value_item_t*)jx_hashmapGet(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = dstOp->u.m_Reg});
+					if (item && item->m_Value->m_Type == srcOp->m_Type && item->m_Value->u.m_ConstI64 == 0) {
+						// Redundant instruction; remove.
+						jx_mir_bbRemoveInstr(ctx, bb, instr);
+						jx_mir_instrFree(ctx, instr);
+					} else {
+						jx_mir_operand_t* zeroOp = jx_mir_opIConst(ctx, func, dstOp->m_Type, 0);
+						jx_hashmapSet(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = dstOp->u.m_Reg, .m_Value = zeroOp});
+					}
+				} else if (dstOp->m_Kind == JMIR_OPERAND_REGISTER) {
+					jx_hashmapDelete(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = dstOp->u.m_Reg});
+				}
+			} break;
+			default:
+				JX_CHECK(false, "Unknown mir opcode!");
+				break;
+			}
+
+			instr = instrNext;
+		}
+
+		bb = bb->m_Next;
+	}
+
+	return false;
+}
+
+//////////////////////////////////////////////////////////////////////////
 // Bitset
 //
 static jx_bitset_t* jx_bitsetCreate(uint32_t numBits, jx_allocator_i* allocator)
