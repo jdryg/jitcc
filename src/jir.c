@@ -3528,6 +3528,21 @@ jx_ir_constant_t* jx_ir_constGetF64(jx_ir_context_t* ctx, double val)
 	return ci;
 }
 
+jx_ir_constant_t* jx_ir_constGetFloat(jx_ir_context_t* ctx, jx_ir_type_kind type, double val)
+{
+	switch (type) {
+	case JIR_TYPE_F32:
+		return jx_ir_constGetF32(ctx, (float)val);
+	case JIR_TYPE_F64:
+		return jx_ir_constGetF64(ctx, val);
+	default:
+		JX_CHECK(false, "Unknown floating point type!");
+		break;
+	}
+
+	return NULL;
+}
+
 jx_ir_constant_t* jx_ir_constArray(jx_ir_context_t* ctx, jx_ir_type_t* type, uint32_t numValues, jx_ir_constant_t** values)
 {
 	JX_CHECK(type->m_Kind == JIR_TYPE_ARRAY, "Constant array type must be an array type");

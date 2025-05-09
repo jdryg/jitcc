@@ -674,7 +674,12 @@ bool jx64_movzx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 	}
 
 	if (dst.m_Size == JX64_SIZE_64 && src.m_Size == JX64_SIZE_32) {
-		return jx64_mov(ctx, dst, src);
+		if (dst.m_Type == JX64_OPERAND_REG && src.m_Type == JX64_OPERAND_REG && JX64_REG_GET_ID(dst.u.m_Reg) == JX64_REG_GET_ID(src.u.m_Reg)) {
+			// No-op.
+			return true;
+		} else {
+			return jx64_mov(ctx, dst, src);
+		}
 	}
 
 #if 0
@@ -2101,6 +2106,10 @@ static bool jx64_math_binary_op(jx_x64_context_t* ctx, uint8_t opcode_imm, uint8
 			}
 		}
 
+		if (src.u.m_ImmI64 >= INT8_MIN && src.u.m_ImmI64 <= INT8_MAX) {
+			immSize = JX64_SIZE_8;
+		}
+
 		if (!jx64_math_binary_op_reg_imm(enc, opcode_imm, modrm_reg, dst.u.m_Reg, src.u.m_ImmI64, immSize)) {
 			return false;
 		}
@@ -3008,18 +3017,29 @@ static bool jx64_binary_op_reg_mem(jx_x64_instr_encoding_t* enc, const uint8_t* 
 
 static bool jx64_mov_reg_imm(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, int64_t src_imm, jx_x64_size src_imm_sz)
 {
+	jx_x64_size true_src_imm_sz = src_imm_sz;
+	if (src_imm >= INT8_MIN && src_imm <= INT8_MAX) {
+		true_src_imm_sz = JX64_SIZE_8;
+	} else if (src_imm >= INT16_MIN && src_imm <= INT16_MAX) {
+		true_src_imm_sz = JX64_SIZE_16;
+	} else if (src_imm >= INT32_MIN && src_imm <= INT32_MAX) {
+		true_src_imm_sz = JX64_SIZE_32;
+	} else {
+		true_src_imm_sz = JX64_SIZE_64;
+	}
+
 	const jx_x64_size dst_r_sz = JX64_REG_GET_SIZE(dst_r);
 
 	const bool invalidOperands = false
 		|| dst_r == JX64_REG_NONE
 		|| JX64_REG_IS_RIP(dst_r)
-		|| (dst_r_sz != src_imm_sz && !(dst_r_sz == JX64_SIZE_64 && src_imm_sz == JX64_SIZE_32))
+		|| (dst_r_sz != src_imm_sz && !(dst_r_sz == JX64_SIZE_64 && true_src_imm_sz <= JX64_SIZE_32))
 		;
 	if (invalidOperands) {
 		return false;
 	}
 
-	if (dst_r_sz == JX64_SIZE_64 && src_imm_sz == JX64_SIZE_32) {
+	if (dst_r_sz == JX64_SIZE_64 && true_src_imm_sz <= JX64_SIZE_32) {
 		// Sign extend 32-bit immediate into 64-bit register
 		jx64_instrEnc_rex(enc, true, 1, 0, 0, JX64_REG_HI(dst_r));
 		jx64_instrEnc_opcode1(enc, 0xC7);
@@ -3057,7 +3077,7 @@ static bool jx64_mov_mem_imm(jx_x64_instr_encoding_t* enc, const jx_x64_mem_t* d
 			|| JX64_REG_GET_ID(index_r) == JX64_REG_ID_RSP             // Cannot use RSP as index register
 			|| JX64_REG_IS_RIP(base_r)                                 // Cannot use RIP as base register
 			|| JX64_REG_IS_RIP(index_r)                                // Cannot use RIP as index register
-			|| (src_imm_sz == JX64_SIZE_64 && src_imm > 0xFFFFFFFF)    // Only 32-bit immediates are supported
+			|| (src_imm_sz == JX64_SIZE_64 && (src_imm < INT32_MIN || src_imm > INT32_MAX)) // Only 32-bit immediates are supported
 			;
 		if (invalidOperands) {
 			return false;
@@ -3093,7 +3113,7 @@ static bool jx64_mov_mem_imm(jx_x64_instr_encoding_t* enc, const jx_x64_mem_t* d
 			|| JX64_REG_GET_SIZE(index_r) < JX64_SIZE_32    // Cannot use 16-bit or 8-bit index reg
 			|| JX64_REG_GET_ID(index_r) == JX64_REG_ID_RSP  // Cannot use RSP as index register
 			|| JX64_REG_IS_RIP(index_r)                     // Cannot use RIP as index register
-			|| (src_imm_sz == JX64_SIZE_64 && src_imm > 0xFFFFFFFF) // Only 32-bit immediates are supported
+			|| (src_imm_sz == JX64_SIZE_64 && (src_imm < INT32_MIN || src_imm > INT32_MAX)) // Only 32-bit immediates are supported
 			;
 		if (invalidOperands) {
 			return false;
@@ -3116,7 +3136,7 @@ static bool jx64_mov_mem_imm(jx_x64_instr_encoding_t* enc, const jx_x64_mem_t* d
 		// mov [base + (disp)], reg
 		const bool invalidOperands = false
 			|| JX64_REG_GET_SIZE(base_r) < JX64_SIZE_32 // Cannot use 16-bit or 8-bit base reg
-			|| (src_imm_sz == JX64_SIZE_64 && src_imm > 0xFFFFFFFF) // Only 32-bit immediates are supported
+			|| (src_imm_sz == JX64_SIZE_64 && (src_imm < INT32_MIN || src_imm > INT32_MAX)) // Only 32-bit immediates are supported
 			;
 		if (invalidOperands) {
 			return false;
@@ -3161,23 +3181,10 @@ static bool jx64_mov_mem_imm(jx_x64_instr_encoding_t* enc, const jx_x64_mem_t* d
 		jx64_instrEnc_sib(enc, isBase_rsp, 0b00, 0b100, 0b100);
 		jx64_instrEnc_disp(enc, needsDisplacement, (JX64_DISP_IS_8BIT(dst_m->m_Displacement) && !isBase_rip) ? JX64_SIZE_8 : JX64_SIZE_32, dst_m->m_Displacement);
 		jx64_instrEnc_imm(enc, true, src_imm_sz == JX64_SIZE_64 ? JX64_SIZE_32 : src_imm_sz, src_imm);
-
-#if 0
-		// RIP-relative addressing: 
-		// Fix displacement by the number of bytes of this instruction.
-		// The caller doesn't and shouldn't know how many bytes the current instruction
-		// will take and the rip-relative displacement is based on the start of the next
-		// instruction. Since the user can only know the displacement to the start of the
-		// current instruction, subtracting the size of the current instruction from the 
-		// displacement should do the trick.
-		if (isBase_rip) {
-			enc->m_Disp -= jx64_instrEnc_calcInstrSize(enc);
-		}
-#endif
 	} else {
 		// mov [disp], imm
 		const bool invalidOperands = false
-			|| (src_imm_sz == JX64_SIZE_64 && src_imm > 0xFFFFFFFF) // Only 32-bit immediates are supported
+			|| (src_imm_sz == JX64_SIZE_64 && (src_imm < INT32_MIN || src_imm > INT32_MAX)) // Only 32-bit immediates are supported
 			;
 		if (invalidOperands) {
 			return false;

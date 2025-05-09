@@ -787,7 +787,7 @@ int main(int argc, char** argv)
 
 	jx_allocator_i* allocator = allocator_api->createAllocator("jcc");
 
-#if 0
+#if 1
 	uint32_t totalTests = 0;
 	uint32_t numSkipped = 0;
 	uint32_t numPass = 0;
@@ -801,22 +801,15 @@ int main(int argc, char** argv)
 		JX_SYS_LOG_INFO(NULL, "%s: ", sourceFile);
 
 		const bool skipTest = false
-			|| iTest == 113 // Floating point
-			|| iTest == 119 // Floating point
 			|| iTest == 121 // Parsing error; complex variable/function declaration
-			|| iTest == 123 // Floating point
-//			|| iTest == 140 // Call with stack arguments
 			|| iTest == 152 // #line+#error
 			|| iTest == 162 // const/static/volatile/restrict in array declaration
 			|| iTest == 170 // forward enum
-			|| iTest == 174 // Floating point; math functions
-			|| iTest == 175 // Floating point
 			|| iTest == 179 // string.h functions
 			|| iTest == 180 // string.h functions
 			|| iTest == 187 // file functions
 			|| iTest == 189 // fprintf/stdout
-			|| iTest == 195 // Floating point
-			|| iTest == 204 // Floating point
+			|| iTest == 204 // va_start/va_end
 			|| iTest == 206 // #pragma
 			|| iTest == 207 // VLA
 			|| iTest == 210 // __attribute__
@@ -895,8 +888,8 @@ int main(int argc, char** argv)
 #elif 1
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-//	const char* sourceFile = "test/c-testsuite/00140.c";
-	const char* sourceFile = "test/float_conv.c";
+//	const char* sourceFile = "test/c-testsuite/00089.c";
+	const char* sourceFile = "test/aliasing.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
 	jx_cc_translation_unit_t* tu = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_INSTALL, sourceFile);

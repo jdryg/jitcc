@@ -912,6 +912,10 @@ static jx_ir_constant_t* jir_constFold_shrConst(jx_ir_context_t* ctx, jx_ir_cons
 static jx_ir_constant_t* jir_constFold_truncConst(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
 static jx_ir_constant_t* jir_constFold_zextConst(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
 static jx_ir_constant_t* jir_constFold_sextConst(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
+static jx_ir_constant_t* jir_constFold_fp2si(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
+static jx_ir_constant_t* jir_constFold_si2fp(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
+static jx_ir_constant_t* jir_constFold_fptrunc(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
+static jx_ir_constant_t* jir_constFold_fpext(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
 
 bool jx_ir_funcPassCreate_constantFolding(jx_ir_function_pass_t* pass, jx_allocator_i* allocator)
 {
@@ -1134,6 +1138,46 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_instrFree(ctx, instr);
 					}
 				} break;
+				case JIR_OP_FP2SI: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* op = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					if (op) {
+						jx_ir_constant_t* resConst = jir_constFold_fp2si(ctx, op, jx_ir_instrToValue(instr)->m_Type);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
+				case JIR_OP_SI2FP: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* op = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					if (op) {
+						jx_ir_constant_t* resConst = jir_constFold_si2fp(ctx, op, jx_ir_instrToValue(instr)->m_Type);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
+				case JIR_OP_FPTRUNC: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* op = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					if (op) {
+						jx_ir_constant_t* resConst = jir_constFold_fptrunc(ctx, op, jx_ir_instrToValue(instr)->m_Type);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
+				case JIR_OP_FPEXT: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* op = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					if (op) {
+						jx_ir_constant_t* resConst = jir_constFold_fpext(ctx, op, jx_ir_instrToValue(instr)->m_Type);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
 				case JIR_OP_RET:
 				case JIR_OP_ALLOCA:
 				case JIR_OP_LOAD:
@@ -1141,12 +1185,8 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 				case JIR_OP_PTR_TO_INT:
 				case JIR_OP_INT_TO_PTR:
 				case JIR_OP_BITCAST: 
-				case JIR_OP_FPEXT:   // TODO: 
-				case JIR_OP_FPTRUNC: // TODO: 
 				case JIR_OP_FP2UI:	 // TODO: 
-				case JIR_OP_FP2SI: 	 // TODO: 
-				case JIR_OP_UI2FP:	 // TODO: 
-				case JIR_OP_SI2FP: { // TODO: 
+				case JIR_OP_UI2FP: { // TODO: 
 					// No op
 				} break;
 				default:
@@ -1621,6 +1661,73 @@ static jx_ir_constant_t* jir_constFold_sextConst(jx_ir_context_t* ctx, jx_ir_con
 	}
 
 	return res;
+}
+
+static jx_ir_constant_t* jir_constFold_fp2si(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(op)->m_Type;
+	JX_CHECK(jx_ir_typeIsFloatingPoint(operandType), "Expected floating point type");
+
+	jx_ir_constant_t* res = NULL;
+	switch (operandType->m_Kind) {
+	case JIR_TYPE_F32:
+	case JIR_TYPE_F64: {
+		res = jx_ir_constGetInteger(ctx, type->m_Kind, (int64_t)(op->u.m_F64));
+	} break;
+	default:
+		JX_CHECK(false, "Unknown floating point type");
+		break;
+	}
+
+	return res;
+}
+
+static jx_ir_constant_t* jir_constFold_si2fp(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(op)->m_Type;
+	JX_CHECK(jx_ir_typeIsInteger(operandType), "Expected signed integer type");
+
+	jx_ir_constant_t* res = NULL;
+	switch (operandType->m_Kind) {
+	case JIR_TYPE_BOOL: {
+		res = jx_ir_constGetFloat(ctx, type->m_Kind, op->u.m_Bool ? 1.0 : 0.0);
+	} break;
+	case JIR_TYPE_U8: 
+	case JIR_TYPE_I8: {
+		res = jx_ir_constGetFloat(ctx, type->m_Kind, (double)((int8_t)op->u.m_I64));
+	} break;
+	case JIR_TYPE_U16:
+	case JIR_TYPE_I16: {
+		res = jx_ir_constGetFloat(ctx, type->m_Kind, (double)((int16_t)op->u.m_I64));
+	} break;
+	case JIR_TYPE_U32:
+	case JIR_TYPE_I32: {
+		res = jx_ir_constGetFloat(ctx, type->m_Kind, (double)((int32_t)op->u.m_I64));
+	} break;
+	case JIR_TYPE_U64: 
+	case JIR_TYPE_I64: {
+		res = jx_ir_constGetFloat(ctx, type->m_Kind, (double)op->u.m_I64);
+	} break;
+	default:
+		JX_CHECK(false, "Unknown floating point type");
+		break;
+	}
+
+	return res;
+}
+
+static jx_ir_constant_t* jir_constFold_fptrunc(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(op)->m_Type;
+	JX_CHECK(jx_ir_typeIsFloatingPoint(operandType), "Expected floating point type");
+	return jx_ir_constGetFloat(ctx, type->m_Kind, op->u.m_F64);
+}
+
+static jx_ir_constant_t* jir_constFold_fpext(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(op)->m_Type;
+	JX_CHECK(jx_ir_typeIsFloatingPoint(operandType), "Expected floating point type");
+	return jx_ir_constGetFloat(ctx, type->m_Kind, op->u.m_F64);
 }
 
 //////////////////////////////////////////////////////////////////////////

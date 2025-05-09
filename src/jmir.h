@@ -349,7 +349,6 @@ typedef enum jx_mir_operand_kind
 typedef struct jx_mir_stack_object_t
 {
 	int32_t m_SPOffset;
-	uint32_t m_Size;
 } jx_mir_stack_object_t;
 
 typedef struct jx_mir_memory_ref_t
@@ -360,19 +359,26 @@ typedef struct jx_mir_memory_ref_t
 	int32_t m_Displacement;
 } jx_mir_memory_ref_t;
 
+typedef struct jx_mir_external_symbol_t
+{
+	const char* m_Name;
+	int32_t m_Offset;
+	JX_PAD(4);
+} jx_mir_external_symbol_t;
+
 typedef struct jx_mir_operand_t
 {
 	jx_mir_operand_kind m_Kind;
 	jx_mir_type_kind m_Type;
 	union
 	{
-		jx_mir_reg_t m_Reg;                // JMIR_OPERAND_REGISTER
-		int64_t m_ConstI64;                // JMIR_OPERAND_CONST + integer m_Type
-		double m_ConstF64;                 // JMIR_OPERAND_CONST + float m_Type
-		jx_mir_basic_block_t* m_BB;        // JMIR_OPERAND_BASIC_BLOCK
-		jx_mir_stack_object_t* m_StackObj; // JMIR_OPERAND_STACK_OBJECT
-		jx_mir_memory_ref_t m_MemRef;      // JMIR_OPERAND_MEMORY_REF
-		const char* m_ExternalSymbolName;  // JMIR_OPERAND_EXTERNAL_SYMBOL
+		jx_mir_reg_t m_Reg;                        // JMIR_OPERAND_REGISTER
+		int64_t m_ConstI64;                        // JMIR_OPERAND_CONST + integer m_Type
+		double m_ConstF64;                         // JMIR_OPERAND_CONST + float m_Type
+		jx_mir_basic_block_t* m_BB;                // JMIR_OPERAND_BASIC_BLOCK
+		jx_mir_stack_object_t* m_StackObj;         // JMIR_OPERAND_STACK_OBJECT
+		jx_mir_memory_ref_t m_MemRef;              // JMIR_OPERAND_MEMORY_REF
+		jx_mir_external_symbol_t m_ExternalSymbol; // JMIR_OPERAND_EXTERNAL_SYMBOL
 	} u;
 } jx_mir_operand_t;
 
@@ -483,7 +489,8 @@ jx_mir_operand_t* jx_mir_opFConst(jx_mir_context_t* ctx, jx_mir_function_t* func
 jx_mir_operand_t* jx_mir_opBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb);
 jx_mir_operand_t* jx_mir_opMemoryRef(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, jx_mir_reg_t baseReg, jx_mir_reg_t indexReg, uint32_t scale, int32_t displacement);
 jx_mir_operand_t* jx_mir_opStackObj(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, uint32_t sz, uint32_t alignment);
-jx_mir_operand_t* jx_mir_opExternalSymbol(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, const char* name);
+jx_mir_operand_t* jx_mir_opStackObjRel(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, jx_mir_stack_object_t* baseObj, int32_t offset);
+jx_mir_operand_t* jx_mir_opExternalSymbol(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, const char* name, int32_t offset);
 void jx_mir_opPrint(jx_mir_context_t* ctx, jx_mir_operand_t* op, jx_string_buffer_t* sb);
 
 void jx_mir_instrFree(jx_mir_context_t* ctx, jx_mir_instruction_t* instr);

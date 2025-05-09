@@ -1,7 +1,4 @@
 // IR generator: Converts jcc AST into IR.
-// TODO: 
-// - float constants (JCC_NODE_NUMBER)
-// - bitfields
 #include "jir_gen.h"
 #include "jir.h"
 #include "jcc.h"
@@ -517,10 +514,7 @@ static bool jirgenGenStatement(jx_irgen_context_t* ctx, jx_cc_ast_stmt_t* stmt)
 			jx_cc_type_t* exprType = retNode->m_Expr->m_Type;
 
 			if (exprType->m_Kind == JCC_TYPE_STRUCT || exprType->m_Kind == JCC_TYPE_UNION) {
-				const bool hasBeenConvertedToPtr = false
-					|| exprType->m_Size > 8
-					|| !jx_isPow2_u32(exprType->m_Size)
-					;
+				const bool hasBeenConvertedToPtr = !jx_ir_typeIsSmallPow2Struct(jccTypeToIRType(ctx, exprType));
 				if (hasBeenConvertedToPtr) {
 					// Copy retVal to hidden 1st function argument and return that pointer.
 					jx_ir_argument_t* retBufArg = jx_ir_funcGetArgument(irctx, ctx->m_Func, 0);
@@ -543,36 +537,7 @@ static bool jirgenGenStatement(jx_irgen_context_t* ctx, jx_cc_ast_stmt_t* stmt)
 			} else {
 				jx_ir_type_function_t* funcType = jx_ir_funcGetType(irctx, ctx->m_Func);
 				if (retVal->m_Type != funcType->m_RetType) {
-					// TODO: Turn this into a function. The same code is used in JCC_NODE_EXPR_CAST
-					jx_ir_type_t* srcType = retVal->m_Type;
-					jx_ir_type_t* dstType = funcType->m_RetType;
-
-					if (jx_ir_typeIsIntegral(srcType) && jx_ir_typeIsIntegral(dstType)) {
-						retVal = jirgenConvertType(ctx, retVal, dstType);
-					} else {
-						const bool srcIsInteger = jx_ir_typeIsInteger(srcType);
-						const bool dstIsInteger = jx_ir_typeIsInteger(dstType);
-						const bool srcIsPointer = jx_ir_typeToPointer(srcType) != NULL;
-						const bool dstIsPointer = jx_ir_typeToPointer(dstType) != NULL;
-						const uint32_t srcSize = (uint32_t)jx_ir_typeGetSize(srcType);
-						const uint32_t dstSize = (uint32_t)jx_ir_typeGetSize(dstType);
-
-						jx_ir_instruction_t* castInstr = NULL;
-						if (srcIsInteger && dstIsPointer) {
-							castInstr = jx_ir_instrIntToPtr(irctx, retVal, dstType);
-						} else if (srcIsPointer && dstIsInteger) {
-							castInstr = jx_ir_instrPtrToInt(irctx, retVal, dstType);
-						} else if (srcSize == dstSize) {
-							castInstr = jx_ir_instrBitcast(irctx, retVal, dstType);
-						} else {
-							JX_NOT_IMPLEMENTED();
-						}
-
-						if (castInstr) {
-							jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, castInstr);
-							retVal = jx_ir_instrToValue(castInstr);
-						}
-					}
+					retVal = jirgenConvertType(ctx, retVal, funcType->m_RetType);
 				}
 			}
 
@@ -1070,65 +1035,9 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 	} break;
 	case JCC_NODE_EXPR_CAST: {
 		jx_cc_ast_expr_unary_t* castNode = (jx_cc_ast_expr_unary_t*)expr;
-		jx_ir_value_t* originalVal = jirgenGenExpression(ctx, castNode->m_Expr);
-
-		jx_ir_type_t* srcType = originalVal->m_Type;
+		jx_ir_value_t* exprVal = jirgenGenExpression(ctx, castNode->m_Expr);
 		jx_ir_type_t* dstType = jccTypeToIRType(ctx, expr->m_Type);
-		if (jx_ir_typeIsIntegral(srcType) && jx_ir_typeIsIntegral(dstType)) {
-			val = jirgenConvertType(ctx, originalVal, dstType);
-		} else {
-			const bool srcIsInteger = jx_ir_typeIsInteger(srcType);
-			const bool dstIsInteger = jx_ir_typeIsInteger(dstType);
-			const bool srcIsFP = jx_ir_typeIsFloatingPoint(srcType);
-			const bool dstIsFP = jx_ir_typeIsFloatingPoint(dstType);
-			const bool srcIsPointer = jx_ir_typeToPointer(srcType) != NULL;
-			const bool dstIsPointer = jx_ir_typeToPointer(dstType) != NULL;
-			const uint32_t srcSize = (uint32_t)jx_ir_typeGetSize(srcType);
-			const uint32_t dstSize = (uint32_t)jx_ir_typeGetSize(dstType);
-
-			jx_ir_instruction_t* castInstr = NULL;
-			if (srcIsInteger && dstIsPointer) {
-				castInstr = jx_ir_instrIntToPtr(irctx, originalVal, dstType);
-			} else if (srcIsPointer && dstIsInteger) {
-				castInstr = jx_ir_instrPtrToInt(irctx, originalVal, dstType);
-			} else if (srcIsFP && dstIsFP) {
-				if (srcSize < dstSize) {
-					castInstr = jx_ir_instrFPExt(irctx, originalVal, dstType);
-				} else {
-					JX_CHECK(srcSize > dstSize, "Cast between same size FP types?");
-					castInstr = jx_ir_instrFPTrunc(irctx, originalVal, dstType);
-				}
-			} else if (srcIsFP && dstIsInteger) {
-				if (jx_ir_typeIsUnsigned(dstType)) {
-					castInstr = jx_ir_instrFP2UI(irctx, originalVal, dstType);
-				} else {
-					castInstr = jx_ir_instrFP2SI(irctx, originalVal, dstType);
-				}
-			} else if (srcIsInteger && dstIsFP) {
-				if (jx_ir_typeIsUnsigned(srcType)) {
-					castInstr = jx_ir_instrUI2FP(irctx, originalVal, dstType);
-				} else {
-					castInstr = jx_ir_instrSI2FP(irctx, originalVal, dstType);
-				}
-			} else if (srcIsPointer && dstIsPointer) {
-				castInstr = jx_ir_instrBitcast(irctx, originalVal, dstType);
-			} else if (srcSize == dstSize) {
-#if 1
-				JX_NOT_IMPLEMENTED(); // TODO: Check when this is hit and fix/enable again.
-#else
-				castInstr = jx_ir_instrBitcast(irctx, originalVal, dstType);
-#endif
-			} else {
-				JX_NOT_IMPLEMENTED();
-			}
-
-			if (castInstr) {
-				jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, castInstr);
-				val = jx_ir_instrToValue(castInstr);
-			} else {
-				val = originalVal;
-			}
-		}
+		val = jirgenConvertType(ctx, exprVal, dstType);
 	} break;
 	case JCC_NODE_EXPR_MEMZERO: {
 		jx_cc_ast_expr_variable_t* varNode = (jx_cc_ast_expr_variable_t*)expr;
@@ -1182,21 +1091,49 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 			// Check if the expression type prevented a possible load to be generated (see jirgenGenLoad()).
 			// In this case, argVal should be a pointer to the value. We have to allocate a temporary on 
 			// the stack, copy the value pointed by argVal to it and pass the pointer to the function.
-			// TODO: Check all possible struct sizes. This code assumes that the struct does not fit in a
-			// register so it has to be converted to pointer.
 			jx_cc_type_t* ccArgType = argExpr->m_Type;
-			if (ccArgType->m_Kind == JCC_TYPE_STRUCT) {
+			jx_ir_type_t* argType = jccTypeToIRType(ctx, ccArgType);
+			if (argType->m_Kind == JIR_TYPE_STRUCT) {
 				JX_CHECK(jx_ir_typeToPointer(argVal->m_Type), "Argument value expected to have pointer type!");
-				jx_ir_instruction_t* tmpAlloca = jx_ir_instrAlloca(irctx, jccTypeToIRType(ctx, ccArgType), NULL);
-				jx_ir_bbPrependInstr(irctx, ctx->m_Func->m_BasicBlockListHead, tmpAlloca);
-				jirgenGenMemCopy(ctx, jx_ir_instrToValue(tmpAlloca), argVal);
-				argVal = jx_ir_instrToValue(tmpAlloca);
-			} else if (ccArgType->m_Kind == JCC_TYPE_UNION) {
-				JX_NOT_IMPLEMENTED();
-			} else if (ccArgType->m_Kind == JCC_TYPE_ARRAY) {
-//				JX_NOT_IMPLEMENTED();
-			} else if (ccArgType->m_Kind == JCC_TYPE_FUNC) {
-//				JX_NOT_IMPLEMENTED();
+
+				if (jx_ir_typeIsSmallPow2Struct(argType)) {
+					const uint32_t structSize = (uint32_t)jx_ir_typeGetSize(argType);
+					jx_ir_type_t* trueArgType = NULL;
+					if (structSize == 1) {
+						trueArgType = jx_ir_typeGetPrimitive(ctx->m_IRCtx, JIR_TYPE_I8);
+					} else if (structSize == 2) {
+						trueArgType = jx_ir_typeGetPrimitive(ctx->m_IRCtx, JIR_TYPE_I16);
+					} else if (structSize == 4) {
+						trueArgType = jx_ir_typeGetPrimitive(ctx->m_IRCtx, JIR_TYPE_I32);
+					} else {
+						JX_CHECK(structSize == 8, "Invalid struct size; shouldn't have landed here!");
+						trueArgType = jx_ir_typeGetPrimitive(ctx->m_IRCtx, JIR_TYPE_I64);
+					}
+
+					JX_CHECK(trueArgType != NULL, "Something went really wrong!");
+					jx_ir_type_t* trueArgTypePtr = jx_ir_typeGetPointer(ctx->m_IRCtx, trueArgType);
+
+					jx_ir_value_t* gepIndices[2] = {
+						jx_ir_constToValue(jx_ir_constGetI32(irctx, 0)),
+						jx_ir_constToValue(jx_ir_constGetI32(irctx, 0)),
+					};
+
+					jx_ir_instruction_t* gepInstr = jx_ir_instrGetElementPtr(ctx->m_IRCtx, argVal, 2, gepIndices);
+					jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, gepInstr);
+
+					jx_ir_instruction_t* bitcastInstr = jx_ir_instrBitcast(ctx->m_IRCtx, jx_ir_instrToValue(gepInstr), trueArgTypePtr);
+					jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, bitcastInstr);
+
+					jx_ir_instruction_t* loadInstr = jx_ir_instrLoad(ctx->m_IRCtx, trueArgType, jx_ir_instrToValue(bitcastInstr));
+					jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, loadInstr);
+
+					argVal = jx_ir_instrToValue(loadInstr);
+				} else {
+					jx_ir_instruction_t* tmpAlloca = jx_ir_instrAlloca(irctx, argType, NULL);
+					jx_ir_bbPrependInstr(irctx, ctx->m_Func->m_BasicBlockListHead, tmpAlloca);
+					jirgenGenMemCopy(ctx, jx_ir_instrToValue(tmpAlloca), argVal);
+					argVal = jx_ir_instrToValue(tmpAlloca);
+				}
 			}
 
 			// default argument promotions
@@ -1662,37 +1599,75 @@ static jx_ir_type_t* jirgenUsualArithmeticConversions(jx_irgen_context_t* ctx, j
 
 static jx_ir_value_t* jirgenConvertType(jx_irgen_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* type)
 {
-	JX_CHECK(jx_ir_typeIsIntegral(val->m_Type), "Can only convert integral values.");
-	JX_CHECK(jx_ir_typeIsIntegral(type), "Can only convert to integral types.");
+	// NOTE: Don't do this here. Let the code below handle it.
+	// E.g. for some reason a bitcast is needed when assigning a function pointer
+	// to a local variable (e.g. c-testsuite/00124.c) otherwise a mov is produced instead of a lea
+	// for the function pointer. Until I find and fix the codegen bug, leave this disabled.
+#if 0
+	if (val->m_Type == type) {
+		return val;
+	}
+#endif
 
 	if (type->m_Kind == JIR_TYPE_BOOL) {
 		return jirgenConvertToBool(ctx, val);
 	}
 
+	const bool valTypeIsIntegral = jx_ir_typeIsIntegral(val->m_Type);
+	const bool valTypeIsPointer = jx_ir_typeToPointer(val->m_Type) != NULL;
+	const bool valTypeIsFP = jx_ir_typeIsFloatingPoint(val->m_Type);
+	const bool typeIsIntegral = jx_ir_typeIsIntegral(type);
+	const bool typeIsPointer = jx_ir_typeToPointer(type) != NULL;
+	const bool typeIsFP = jx_ir_typeIsFloatingPoint(type);
 	const uint32_t valSz = (uint32_t)jx_ir_typeGetSize(val->m_Type);
 	const uint32_t typeSz = (uint32_t)jx_ir_typeGetSize(type);
 
-	if (typeSz > valSz) {
-		// Extension
-		if (jx_ir_typeIsUnsigned(val->m_Type)) {
-			jx_ir_instruction_t* zextInstr = jx_ir_instrZeroExt(ctx->m_IRCtx, val, type);
-			jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, zextInstr);
-			val = jx_ir_instrToValue(zextInstr);
+	jx_ir_instruction_t* castInstr = NULL;
+	if (valTypeIsIntegral && typeIsIntegral) {
+		if (typeSz > valSz) {
+			// Extension
+			castInstr = jx_ir_typeIsUnsigned(val->m_Type)
+				? jx_ir_instrZeroExt(ctx->m_IRCtx, val, type)
+				: jx_ir_instrSignExt(ctx->m_IRCtx, val, type)
+				;
+		} else if (typeSz < valSz) {
+			// Truncation
+			castInstr = jx_ir_instrTrunc(ctx->m_IRCtx, val, type);
 		} else {
-			jx_ir_instruction_t* sextInstr = jx_ir_instrSignExt(ctx->m_IRCtx, val, type);
-			jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, sextInstr);
-			val = jx_ir_instrToValue(sextInstr);
+			// Bitcast
+			castInstr = jx_ir_instrBitcast(ctx->m_IRCtx, val, type);
 		}
-	} else if (typeSz < valSz) {
-		// Truncation
-		jx_ir_instruction_t* truncInstr = jx_ir_instrTrunc(ctx->m_IRCtx, val, type);
-		jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, truncInstr);
-		val = jx_ir_instrToValue(truncInstr);
+	} else if (valTypeIsFP && typeIsFP) {
+		if (valSz < typeSz) {
+			castInstr = jx_ir_instrFPExt(ctx->m_IRCtx, val, type);
+		} else if (valSz > typeSz) {
+			castInstr = jx_ir_instrFPTrunc(ctx->m_IRCtx, val, type);
+		} else {
+			JX_CHECK(val->m_Type->m_Kind == type->m_Kind, "Unknown floating point conversion");
+		}
+	} else if (valTypeIsIntegral && typeIsFP) {
+		castInstr = jx_ir_typeIsUnsigned(val->m_Type)
+			? jx_ir_instrUI2FP(ctx->m_IRCtx, val, type)
+			: jx_ir_instrSI2FP(ctx->m_IRCtx, val, type)
+			;
+	} else if (valTypeIsFP && typeIsIntegral) {
+		castInstr = jx_ir_typeIsUnsigned(type)
+			? jx_ir_instrFP2UI(ctx->m_IRCtx, val, type)
+			: jx_ir_instrFP2SI(ctx->m_IRCtx, val, type)
+			;
+	} else if (valTypeIsPointer && typeIsPointer) {
+		castInstr = jx_ir_instrBitcast(ctx->m_IRCtx, val, type);
+	} else if (valTypeIsIntegral && typeIsPointer) {
+		castInstr = jx_ir_instrIntToPtr(ctx->m_IRCtx, val, type);
+	} else if (valTypeIsPointer && typeIsIntegral) {
+		castInstr = jx_ir_instrPtrToInt(ctx->m_IRCtx, val, type);
 	} else {
-		// Bitcast
-		jx_ir_instruction_t* bitcastInstr = jx_ir_instrBitcast(ctx->m_IRCtx, val, type);
-		jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, bitcastInstr);
-		val = jx_ir_instrToValue(bitcastInstr);
+		JX_CHECK(false, "Unknown type conversion.");
+	}
+
+	if (castInstr) {
+		jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, castInstr);
+		val = jx_ir_instrToValue(castInstr);
 	}
 
 	return val;
@@ -1897,18 +1872,10 @@ static jx_ir_type_t* jccFuncArgGetType(jx_irgen_context_t* ctx, jx_cc_type_t* cc
 	jx_ir_context_t* irctx = ctx->m_IRCtx;
 
 	jx_ir_type_t* argType = jccTypeToIRType(ctx, ccType);
-
-	if (ccType->m_Kind == JCC_TYPE_STRUCT || ccType->m_Kind == JCC_TYPE_UNION) {
-		const bool shouldConvertToPtr = false
-			|| ccType->m_Size > 8
-			|| !jx_isPow2_u32(ccType->m_Size)
-			;
-		if (shouldConvertToPtr) {
-			return jx_ir_typeGetPointer(irctx, argType);
-		}
-	}
-
-	return argType;
+	return (argType->m_Kind == JIR_TYPE_STRUCT && !jx_ir_typeIsSmallPow2Struct(argType))
+		? jx_ir_typeGetPointer(irctx, argType)
+		: argType
+		;
 }
 
 // https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention?view=msvc-170#return-values

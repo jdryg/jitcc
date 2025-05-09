@@ -539,6 +539,7 @@ jx_ir_constant_t* jx_ir_constGetU64(jx_ir_context_t* ctx, uint64_t val);
 jx_ir_constant_t* jx_ir_constGetInteger(jx_ir_context_t* ctx, jx_ir_type_kind type, int64_t val);
 jx_ir_constant_t* jx_ir_constGetF32(jx_ir_context_t* ctx, float val);
 jx_ir_constant_t* jx_ir_constGetF64(jx_ir_context_t* ctx, double val);
+jx_ir_constant_t* jx_ir_constGetFloat(jx_ir_context_t* ctx, jx_ir_type_kind type, double val);
 jx_ir_constant_t* jx_ir_constArray(jx_ir_context_t* ctx, jx_ir_type_t* type, uint32_t numValues, jx_ir_constant_t** values);
 jx_ir_constant_t* jx_ir_constStruct(jx_ir_context_t* ctx, jx_ir_type_t* type, uint32_t numMembers, jx_ir_constant_t** memberValues);
 jx_ir_constant_t* jx_ir_constPointer(jx_ir_context_t* ctx, jx_ir_type_t* type, void* ptr);

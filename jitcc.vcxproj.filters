@@ -926,6 +926,9 @@
     <ClCompile Include="bin\test\float_conv.c">
       <Filter>bin\test</Filter>
     </ClCompile>
+    <ClCompile Include="bin\test\struct_as_arg.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="3rdparty\jlib\include\jlib\inline\atomic_win32.inl">
