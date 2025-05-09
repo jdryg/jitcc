@@ -943,22 +943,20 @@ static jx_mir_operand_t* jmirgen_instrBuild_store(jx_mirgen_context_t* ctx, jx_i
 		JX_CHECK(false, "Unhandle store destination operand.");
 	}
 
-	if (srcOperand->m_Kind != JMIR_OPERAND_REGISTER) {
-		if (srcOperand->m_Kind == JMIR_OPERAND_STACK_OBJECT || srcOperand->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
-			jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
-			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmpReg, srcOperand));
-			srcOperand = tmpReg;
+	if (srcOperand->m_Kind == JMIR_OPERAND_STACK_OBJECT || srcOperand->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+		jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
+		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmpReg, srcOperand));
+		srcOperand = tmpReg;
+	} else if (srcOperand->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+		jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, regType);
+		if (regType == JMIR_TYPE_F32) {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movss(ctx->m_MIRCtx, tmpReg, srcOperand));
+		} else if (regType == JMIR_TYPE_F64) {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movsd(ctx->m_MIRCtx, tmpReg, srcOperand));
 		} else {
-			jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, regType);
-			if (regType == JMIR_TYPE_F32) {
-				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movss(ctx->m_MIRCtx, tmpReg, srcOperand));
-			} else if (regType == JMIR_TYPE_F64) {
-				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movsd(ctx->m_MIRCtx, tmpReg, srcOperand));
-			} else {
-				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, tmpReg, srcOperand));
-			}
-			srcOperand = tmpReg;
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, tmpReg, srcOperand));
 		}
+		srcOperand = tmpReg;
 	}
 
 	if (regType == JMIR_TYPE_F32) {
@@ -1678,8 +1676,8 @@ static jx_mir_operand_t* jmirgen_instrBuild_ui2fp(jx_mirgen_context_t* ctx, jx_i
 
 			jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_F64);
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movq(ctx->m_MIRCtx, tmpReg, operand));
-			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_punpckldq(ctx->m_MIRCtx, tmpReg, jx_mir_opExternalSymbol(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_F128, "$__ui64_to_f64_c0__$")));
-			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_subpd(ctx->m_MIRCtx, tmpReg, jx_mir_opExternalSymbol(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_F128, "$__ui64_to_f64_c1__$")));
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_punpckldq(ctx->m_MIRCtx, tmpReg, jx_mir_opExternalSymbol(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_F128, "$__ui64_to_f64_c0__$", 0)));
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_subpd(ctx->m_MIRCtx, tmpReg, jx_mir_opExternalSymbol(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_F128, "$__ui64_to_f64_c1__$", 0)));
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movapd(ctx->m_MIRCtx, resReg, tmpReg));
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_unpckhpd(ctx->m_MIRCtx, resReg, tmpReg));
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_addsd(ctx->m_MIRCtx, resReg, tmpReg));
@@ -1796,17 +1794,17 @@ static jx_mir_operand_t* jmirgen_getOperand(jx_mirgen_context_t* ctx, jx_ir_valu
 		if (!jx_strncmp(funcName, "jir.", 4)) {
 			// Intrinsic function
 			if (!jx_strncmp(funcName, "jir.memset.", 11)) {
-				operand = jx_mir_opExternalSymbol(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, "memset");
+				operand = jx_mir_opExternalSymbol(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, "memset", 0);
 			} else if (!jx_strncmp(funcName, "jir.memcpy.", 11)) {
-				operand = jx_mir_opExternalSymbol(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, "memcpy");
+				operand = jx_mir_opExternalSymbol(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, "memcpy", 0);
 			} else {
 				JX_CHECK(false, "Unknown intrinsic function");
 			}
 		} else {
-			operand = jx_mir_opExternalSymbol(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, funcName);
+			operand = jx_mir_opExternalSymbol(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, funcName, 0);
 		}
 	} else if (val->m_Kind == JIR_VALUE_GLOBAL_VARIABLE) {
-		operand = jx_mir_opExternalSymbol(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, val->m_Name);
+		operand = jx_mir_opExternalSymbol(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, val->m_Name, 0);
 	} else {
 		// TODO: Other IR values
 		JX_NOT_IMPLEMENTED();

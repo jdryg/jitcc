@@ -165,6 +165,7 @@ static void jmir_globalVarFree(jx_mir_context_t* ctx, jx_mir_global_variable_t* 
 static jx_mir_frame_info_t* jmir_frameCreate(jx_mir_context_t* ctx);
 static void jmir_frameDestroy(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo);
 static jx_mir_stack_object_t* jmir_frameAllocObj(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo, uint32_t sz, uint32_t alignment);
+static jx_mir_stack_object_t* jmir_frameObjRel(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo, jx_mir_stack_object_t* baseObj, int32_t offset);
 static void jmir_frameMakeRoomForCall(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo, uint32_t numArguments);
 static void jmir_frameFinalize(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo);
 
@@ -255,6 +256,42 @@ jx_mir_context_t* jx_mir_createContext(jx_allocator_i* allocator)
 			}
 		}
 
+		// Combine LEAs
+		{
+			jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_pass_t));
+			if (!pass) {
+				jx_mir_destroyContext(ctx);
+				return NULL;
+			}
+
+			jx_memset(pass, 0, sizeof(jx_mir_function_pass_t));
+			if (!jx_mir_funcPassCreate_combineLEAs(pass, ctx->m_Allocator)) {
+				JX_CHECK(false, "Failed to initialize function pass!");
+				JX_FREE(ctx->m_Allocator, pass);
+			} else {
+				cur->m_Next = pass;
+				cur = cur->m_Next;
+			}
+		}
+
+		// Dead Code Elimination
+		{
+			jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_pass_t));
+			if (!pass) {
+				jx_mir_destroyContext(ctx);
+				return NULL;
+			}
+
+			jx_memset(pass, 0, sizeof(jx_mir_function_pass_t));
+			if (!jx_mir_funcPassCreate_deadCodeElimination(pass, ctx->m_Allocator)) {
+				JX_CHECK(false, "Failed to initialize function pass!");
+				JX_FREE(ctx->m_Allocator, pass);
+			} else {
+				cur->m_Next = pass;
+				cur = cur->m_Next;
+			}
+		}
+
 		// Peephole optimizations
 		{
 			jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_pass_t));
@@ -311,7 +348,7 @@ jx_mir_context_t* jx_mir_createContext(jx_allocator_i* allocator)
 			}
 		}
 
-		// Simplify condition jumps
+		// Simplify conditional jumps
 		// NOTE: Rerun this pass because the register allocator + the removal of redundant moves might have
 		// created more opportunities for conditional jump simplifications.
 		// E.g. c-testsuite/00008.c
@@ -966,14 +1003,27 @@ jx_mir_operand_t* jx_mir_opStackObj(jx_mir_context_t* ctx, jx_mir_function_t* fu
 	return operand;
 }
 
-jx_mir_operand_t* jx_mir_opExternalSymbol(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, const char* name)
+jx_mir_operand_t* jx_mir_opStackObjRel(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, jx_mir_stack_object_t* baseObj, int32_t offset)
+{
+	jx_mir_operand_t* operand = jmir_operandAlloc(ctx, JMIR_OPERAND_STACK_OBJECT, type);
+	if (!operand) {
+		return NULL;
+	}
+
+	operand->u.m_StackObj = jmir_frameObjRel(ctx, func->m_FrameInfo, baseObj, offset);
+
+	return operand;
+}
+
+jx_mir_operand_t* jx_mir_opExternalSymbol(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, const char* name, int32_t offset)
 {
 	jx_mir_operand_t* operand = jmir_operandAlloc(ctx, JMIR_OPERAND_EXTERNAL_SYMBOL, type);
 	if (!operand) {
 		return NULL;
 	}
 
-	operand->u.m_ExternalSymbolName = name;
+	operand->u.m_ExternalSymbol.m_Name = name;
+	operand->u.m_ExternalSymbol.m_Offset = offset;
 
 	return operand;
 }
@@ -1230,7 +1280,7 @@ void jx_mir_opPrint(jx_mir_context_t* ctx, jx_mir_operand_t* op, jx_string_buffe
 		jx_strbuf_pushCStr(sb, "]");
 	} break;
 	case JMIR_OPERAND_EXTERNAL_SYMBOL: {
-		jx_strbuf_printf(sb, "%s", op->u.m_ExternalSymbolName);
+		jx_strbuf_printf(sb, "%s", op->u.m_ExternalSymbol.m_Name);
 	} break;
 	default:
 		JX_CHECK(false, "Unknown operand type");
@@ -2031,9 +2081,23 @@ static jx_mir_stack_object_t* jmir_frameAllocObj(jx_mir_context_t* ctx, jx_mir_f
 	}
 
 	jx_memset(obj, 0, sizeof(jx_mir_stack_object_t));
-	obj->m_Size = sz;
 	obj->m_SPOffset = jx_roundup_u32(frameInfo->m_Size, alignment);
 	frameInfo->m_Size = obj->m_SPOffset + sz;
+
+	jx_array_push_back(frameInfo->m_StackObjs, obj);
+
+	return obj;
+}
+
+static jx_mir_stack_object_t* jmir_frameObjRel(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo, jx_mir_stack_object_t* baseObj, int32_t offset)
+{
+	jx_mir_stack_object_t* obj = (jx_mir_stack_object_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_stack_object_t));
+	if (!obj) {
+		return NULL;
+	}
+
+	jx_memset(obj, 0, sizeof(jx_mir_stack_object_t));
+	obj->m_SPOffset = baseObj->m_SPOffset + offset;
 
 	jx_array_push_back(frameInfo->m_StackObjs, obj);
 

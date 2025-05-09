@@ -606,7 +606,7 @@ static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64gen_context_t* ctx, co
 		op = jx64_opMem(size, JX64_REG_RSP, JX64_REG_NONE, JX64_SCALE_1, disp);
 	} break;
 	case JMIR_OPERAND_EXTERNAL_SYMBOL: {
-		const char* name = mirOp->u.m_ExternalSymbolName;
+		const char* name = mirOp->u.m_ExternalSymbol.m_Name;
 		jx_x64_symbol_t* symbol = jx64_symbolGetByName(ctx->m_JITCtx, name);
 		if (!symbol) {
 			// Check if this is an intrinsic function and add a new symbol now.
