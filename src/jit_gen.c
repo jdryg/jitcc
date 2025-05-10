@@ -600,11 +600,6 @@ static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64gen_context_t* ctx, co
 		jx_mir_basic_block_t* bb = mirOp->u.m_BB;
 		op = jx64_opLbl(JX64_SIZE_64, ctx->m_BasicBlocks[bb->m_ID]);
 	} break;
-	case JMIR_OPERAND_STACK_OBJECT: {
-		jx_x64_size size = jx_x64gen_convertMIRTypeToSize(mirOp->m_Type);
-		int32_t disp = mirOp->u.m_StackObj->m_SPOffset;
-		op = jx64_opMem(size, JX64_REG_RSP, JX64_REG_NONE, JX64_SCALE_1, disp);
-	} break;
 	case JMIR_OPERAND_EXTERNAL_SYMBOL: {
 		const char* name = mirOp->u.m_ExternalSymbol.m_Name;
 		jx_x64_symbol_t* symbol = jx64_symbolGetByName(ctx->m_JITCtx, name);
@@ -623,10 +618,10 @@ static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64gen_context_t* ctx, co
 	} break;
 	case JMIR_OPERAND_MEMORY_REF: {
 		jx_x64_size size = jx_x64gen_convertMIRTypeToSize(mirOp->m_Type);
-		jx_x64_reg baseReg = jx_x64gen_convertMIRReg(mirOp->u.m_MemRef.m_BaseReg, JX64_SIZE_64);
-		jx_x64_reg indexReg = jx_x64gen_convertMIRReg(mirOp->u.m_MemRef.m_IndexReg, JX64_SIZE_64);
-		jx_x64_scale scale = jx_x64gen_convertMIRScale(mirOp->u.m_MemRef.m_Scale);
-		int32_t disp = mirOp->u.m_MemRef.m_Displacement;
+		jx_x64_reg baseReg = jx_x64gen_convertMIRReg(mirOp->u.m_MemRef->m_BaseReg, JX64_SIZE_64);
+		jx_x64_reg indexReg = jx_x64gen_convertMIRReg(mirOp->u.m_MemRef->m_IndexReg, JX64_SIZE_64);
+		jx_x64_scale scale = jx_x64gen_convertMIRScale(mirOp->u.m_MemRef->m_Scale);
+		int32_t disp = mirOp->u.m_MemRef->m_Displacement;
 		op = jx64_opMem(size, baseReg, indexReg, scale, disp);
 	} break;
 	default:
