@@ -973,22 +973,40 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_re
 			JX_CHECK(funcOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL, "TODO: Handle call [memRef]/[stack object]?");
 		}
 
-		// TODO: Annotate call with the function signature so I can know which registers are actually used
-		// by the call. For now assume all registers are used.
-		if (pass->m_RegClass == JMIR_REG_CLASS_GP) {
-			for (uint32_t iRegArg = 0; iRegArg < JX_COUNTOF(kMIRFuncArgIReg); ++iRegArg) {
-				jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgIReg[iRegArg]);
+		jx_mir_annotation_func_proto_t* funcProtoAnnotation = (jx_mir_annotation_func_proto_t*)jx_mir_instrGetAnnotation(pass->m_Ctx, instrInfo->m_Instr, JMIR_ANNOTATION_FUNCTION_PROTOTYPE);
+		if (!funcProtoAnnotation) {
+			if (pass->m_RegClass == JMIR_REG_CLASS_GP) {
+				for (uint32_t iRegArg = 0; iRegArg < JX_COUNTOF(kMIRFuncArgIReg); ++iRegArg) {
+					jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgIReg[iRegArg]);
+				}
+			} else if (pass->m_RegClass == JMIR_REG_CLASS_XMM) {
+				for (uint32_t iRegArg = 0; iRegArg < JX_COUNTOF(kMIRFuncArgFReg); ++iRegArg) {
+					jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgFReg[iRegArg]);
+				}
+			} else {
+				JX_CHECK(false, "Unknown register class");
 			}
+		} else {
+			jx_mir_function_proto_t* funcProto = funcProtoAnnotation->m_FuncProto;
+			const uint32_t numArgs = jx_min_u32(funcProto->m_NumArgs, JX_COUNTOF(kMIRFuncArgIReg));
+			for (uint32_t iArg = 0; iArg < numArgs; ++iArg) {
+				jx_mir_reg_class argClass = jx_mir_typeGetClass(funcProto->m_Args[iArg]);
+				if (pass->m_RegClass == JMIR_REG_CLASS_GP) {
+					jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgIReg[iArg]);
+				} else if (pass->m_RegClass == JMIR_REG_CLASS_XMM) {
+					jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgFReg[iArg]);
+				} else {
+					JX_CHECK(false, "Unknown register class");
+				}
+			}
+		}
 
+		if (pass->m_RegClass == JMIR_REG_CLASS_GP) {
 			const uint32_t numCallerSavedRegs = JX_COUNTOF(kMIRFuncCallerSavedIReg);
 			for (uint32_t iReg = 0; iReg < numCallerSavedRegs; ++iReg) {
 				jmir_regAlloc_instrAddDef(pass, instrInfo, kMIRFuncCallerSavedIReg[iReg]);
 			}
 		} else if (pass->m_RegClass == JMIR_REG_CLASS_XMM) {
-			for (uint32_t iRegArg = 0; iRegArg < JX_COUNTOF(kMIRFuncArgFReg); ++iRegArg) {
-				jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgFReg[iRegArg]);
-			}
-
 			const uint32_t numCallerSavedRegs = JX_COUNTOF(kMIRFuncCallerSavedFReg);
 			for (uint32_t iReg = 0; iReg < numCallerSavedRegs; ++iReg) {
 				jmir_regAlloc_instrAddDef(pass, instrInfo, kMIRFuncCallerSavedFReg[iReg]);

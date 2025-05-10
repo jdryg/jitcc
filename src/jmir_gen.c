@@ -86,6 +86,7 @@ static jx_mir_operand_t* jmirgen_ensureOperandRegOrMem(jx_mirgen_context_t* ctx,
 static jx_mir_operand_t* jmirgen_ensureOperandReg(jx_mirgen_context_t* ctx, jx_mir_operand_t* operand);
 static jx_mir_operand_t* jmirgen_ensureOperandI32OrI64(jx_mirgen_context_t* ctx, jx_mir_operand_t* operand, bool signExt);
 static jx_mir_operand_t* jmirgen_ensureOperandNotConstI64(jx_mirgen_context_t* ctx, jx_mir_operand_t* operand);
+static jx_mir_function_proto_t* jmirgen_funcTypeToProto(jx_mirgen_context_t* ctx, jx_ir_type_function_t* funcType);
 static bool jmirgen_processPhis(jx_mirgen_context_t* ctx);
 static jx_mir_type_kind jmirgen_convertType(jx_ir_type_t* irType);
 static uint64_t jmir_funcItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
@@ -374,7 +375,8 @@ static bool jmirgen_funcBuild(jx_mirgen_context_t* ctx, const char* namePrefix, 
 		| (isVarArg ? JMIR_FUNC_FLAGS_VARARG_Msk : 0)
 		| (isExternal ? JMIR_FUNC_FLAGS_EXTERNAL_Msk : 0)
 		;
-	jx_mir_function_t* func = jx_mir_funcBegin(mirctx, retType, numArgs, args, flags, funcName);
+	jx_mir_function_proto_t* funcProto = jx_mir_funcProto(mirctx, retType, numArgs, args, flags);
+	jx_mir_function_t* func = jx_mir_funcBegin(mirctx, funcName, funcProto);
 	if (func) {
 		ctx->m_Func = func;
 
@@ -1130,8 +1132,8 @@ static jx_mir_operand_t* jmirgen_instrBuild_call(jx_mirgen_context_t* ctx, jx_ir
 	JX_CHECK(funcType, "Expected function type");
 
 	// Write the N first arguments (N <= 4) of the current function to their shadow space.
-	const uint32_t curFuncNumArgs = ctx->m_Func->m_NumArgs;
-	const uint32_t numFuncArgsToStore = jx_min_u32(curFuncNumArgs, 4);
+	const uint32_t curFuncNumArgs = ctx->m_Func->m_Prototype->m_NumArgs;
+	const uint32_t numFuncArgsToStore = jx_min_u32(curFuncNumArgs, JX_COUNTOF(kMIRFuncArgIReg));
 	for (uint32_t iArg = 0; iArg < numFuncArgsToStore; ++iArg) {
 		jx_mir_operand_t* argReg = jx_mir_funcGetArgument(ctx->m_MIRCtx, ctx->m_Func, iArg);
 		jx_mir_operand_t* argShadowSpaceSlotRef = jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, argReg->m_Type, kMIRRegGP_BP, kMIRRegGPNone, 1, 16 + iArg * 8);
@@ -1215,7 +1217,8 @@ static jx_mir_operand_t* jmirgen_instrBuild_call(jx_mirgen_context_t* ctx, jx_ir
 	}
 
 	jx_mir_operand_t* funcOp = jmirgen_getOperand(ctx, funcPtrVal);
-	jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_call(ctx->m_MIRCtx, funcOp));
+	jx_mir_function_proto_t* funcProto = jmirgen_funcTypeToProto(ctx, funcType);
+	jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_call(ctx->m_MIRCtx, funcOp, funcProto));
 
 	// Get result from rret register into a virtual register
 	jx_mir_operand_t* resReg = NULL;
@@ -2010,6 +2013,30 @@ static jx_mir_operand_t* jmirgen_ensureOperandNotConstI64(jx_mirgen_context_t* c
 	jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, tmpReg, operand));
 
 	return tmpReg;
+}
+
+static jx_mir_function_proto_t* jmirgen_funcTypeToProto(jx_mirgen_context_t* ctx, jx_ir_type_function_t* funcType)
+{
+	JX_CHECK(funcType, "Expected valid function type");
+
+	jx_mir_type_kind* args = NULL;
+	const uint32_t numArgs = funcType->m_NumArgs;
+	if (numArgs) {
+		args = (jx_mir_type_kind*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_type_kind) * numArgs);
+		if (!args) {
+			return NULL;
+		}
+
+		for (uint32_t iArg = 0; iArg < numArgs; ++iArg) {
+			args[iArg] = jmirgen_convertType(funcType->m_Args[iArg]);
+		}
+	}
+
+	jx_mir_function_proto_t* funcProto = jx_mir_funcProto(ctx->m_MIRCtx, jmirgen_convertType(funcType->m_RetType), numArgs, args, funcType->m_IsVarArg ? JMIR_FUNC_FLAGS_VARARG_Msk : 0);
+
+	JX_FREE(ctx->m_Allocator, args);
+
+	return funcProto;
 }
 
 static bool jmirgen_processPhis(jx_mirgen_context_t* ctx)
