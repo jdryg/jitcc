@@ -171,8 +171,8 @@ static jx_mir_memory_ref_t* jmir_frameAllocObj(jx_mir_context_t* ctx, jx_mir_fra
 static jx_mir_memory_ref_t* jmir_frameObjRel(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo, jx_mir_memory_ref_t* baseObj, int32_t offset);
 static void jmir_frameMakeRoomForCall(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo, uint32_t numArguments);
 static void jmir_frameFinalize(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo);
-static jx_mir_annotation_t* jmir_annotationAlloc(jx_mir_context_t* ctx, uint32_t kind, uint32_t sz);
-static void jmir_annotationFree(jx_mir_context_t* ctx, jx_mir_annotation_t* annotation);
+static jx_mir_annotation_t* jx_mir_annotationAlloc(jx_mir_context_t* ctx, uint32_t kind, jmirAnnotationDestroyCallback destroyCb, uint32_t sz);
+static void jx_mir_annotationFree(jx_mir_context_t* ctx, jx_mir_annotation_t* annotation);
 static uint64_t jmir_funcProtoHashCallback(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
 static int32_t jmir_funcProtoCompareCallback(const void* a, const void* b, void* udata);
 
@@ -473,6 +473,29 @@ void jx_mir_print(jx_mir_context_t* ctx, jx_string_buffer_t* sb)
 		jx_mir_funcPrint(ctx, ctx->m_FuncArr[iFunc], sb);
 		jx_strbuf_pushCStr(sb, "\n");
 	}
+}
+
+jx_mir_annotation_t* jx_mir_annotationAlloc(jx_mir_context_t* ctx, uint32_t kind, jmirAnnotationDestroyCallback destroyCb, uint32_t sz)
+{
+	JX_CHECK(sz >= sizeof(jx_mir_annotation_t), "Annotation size expected to be at least sizeof(jx_mir_annotation_t)");
+	jx_mir_annotation_t* annot = (jx_mir_annotation_t*)JX_ALLOC(ctx->m_Allocator, sz);
+	if (!annot) {
+		return NULL;
+	}
+
+	jx_memset(annot, 0, sizeof(jx_mir_annotation_t));
+	annot->m_Kind = kind;
+	annot->destroy = destroyCb;
+
+	return annot;
+}
+
+void jx_mir_annotationFree(jx_mir_context_t* ctx, jx_mir_annotation_t* annotation)
+{
+	if (annotation->destroy) {
+		annotation->destroy(annotation);
+	}
+	JX_FREE(ctx->m_Allocator, annotation);
 }
 
 uint32_t jx_mir_getNumGlobalVars(jx_mir_context_t* ctx)
@@ -1352,7 +1375,7 @@ void jx_mir_instrFree(jx_mir_context_t* ctx, jx_mir_instruction_t* instr)
 	jx_mir_annotation_t* annot = instr->m_AnnotationListHead;
 	while (annot) {
 		jx_mir_annotation_t* annotNext = annot->m_Next;
-		jmir_annotationFree(ctx, annot);
+		jx_mir_annotationFree(ctx, annot);
 		annot = annotNext;
 	}
 
@@ -1583,7 +1606,7 @@ jx_mir_instruction_t* jx_mir_call(jx_mir_context_t* ctx, jx_mir_operand_t* func,
 {
 	jx_mir_instruction_t* instr = jmir_instrAlloc1(ctx, JMIR_OP_CALL, func);
 	if (instr) {
-		jx_mir_annotation_func_proto_t* funcProtoAnnotation = (jx_mir_annotation_func_proto_t*)jmir_annotationAlloc(ctx, JMIR_ANNOTATION_FUNCTION_PROTOTYPE, sizeof(jx_mir_annotation_func_proto_t));
+		jx_mir_annotation_func_proto_t* funcProtoAnnotation = (jx_mir_annotation_func_proto_t*)jx_mir_annotationAlloc(ctx, JMIR_ANNOT_INSTR_CALL_FUNC_PROTO, NULL, sizeof(jx_mir_annotation_func_proto_t));
 		if (funcProtoAnnotation) {
 			funcProtoAnnotation->m_FuncProto = proto;
 			jx_mir_instrAddAnnotation(ctx, instr, &funcProtoAnnotation->super);
@@ -2232,25 +2255,6 @@ static void jmir_frameMakeRoomForCall(jx_mir_context_t* ctx, jx_mir_frame_info_t
 static void jmir_frameFinalize(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo)
 {
 	frameInfo->m_Size = jx_roundup_u32(frameInfo->m_Size, 16);
-}
-
-static jx_mir_annotation_t* jmir_annotationAlloc(jx_mir_context_t* ctx, uint32_t kind, uint32_t sz)
-{
-	JX_CHECK(sz >= sizeof(jx_mir_annotation_t), "Annotation size expected to be at least sizeof(jx_mir_annotation_t)");
-	jx_mir_annotation_t* annot = (jx_mir_annotation_t*)JX_ALLOC(ctx->m_Allocator, sz);
-	if (!annot) {
-		return NULL;
-	}
-
-	jx_memset(annot, 0, sizeof(jx_mir_annotation_t));
-	annot->m_Kind = kind;
-	
-	return annot;
-}
-
-static void jmir_annotationFree(jx_mir_context_t* ctx, jx_mir_annotation_t* annotation)
-{
-	JX_FREE(ctx->m_Allocator, annotation);
 }
 
 static uint64_t jmir_funcProtoHashCallback(const void* item, uint64_t seed0, uint64_t seed1, void* udata)

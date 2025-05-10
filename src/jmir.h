@@ -389,14 +389,18 @@ typedef struct jx_mir_operand_t
 
 typedef enum jx_mir_annotation_kind
 {
-	JMIR_ANNOTATION_FUNCTION_PROTOTYPE,
+	JMIR_ANNOT_INSTR_CALL_FUNC_PROTO = 0,
 } jx_mir_annotation_kind;
+
+typedef void (*jmirAnnotationDestroyCallback)(jx_mir_annotation_t* annotation);
 
 typedef struct jx_mir_annotation_t
 {
 	jx_mir_annotation_t* m_Next;
 	uint32_t m_Kind;
 	JX_PAD(4);
+
+	jmirAnnotationDestroyCallback destroy;
 } jx_mir_annotation_t;
 
 typedef struct jx_mir_annotation_func_proto_t
@@ -480,6 +484,9 @@ jx_mir_global_variable_t* jx_mir_getGlobalVarByName(jx_mir_context_t* ctx, const
 uint32_t jx_mir_getNumFunctions(jx_mir_context_t* ctx);
 jx_mir_function_t* jx_mir_getFunctionByID(jx_mir_context_t* ctx, uint32_t id);
 jx_mir_function_t* jx_mir_getFunctionByName(jx_mir_context_t* ctx, const char* name);
+
+jx_mir_annotation_t* jx_mir_annotationAlloc(jx_mir_context_t* ctx, uint32_t kind, jmirAnnotationDestroyCallback destroyCb, uint32_t sz);
+void jx_mir_annotationFree(jx_mir_context_t* ctx, jx_mir_annotation_t* annotation);
 
 jx_mir_global_variable_t* jx_mir_globalVarBegin(jx_mir_context_t* ctx, const char* name, uint32_t alignment);
 void jx_mir_globalVarEnd(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv);
