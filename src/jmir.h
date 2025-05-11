@@ -38,7 +38,6 @@ typedef enum jx_mir_opcode
 	JMIR_OP_CMP,
 	JMIR_OP_TEST,
 	JMIR_OP_JMP,
-	JMIR_OP_PHI,
 	JMIR_OP_MOV,
 	JMIR_OP_MOVSX,
 	JMIR_OP_MOVZX,
@@ -562,7 +561,6 @@ jx_mir_instruction_t* jx_mir_cmovcc(jx_mir_context_t* ctx, jx_mir_condition_code
 jx_mir_instruction_t* jx_mir_jcc(jx_mir_context_t* ctx, jx_mir_condition_code cc, jx_mir_operand_t* op);
 jx_mir_instruction_t* jx_mir_jmp(jx_mir_context_t* ctx, jx_mir_operand_t* op);
 jx_mir_instruction_t* jx_mir_call(jx_mir_context_t* ctx, jx_mir_operand_t* func, jx_mir_function_proto_t* proto);
-jx_mir_instruction_t* jx_mir_phi(jx_mir_context_t* ctx, jx_mir_operand_t* dst, uint32_t numPredecessors);
 jx_mir_instruction_t* jx_mir_push(jx_mir_context_t* ctx, jx_mir_operand_t* op);
 jx_mir_instruction_t* jx_mir_pop(jx_mir_context_t* ctx, jx_mir_operand_t* op);
 jx_mir_instruction_t* jx_mir_cdq(jx_mir_context_t* ctx);

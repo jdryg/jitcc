@@ -1092,14 +1092,6 @@ static jx_mir_operand_t* jmirgen_instrBuild_phi(jx_mirgen_context_t* ctx, jx_ir_
 
 	jx_array_push_back(ctx->m_PhiInstrArr, phiInstr);
 
-#if 0
-	// At this point the phi instruction is incomplete. It will be filled once all 
-	// the function basic blocks are processed.
-	const uint32_t numOperands = (uint32_t)jx_array_sizeu(phiInstr->super.m_OperandArr);
-	jx_mir_instruction_t* mirPhiInstr = jx_mir_phi(ctx->m_MIRCtx, dstReg, numOperands / 2);
-	jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, mirPhiInstr);
-#endif
-
 	return dstReg;
 }
 

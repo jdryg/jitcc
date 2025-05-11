@@ -819,9 +819,6 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_re
 			}
 		}
 	} break;
-	case JMIR_OP_PHI: {
-		JX_NOT_IMPLEMENTED();
-	} break;
 	case JMIR_OP_MOV:
 	case JMIR_OP_MOVSX:
 	case JMIR_OP_MOVZX: 
@@ -1682,9 +1679,6 @@ static void jmir_regAlloc_replaceInstrRegDef(jx_mir_instruction_t* instr, jx_mir
 	case JMIR_OP_JMP: {
 		JX_NOT_IMPLEMENTED();
 	} break;
-	case JMIR_OP_PHI: {
-		JX_NOT_IMPLEMENTED();
-	} break;
 	case JMIR_OP_MOV:
 	case JMIR_OP_MOVSX:
 	case JMIR_OP_MOVZX:
@@ -1772,9 +1766,6 @@ static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, jx_mir
 		JX_NOT_IMPLEMENTED();
 	} break;
 	case JMIR_OP_JMP: {
-		JX_NOT_IMPLEMENTED();
-	} break;
-	case JMIR_OP_PHI: {
 		JX_NOT_IMPLEMENTED();
 	} break;
 	case JMIR_OP_MOV:
@@ -2869,9 +2860,6 @@ static bool jmir_dce_initInstrInfo(jmir_func_pass_dce_t* pass, jmir_dce_instr_in
 			}
 		}
 	} break;
-	case JMIR_OP_PHI: {
-		JX_NOT_IMPLEMENTED();
-	} break;
 	case JMIR_OP_MOV:
 	case JMIR_OP_MOVSX:
 	case JMIR_OP_MOVZX: 
@@ -3409,7 +3397,6 @@ static bool jmir_funcPass_redundantConstEliminationRun(jx_mir_function_pass_o* i
 			case JMIR_OP_CMP:
 			case JMIR_OP_TEST:
 			case JMIR_OP_JMP:
-			case JMIR_OP_PHI: 
 			case JMIR_OP_PUSH:
 			case JMIR_OP_POP: 
 			case JMIR_OP_JO:

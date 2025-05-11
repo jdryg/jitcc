@@ -13,7 +13,6 @@ static const char* kMIROpcodeMnemonic[] = {
 	[JMIR_OP_CMP] = "cmp",
 	[JMIR_OP_TEST] = "test",
 	[JMIR_OP_JMP] = "jmp",
-	[JMIR_OP_PHI] = "phi",
 	[JMIR_OP_MOV] = "mov",
 	[JMIR_OP_MOVSX] = "movsx",
 	[JMIR_OP_MOVZX] = "movzx",
@@ -1603,18 +1602,6 @@ jx_mir_instruction_t* jx_mir_call(jx_mir_context_t* ctx, jx_mir_operand_t* func,
 			JX_CHECK(false, "Failed to allocate instruction annotation.");
 		}
 	}
-
-	return instr;
-}
-
-jx_mir_instruction_t* jx_mir_phi(jx_mir_context_t* ctx, jx_mir_operand_t* dst, uint32_t numPredecessors)
-{
-	jx_mir_instruction_t* instr = jmir_instrAlloc(ctx, JMIR_OP_PHI, 1 + numPredecessors * 2, NULL);
-	if (!instr) {
-		return NULL;
-	}
-
-	instr->m_Operands[0] = dst;
 
 	return instr;
 }

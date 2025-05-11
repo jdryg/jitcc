@@ -50,7 +50,6 @@ static const jx64gen_instr_desc_t kInstrDesc[] = {
 	[JMIR_OP_CMP]        = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_cmp },
 	[JMIR_OP_TEST]       = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_test },
 	[JMIR_OP_JMP]        = { .m_Kind = JX64GEN_INSTR_UNARY,  .u.m_UnaryFunc = jx64_jmp },
-	[JMIR_OP_PHI]        = { 0 },
 	[JMIR_OP_MOV]        = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_mov },
 	[JMIR_OP_MOVSX]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movsx },
 	[JMIR_OP_MOVZX]      = { .m_Kind = JX64GEN_INSTR_BINARY, .u.m_BinaryFunc = jx64_movzx },
