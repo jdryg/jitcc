@@ -15,6 +15,7 @@ typedef struct jx_mir_basic_block_t jx_mir_basic_block_t;
 typedef struct jx_mir_function_t jx_mir_function_t;
 typedef struct jx_mir_frame_info_t jx_mir_frame_info_t;
 typedef struct jx_mir_function_pass_t jx_mir_function_pass_t;
+typedef struct jx_mir_annotation_t jx_mir_annotation_t;
 
 typedef enum jx_mir_type_kind
 {
@@ -37,7 +38,6 @@ typedef enum jx_mir_opcode
 	JMIR_OP_CMP,
 	JMIR_OP_TEST,
 	JMIR_OP_JMP,
-	JMIR_OP_PHI,
 	JMIR_OP_MOV,
 	JMIR_OP_MOVSX,
 	JMIR_OP_MOVZX,
@@ -293,6 +293,8 @@ static const jx_mir_reg_t kMIRFuncArgFReg[] = {
 	JMIR_REG_HW_XMM(3),
 };
 
+JX_STATIC_ASSERT(JX_COUNTOF(kMIRFuncArgIReg) == JX_COUNTOF(kMIRFuncArgFReg), "Different number of GP and FP arg regs");
+
 static const jx_mir_reg_t kMIRFuncCallerSavedIReg[] = {
 	JMIR_REG_HW_GP(JMIR_HWREGID_A),
 	JMIR_REG_HW_GP(JMIR_HWREGID_C),
@@ -341,15 +343,9 @@ typedef enum jx_mir_operand_kind
 	JMIR_OPERAND_REGISTER = 0,
 	JMIR_OPERAND_CONST,
 	JMIR_OPERAND_BASIC_BLOCK,
-	JMIR_OPERAND_STACK_OBJECT,
 	JMIR_OPERAND_EXTERNAL_SYMBOL,
 	JMIR_OPERAND_MEMORY_REF,
 } jx_mir_operand_kind;
-
-typedef struct jx_mir_stack_object_t
-{
-	int32_t m_SPOffset;
-} jx_mir_stack_object_t;
 
 typedef struct jx_mir_memory_ref_t
 {
@@ -358,6 +354,15 @@ typedef struct jx_mir_memory_ref_t
 	uint32_t m_Scale;
 	int32_t m_Displacement;
 } jx_mir_memory_ref_t;
+
+typedef struct jx_mir_function_proto_t
+{
+	jx_mir_type_kind* m_Args;
+	uint32_t m_NumArgs;
+	jx_mir_type_kind m_RetType;
+	uint32_t m_Flags;
+	JX_PAD(4);
+} jx_mir_function_proto_t;
 
 typedef struct jx_mir_external_symbol_t
 {
@@ -376,16 +381,38 @@ typedef struct jx_mir_operand_t
 		int64_t m_ConstI64;                        // JMIR_OPERAND_CONST + integer m_Type
 		double m_ConstF64;                         // JMIR_OPERAND_CONST + float m_Type
 		jx_mir_basic_block_t* m_BB;                // JMIR_OPERAND_BASIC_BLOCK
-		jx_mir_stack_object_t* m_StackObj;         // JMIR_OPERAND_STACK_OBJECT
-		jx_mir_memory_ref_t m_MemRef;              // JMIR_OPERAND_MEMORY_REF
+		jx_mir_memory_ref_t* m_MemRef;             // JMIR_OPERAND_MEMORY_REF
 		jx_mir_external_symbol_t m_ExternalSymbol; // JMIR_OPERAND_EXTERNAL_SYMBOL
 	} u;
 } jx_mir_operand_t;
+
+typedef enum jx_mir_annotation_kind
+{
+	JMIR_ANNOT_INSTR_CALL_FUNC_PROTO = 0,
+} jx_mir_annotation_kind;
+
+typedef void (*jmirAnnotationDestroyCallback)(jx_mir_annotation_t* annotation);
+
+typedef struct jx_mir_annotation_t
+{
+	jx_mir_annotation_t* m_Next;
+	uint32_t m_Kind;
+	JX_PAD(4);
+
+	jmirAnnotationDestroyCallback destroy;
+} jx_mir_annotation_t;
+
+typedef struct jx_mir_annotation_func_proto_t
+{
+	JX_INHERITS(jx_mir_annotation_t);
+	jx_mir_function_proto_t* m_FuncProto;
+} jx_mir_annotation_func_proto_t;
 
 typedef struct jx_mir_instruction_t
 {
 	jx_mir_instruction_t* m_Next;
 	jx_mir_instruction_t* m_Prev;
+	jx_mir_annotation_t* m_AnnotationListHead;
 	jx_mir_basic_block_t* m_ParentBB;
 	jx_mir_operand_t** m_Operands;
 	uint32_t m_NumOperands;
@@ -409,15 +436,13 @@ typedef struct jx_mir_basic_block_t
 
 typedef struct jx_mir_function_t
 {
+	jx_mir_function_proto_t* m_Prototype;
 	char* m_Name;
 	jx_mir_basic_block_t* m_BasicBlockListHead;
 	jx_mir_frame_info_t* m_FrameInfo;
 	jx_mir_operand_t** m_Args;
-	uint32_t m_NumArgs;
-	jx_mir_type_kind m_RetType;
 	uint32_t m_NextBasicBlockID;
 	uint32_t m_NextVirtualRegID[JMIR_REG_CLASS_COUNT];
-	uint32_t m_Flags;
 	uint32_t m_UsedHWRegs[JMIR_REG_CLASS_COUNT];
 } jx_mir_function_t;
 
@@ -459,12 +484,16 @@ uint32_t jx_mir_getNumFunctions(jx_mir_context_t* ctx);
 jx_mir_function_t* jx_mir_getFunctionByID(jx_mir_context_t* ctx, uint32_t id);
 jx_mir_function_t* jx_mir_getFunctionByName(jx_mir_context_t* ctx, const char* name);
 
+jx_mir_annotation_t* jx_mir_annotationAlloc(jx_mir_context_t* ctx, uint32_t kind, jmirAnnotationDestroyCallback destroyCb, uint32_t sz);
+void jx_mir_annotationFree(jx_mir_context_t* ctx, jx_mir_annotation_t* annotation);
+
 jx_mir_global_variable_t* jx_mir_globalVarBegin(jx_mir_context_t* ctx, const char* name, uint32_t alignment);
 void jx_mir_globalVarEnd(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv);
 uint32_t jx_mir_globalVarAppendData(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv, const uint8_t* data, uint32_t sz);
 void jx_mir_globalVarAddRelocation(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv, uint32_t dataOffset, const char* symbolName);
 
-jx_mir_function_t* jx_mir_funcBegin(jx_mir_context_t* ctx, jx_mir_type_kind retType, uint32_t numArgs, jx_mir_type_kind* args, uint32_t flags, const char* name);
+jx_mir_function_proto_t* jx_mir_funcProto(jx_mir_context_t* ctx, jx_mir_type_kind retType, uint32_t numArgs, jx_mir_type_kind* args, uint32_t flags);
+jx_mir_function_t* jx_mir_funcBegin(jx_mir_context_t* ctx, const char* name, jx_mir_function_proto_t* proto);
 void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func);
 jx_mir_operand_t* jx_mir_funcGetArgument(jx_mir_context_t* ctx, jx_mir_function_t* func, uint32_t argID);
 void jx_mir_funcAppendBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb);
@@ -489,12 +518,14 @@ jx_mir_operand_t* jx_mir_opFConst(jx_mir_context_t* ctx, jx_mir_function_t* func
 jx_mir_operand_t* jx_mir_opBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb);
 jx_mir_operand_t* jx_mir_opMemoryRef(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, jx_mir_reg_t baseReg, jx_mir_reg_t indexReg, uint32_t scale, int32_t displacement);
 jx_mir_operand_t* jx_mir_opStackObj(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, uint32_t sz, uint32_t alignment);
-jx_mir_operand_t* jx_mir_opStackObjRel(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, jx_mir_stack_object_t* baseObj, int32_t offset);
+jx_mir_operand_t* jx_mir_opStackObjRel(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, jx_mir_memory_ref_t* baseObj, int32_t offset);
 jx_mir_operand_t* jx_mir_opExternalSymbol(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, const char* name, int32_t offset);
 void jx_mir_opPrint(jx_mir_context_t* ctx, jx_mir_operand_t* op, jx_string_buffer_t* sb);
 
 void jx_mir_instrFree(jx_mir_context_t* ctx, jx_mir_instruction_t* instr);
 void jx_mir_instrPrint(jx_mir_context_t* ctx, jx_mir_instruction_t* instr, jx_string_buffer_t* sb);
+jx_mir_annotation_t* jx_mir_instrGetAnnotation(jx_mir_context_t* ctx, jx_mir_instruction_t* instr, uint32_t annotationKind);
+void jx_mir_instrAddAnnotation(jx_mir_context_t* ctx, jx_mir_instruction_t* instr, jx_mir_annotation_t* annotation);
 jx_mir_instruction_t* jx_mir_mov(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_movsx(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_movzx(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
@@ -529,8 +560,7 @@ jx_mir_instruction_t* jx_mir_rol(jx_mir_context_t* ctx, jx_mir_operand_t* op, jx
 jx_mir_instruction_t* jx_mir_cmovcc(jx_mir_context_t* ctx, jx_mir_condition_code cc, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_jcc(jx_mir_context_t* ctx, jx_mir_condition_code cc, jx_mir_operand_t* op);
 jx_mir_instruction_t* jx_mir_jmp(jx_mir_context_t* ctx, jx_mir_operand_t* op);
-jx_mir_instruction_t* jx_mir_call(jx_mir_context_t* ctx, jx_mir_operand_t* func);
-jx_mir_instruction_t* jx_mir_phi(jx_mir_context_t* ctx, jx_mir_operand_t* dst, uint32_t numPredecessors);
+jx_mir_instruction_t* jx_mir_call(jx_mir_context_t* ctx, jx_mir_operand_t* func, jx_mir_function_proto_t* proto);
 jx_mir_instruction_t* jx_mir_push(jx_mir_context_t* ctx, jx_mir_operand_t* op);
 jx_mir_instruction_t* jx_mir_pop(jx_mir_context_t* ctx, jx_mir_operand_t* op);
 jx_mir_instruction_t* jx_mir_cdq(jx_mir_context_t* ctx);
@@ -715,6 +745,16 @@ static inline bool jx_mir_opIsReg(jx_mir_operand_t* op, jx_mir_reg_t reg)
 		;
 }
 
+static inline bool jx_mir_opIsStackObj(jx_mir_operand_t* op)
+{
+	return true
+		&& op->m_Kind == JMIR_OPERAND_MEMORY_REF
+		&& jx_mir_regEqual(op->u.m_MemRef->m_BaseReg, kMIRRegGP_SP)
+		&& !jx_mir_regIsValid(op->u.m_MemRef->m_IndexReg)
+		&& op->u.m_MemRef->m_Scale == 1
+		;
+}
+
 static inline uint32_t jx_mir_typeGetSize(jx_mir_type_kind type)
 {
 	static uint32_t kTypeSize[] = {
@@ -757,6 +797,14 @@ static inline bool jx_mir_typeIsFloatingPoint(jx_mir_type_kind type)
 		|| type == JMIR_TYPE_F32 
 		|| type == JMIR_TYPE_F64
 		|| type == JMIR_TYPE_F128
+		;
+}
+
+static inline jx_mir_reg_class jx_mir_typeGetClass(jx_mir_type_kind type)
+{
+	return jx_mir_typeIsFloatingPoint(type)
+		? JMIR_REG_CLASS_XMM
+		: JMIR_REG_CLASS_GP
 		;
 }
 

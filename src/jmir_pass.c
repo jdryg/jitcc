@@ -266,15 +266,11 @@ static bool jmir_funcPass_fixMemMemOpsRun(jx_mir_function_pass_o* inst, jx_mir_c
 			case JMIR_OP_MOV:
 			case JMIR_OP_MOVSX:
 			case JMIR_OP_MOVZX:
-			case JMIR_OP_CMP: 
-			case JMIR_OP_MOVSS: 
-			case JMIR_OP_MOVSD:
-			case JMIR_OP_MOVD: 
-			case JMIR_OP_MOVQ: {
+			case JMIR_OP_CMP: {
 				jx_mir_operand_t* lhs = instr->m_Operands[0];
 				jx_mir_operand_t* rhs = instr->m_Operands[1];
-				const bool isLhsMem = lhs->m_Kind == JMIR_OPERAND_MEMORY_REF || lhs->m_Kind == JMIR_OPERAND_STACK_OBJECT;
-				const bool isRhsMem = rhs->m_Kind == JMIR_OPERAND_MEMORY_REF || rhs->m_Kind == JMIR_OPERAND_STACK_OBJECT;
+				const bool isLhsMem = lhs->m_Kind == JMIR_OPERAND_MEMORY_REF;
+				const bool isRhsMem = rhs->m_Kind == JMIR_OPERAND_MEMORY_REF;
 				if (isLhsMem && isRhsMem) {
 					jx_mir_operand_t* vreg = jx_mir_opVirtualReg(ctx, func, rhs->m_Type);
 					jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, vreg, rhs));
@@ -814,13 +810,10 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_re
 			if (src->m_Kind == JMIR_OPERAND_REGISTER) {
 				jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_Reg);
 			} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-				jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseReg);
-				jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexReg);
+				jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_BaseReg);
+				jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_IndexReg);
 			}
 		}
-	} break;
-	case JMIR_OP_PHI: {
-		JX_NOT_IMPLEMENTED();
 	} break;
 	case JMIR_OP_MOV:
 	case JMIR_OP_MOVSX:
@@ -843,16 +836,16 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_re
 		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
 			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_Reg);
 		} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseReg);
-			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_BaseReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_IndexReg);
 		}
 
 		jx_mir_operand_t* dst = instr->m_Operands[0];
 		if (dst->m_Kind == JMIR_OPERAND_REGISTER) {
 			jmir_regAlloc_instrAddDef(pass, instrInfo, dst->u.m_Reg);
 		} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_MemRef.m_BaseReg);
-			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_MemRef.m_IndexReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_MemRef->m_BaseReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_MemRef->m_IndexReg);
 		}
 	} break;
 	case JMIR_OP_IDIV:
@@ -865,8 +858,8 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_re
 		if (op->m_Kind == JMIR_OPERAND_REGISTER) {
 			jmir_regAlloc_instrAddUse(pass, instrInfo, op->u.m_Reg);
 		} else if (op->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, op->u.m_MemRef.m_BaseReg);
-			jmir_regAlloc_instrAddUse(pass, instrInfo, op->u.m_MemRef.m_IndexReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, op->u.m_MemRef->m_BaseReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, op->u.m_MemRef->m_IndexReg);
 		}
 
 		jmir_regAlloc_instrAddDef(pass, instrInfo, kMIRRegGP_A);
@@ -937,8 +930,8 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_re
 		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
 			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_Reg);
 		} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseReg);
-			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_BaseReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_IndexReg);
 		}
 
 		jx_mir_operand_t* dst = instr->m_Operands[0];
@@ -946,19 +939,19 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_re
 			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_Reg); // binary operators use both src and dst operands.
 			jmir_regAlloc_instrAddDef(pass, instrInfo, dst->u.m_Reg);
 		} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_MemRef.m_BaseReg);
-			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_MemRef.m_IndexReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_MemRef->m_BaseReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, dst->u.m_MemRef->m_IndexReg);
 		}
 	} break;
 	case JMIR_OP_LEA: {
 		jx_mir_operand_t* src = instr->m_Operands[1];
 		if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseReg);
-			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_BaseReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_IndexReg);
 		} else if (src->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
 			// NOTE: External symbols are RIP based so there is no register to use.
 		} else {
-			JX_CHECK(src->m_Kind == JMIR_OPERAND_STACK_OBJECT, "lea source operand expected to be a memory ref or a stack object.");
+			JX_CHECK(false, "lea source operand expected to be a memory ref or a stack object.");
 		}
 
 		jx_mir_operand_t* dst = instr->m_Operands[0];
@@ -973,22 +966,41 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_re
 			JX_CHECK(funcOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL, "TODO: Handle call [memRef]/[stack object]?");
 		}
 
-		// TODO: Annotate call with the function signature so I can know which registers are actually used
-		// by the call. For now assume all registers are used.
-		if (pass->m_RegClass == JMIR_REG_CLASS_GP) {
-			for (uint32_t iRegArg = 0; iRegArg < JX_COUNTOF(kMIRFuncArgIReg); ++iRegArg) {
-				jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgIReg[iRegArg]);
+		jx_mir_annotation_func_proto_t* funcProtoAnnotation = (jx_mir_annotation_func_proto_t*)jx_mir_instrGetAnnotation(pass->m_Ctx, instrInfo->m_Instr, JMIR_ANNOT_INSTR_CALL_FUNC_PROTO);
+		if (!funcProtoAnnotation) {
+			// No function prototype specified for this call. Assume all func arg regs are used.
+			if (pass->m_RegClass == JMIR_REG_CLASS_GP) {
+				for (uint32_t iRegArg = 0; iRegArg < JX_COUNTOF(kMIRFuncArgIReg); ++iRegArg) {
+					jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgIReg[iRegArg]);
+				}
+			} else if (pass->m_RegClass == JMIR_REG_CLASS_XMM) {
+				for (uint32_t iRegArg = 0; iRegArg < JX_COUNTOF(kMIRFuncArgFReg); ++iRegArg) {
+					jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgFReg[iRegArg]);
+				}
+			} else {
+				JX_CHECK(false, "Unknown register class");
 			}
+		} else {
+			jx_mir_function_proto_t* funcProto = funcProtoAnnotation->m_FuncProto;
+			const uint32_t numArgs = jx_min_u32(funcProto->m_NumArgs, JX_COUNTOF(kMIRFuncArgIReg));
+			for (uint32_t iArg = 0; iArg < numArgs; ++iArg) {
+				jx_mir_reg_class argClass = jx_mir_typeGetClass(funcProto->m_Args[iArg]);
+				if (argClass == JMIR_REG_CLASS_GP) {
+					jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgIReg[iArg]);
+				} else if (argClass== JMIR_REG_CLASS_XMM) {
+					jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgFReg[iArg]);
+				} else {
+					JX_CHECK(false, "Unknown register class");
+				}
+			}
+		}
 
+		if (pass->m_RegClass == JMIR_REG_CLASS_GP) {
 			const uint32_t numCallerSavedRegs = JX_COUNTOF(kMIRFuncCallerSavedIReg);
 			for (uint32_t iReg = 0; iReg < numCallerSavedRegs; ++iReg) {
 				jmir_regAlloc_instrAddDef(pass, instrInfo, kMIRFuncCallerSavedIReg[iReg]);
 			}
 		} else if (pass->m_RegClass == JMIR_REG_CLASS_XMM) {
-			for (uint32_t iRegArg = 0; iRegArg < JX_COUNTOF(kMIRFuncArgFReg); ++iRegArg) {
-				jmir_regAlloc_instrAddUse(pass, instrInfo, kMIRFuncArgFReg[iRegArg]);
-			}
-
 			const uint32_t numCallerSavedRegs = JX_COUNTOF(kMIRFuncCallerSavedFReg);
 			for (uint32_t iReg = 0; iReg < numCallerSavedRegs; ++iReg) {
 				jmir_regAlloc_instrAddDef(pass, instrInfo, kMIRFuncCallerSavedFReg[iReg]);
@@ -996,6 +1008,9 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_re
 		} else {
 			JX_CHECK(false, "Unknown register class");
 		}
+
+		// No need to specify RAX as def because it's a caller-saved register and it's
+		// already added to the def list.
 	} break;
 	case JMIR_OP_PUSH: {
 		JX_NOT_IMPLEMENTED();
@@ -1028,8 +1043,8 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_re
 		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
 			jmir_regAlloc_instrAddDef(pass, instrInfo, src->u.m_Reg);
 		} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseReg);
-			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_BaseReg);
+			jmir_regAlloc_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_IndexReg);
 		}
 	} break;
 	case JMIR_OP_JO:
@@ -1478,7 +1493,7 @@ static void jmir_regAlloc_replaceRegs(jmir_func_pass_regalloc_t* pass)
 						}
 					}
 				} else if (operand->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-					jx_mir_memory_ref_t* memRef = &operand->u.m_MemRef;
+					jx_mir_memory_ref_t* memRef = operand->u.m_MemRef;
 
 					if (jx_mir_regIsValid(memRef->m_BaseReg) && jx_mir_regIsVirtual(memRef->m_BaseReg) && jx_mir_regIsClass(memRef->m_BaseReg, pass->m_RegClass)) {
 						jmir_graph_node_t* node = jmir_regAlloc_getNode(pass, jmir_regAlloc_mapRegToID(pass, memRef->m_BaseReg));
@@ -1575,7 +1590,7 @@ static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass)
 								break;
 							}
 						} else if (operand->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-							if (jx_mir_regEqual(operand->u.m_MemRef.m_BaseReg, vreg) || jx_mir_regEqual(operand->u.m_MemRef.m_IndexReg, vreg)) {
+							if (jx_mir_regEqual(operand->u.m_MemRef->m_BaseReg, vreg) || jx_mir_regEqual(operand->u.m_MemRef->m_IndexReg, vreg)) {
 								regType = JMIR_TYPE_I64;
 								break;
 							}
@@ -1658,9 +1673,6 @@ static void jmir_regAlloc_replaceInstrRegDef(jx_mir_instruction_t* instr, jx_mir
 		JX_NOT_IMPLEMENTED();
 	} break;
 	case JMIR_OP_JMP: {
-		JX_NOT_IMPLEMENTED();
-	} break;
-	case JMIR_OP_PHI: {
 		JX_NOT_IMPLEMENTED();
 	} break;
 	case JMIR_OP_MOV:
@@ -1750,9 +1762,6 @@ static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, jx_mir
 		JX_NOT_IMPLEMENTED();
 	} break;
 	case JMIR_OP_JMP: {
-		JX_NOT_IMPLEMENTED();
-	} break;
-	case JMIR_OP_PHI: {
 		JX_NOT_IMPLEMENTED();
 	} break;
 	case JMIR_OP_MOV:
@@ -2390,10 +2399,11 @@ static bool jmir_funcPass_combineLEAsRun(jx_mir_function_pass_o* inst, jx_mir_co
 				jx_mir_operand_t* addrOp = instr->m_Operands[1];
 
 				JX_CHECK(ptrOp->m_Kind == JMIR_OPERAND_REGISTER, "Expected lea destination operand to be a register.");
-				if (addrOp->m_Kind == JMIR_OPERAND_STACK_OBJECT) {
+				if (jx_mir_opIsStackObj(addrOp)) {
 					jx_hashmapSet(pass->m_ValueMap, &(jmir_reg_value_item_t){ .m_Reg = ptrOp->u.m_Reg, .m_Value = addrOp });
-				} else if (addrOp->m_Kind == JMIR_OPERAND_MEMORY_REF && !jx_mir_regIsValid(addrOp->u.m_MemRef.m_IndexReg)) {
-					jx_mir_operand_t* newOperand = jmir_combineLEAs_replaceMemRef(pass, addrOp->m_Type, &addrOp->u.m_MemRef);
+				} else 
+				if (addrOp->m_Kind == JMIR_OPERAND_MEMORY_REF && !jx_mir_regIsValid(addrOp->u.m_MemRef->m_IndexReg)) {
+					jx_mir_operand_t* newOperand = jmir_combineLEAs_replaceMemRef(pass, addrOp->m_Type, addrOp->u.m_MemRef);
 					if (newOperand) {
 						instr->m_Operands[1] = newOperand;
 						jx_hashmapSet(pass->m_ValueMap, &(jmir_reg_value_item_t){.m_Reg = ptrOp->u.m_Reg, .m_Value = newOperand });
@@ -2424,16 +2434,16 @@ static bool jmir_funcPass_combineLEAsRun(jx_mir_function_pass_o* inst, jx_mir_co
 					if (item) {
 						jx_hashmapSet(pass->m_ValueMap, &(jmir_reg_value_item_t){.m_Reg = dstOp->u.m_Reg, .m_Value = item->m_Value });
 					}
-				} else if (dstOp->m_Kind == JMIR_OPERAND_REGISTER && srcOp->m_Kind == JMIR_OPERAND_MEMORY_REF && !jx_mir_regIsValid(srcOp->u.m_MemRef.m_IndexReg)) {
+				} else if (dstOp->m_Kind == JMIR_OPERAND_REGISTER && srcOp->m_Kind == JMIR_OPERAND_MEMORY_REF && !jx_mir_regIsValid(srcOp->u.m_MemRef->m_IndexReg)) {
 					// mov reg, [reg + disp];
 					// If the base reg is in the hashmap replace memory ref with the value from the hashmap.
-					jx_mir_operand_t* newOperand = jmir_combineLEAs_replaceMemRef(pass, dstOp->m_Type, &srcOp->u.m_MemRef);
+					jx_mir_operand_t* newOperand = jmir_combineLEAs_replaceMemRef(pass, dstOp->m_Type, srcOp->u.m_MemRef);
 					if (newOperand) {
 						instr->m_Operands[1] = newOperand;
 					}
-				} else if (dstOp->m_Kind == JMIR_OPERAND_MEMORY_REF && !jx_mir_regIsValid(dstOp->u.m_MemRef.m_IndexReg)) {
+				} else if (dstOp->m_Kind == JMIR_OPERAND_MEMORY_REF && !jx_mir_regIsValid(dstOp->u.m_MemRef->m_IndexReg)) {
 					// mov [baseReg + offset], value
-					jx_mir_operand_t* newOperand = jmir_combineLEAs_replaceMemRef(pass, dstOp->m_Type, &dstOp->u.m_MemRef);
+					jx_mir_operand_t* newOperand = jmir_combineLEAs_replaceMemRef(pass, dstOp->m_Type, dstOp->u.m_MemRef);
 					if (newOperand) {
 						instr->m_Operands[0] = newOperand;
 					}
@@ -2469,10 +2479,11 @@ static jx_mir_operand_t* jmir_combineLEAs_replaceMemRef(jmir_func_pass_combine_l
 	jx_mir_operand_t* newOp = NULL;
 	jx_mir_operand_t* addr = item->m_Value;
 	if (addr->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-		newOp = jx_mir_opMemoryRef(pass->m_Ctx, pass->m_Func, type, addr->u.m_MemRef.m_BaseReg, addr->u.m_MemRef.m_IndexReg, addr->u.m_MemRef.m_Scale, addr->u.m_MemRef.m_Displacement + memRef->m_Displacement);
-	} else if (addr->m_Kind == JMIR_OPERAND_STACK_OBJECT) {
-//		JX_CHECK(memRef->m_Displacement >= 0, "Expected positive displacement.");
-		newOp = jx_mir_opStackObjRel(pass->m_Ctx, pass->m_Func, type, addr->u.m_StackObj, memRef->m_Displacement);
+		if (jx_mir_opIsStackObj(addr)) {
+			newOp = jx_mir_opStackObjRel(pass->m_Ctx, pass->m_Func, type, addr->u.m_MemRef, memRef->m_Displacement);
+		} else {
+			newOp = jx_mir_opMemoryRef(pass->m_Ctx, pass->m_Func, type, addr->u.m_MemRef->m_BaseReg, addr->u.m_MemRef->m_IndexReg, addr->u.m_MemRef->m_Scale, addr->u.m_MemRef->m_Displacement + memRef->m_Displacement);
+		}
 	} else if (addr->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
 		JX_NOT_IMPLEMENTED();
 	} else {
@@ -2840,13 +2851,10 @@ static bool jmir_dce_initInstrInfo(jmir_func_pass_dce_t* pass, jmir_dce_instr_in
 			if (src->m_Kind == JMIR_OPERAND_REGISTER) {
 				jmir_dce_instrAddUse(pass, instrInfo, src->u.m_Reg);
 			} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-				jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseReg);
-				jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexReg);
+				jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_BaseReg);
+				jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_IndexReg);
 			}
 		}
-	} break;
-	case JMIR_OP_PHI: {
-		JX_NOT_IMPLEMENTED();
 	} break;
 	case JMIR_OP_MOV:
 	case JMIR_OP_MOVSX:
@@ -2869,16 +2877,16 @@ static bool jmir_dce_initInstrInfo(jmir_func_pass_dce_t* pass, jmir_dce_instr_in
 		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
 			jmir_dce_instrAddUse(pass, instrInfo, src->u.m_Reg);
 		} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseReg);
-			jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexReg);
+			jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_BaseReg);
+			jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_IndexReg);
 		}
 
 		jx_mir_operand_t* dst = instr->m_Operands[0];
 		if (dst->m_Kind == JMIR_OPERAND_REGISTER) {
 			jmir_dce_instrAddDef(pass, instrInfo, dst->u.m_Reg);
 		} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_dce_instrAddUse(pass, instrInfo, dst->u.m_MemRef.m_BaseReg);
-			jmir_dce_instrAddUse(pass, instrInfo, dst->u.m_MemRef.m_IndexReg);
+			jmir_dce_instrAddUse(pass, instrInfo, dst->u.m_MemRef->m_BaseReg);
+			jmir_dce_instrAddUse(pass, instrInfo, dst->u.m_MemRef->m_IndexReg);
 		}
 	} break;
 	case JMIR_OP_IDIV:
@@ -2891,8 +2899,8 @@ static bool jmir_dce_initInstrInfo(jmir_func_pass_dce_t* pass, jmir_dce_instr_in
 		if (op->m_Kind == JMIR_OPERAND_REGISTER) {
 			jmir_dce_instrAddUse(pass, instrInfo, op->u.m_Reg);
 		} else if (op->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_dce_instrAddUse(pass, instrInfo, op->u.m_MemRef.m_BaseReg);
-			jmir_dce_instrAddUse(pass, instrInfo, op->u.m_MemRef.m_IndexReg);
+			jmir_dce_instrAddUse(pass, instrInfo, op->u.m_MemRef->m_BaseReg);
+			jmir_dce_instrAddUse(pass, instrInfo, op->u.m_MemRef->m_IndexReg);
 		}
 
 		jmir_dce_instrAddDef(pass, instrInfo, kMIRRegGP_A);
@@ -2963,8 +2971,8 @@ static bool jmir_dce_initInstrInfo(jmir_func_pass_dce_t* pass, jmir_dce_instr_in
 		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
 			jmir_dce_instrAddUse(pass, instrInfo, src->u.m_Reg);
 		} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseReg);
-			jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexReg);
+			jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_BaseReg);
+			jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_IndexReg);
 		}
 
 		jx_mir_operand_t* dst = instr->m_Operands[0];
@@ -2972,19 +2980,19 @@ static bool jmir_dce_initInstrInfo(jmir_func_pass_dce_t* pass, jmir_dce_instr_in
 			jmir_dce_instrAddUse(pass, instrInfo, dst->u.m_Reg); // binary operators use both src and dst operands.
 			jmir_dce_instrAddDef(pass, instrInfo, dst->u.m_Reg);
 		} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_dce_instrAddUse(pass, instrInfo, dst->u.m_MemRef.m_BaseReg);
-			jmir_dce_instrAddUse(pass, instrInfo, dst->u.m_MemRef.m_IndexReg);
+			jmir_dce_instrAddUse(pass, instrInfo, dst->u.m_MemRef->m_BaseReg);
+			jmir_dce_instrAddUse(pass, instrInfo, dst->u.m_MemRef->m_IndexReg);
 		}
 	} break;
 	case JMIR_OP_LEA: {
 		jx_mir_operand_t* src = instr->m_Operands[1];
 		if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseReg);
-			jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexReg);
+			jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_BaseReg);
+			jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_IndexReg);
 		} else if (src->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
 			// NOTE: External symbols are RIP based so there is no register to use.
 		} else {
-			JX_CHECK(src->m_Kind == JMIR_OPERAND_STACK_OBJECT, "lea source operand expected to be a memory ref or a stack object.");
+			JX_CHECK(false, "lea source operand expected to be a memory ref or a stack object.");
 		}
 
 		jx_mir_operand_t* dst = instr->m_Operands[0];
@@ -2999,25 +3007,37 @@ static bool jmir_dce_initInstrInfo(jmir_func_pass_dce_t* pass, jmir_dce_instr_in
 			JX_CHECK(funcOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL, "TODO: Handle call [memRef]/[stack object]?");
 		}
 
-		// TODO: Annotate call with the function signature so I can know which registers are actually used
-		// by the call. For now assume all registers are used.
-		{
+		jx_mir_annotation_func_proto_t* funcProtoAnnot = (jx_mir_annotation_func_proto_t*)jx_mir_instrGetAnnotation(pass->m_Ctx, instrInfo->m_Instr, JMIR_ANNOT_INSTR_CALL_FUNC_PROTO);
+		if (!funcProtoAnnot) {
 			for (uint32_t iRegArg = 0; iRegArg < JX_COUNTOF(kMIRFuncArgIReg); ++iRegArg) {
 				jmir_dce_instrAddUse(pass, instrInfo, kMIRFuncArgIReg[iRegArg]);
 			}
-
-			const uint32_t numCallerSavedRegs = JX_COUNTOF(kMIRFuncCallerSavedIReg);
-			for (uint32_t iReg = 0; iReg < numCallerSavedRegs; ++iReg) {
-				jmir_dce_instrAddDef(pass, instrInfo, kMIRFuncCallerSavedIReg[iReg]);
-			}
-		}
-		{
 			for (uint32_t iRegArg = 0; iRegArg < JX_COUNTOF(kMIRFuncArgFReg); ++iRegArg) {
 				jmir_dce_instrAddUse(pass, instrInfo, kMIRFuncArgFReg[iRegArg]);
 			}
+		} else {
+			jx_mir_function_proto_t* funcProto = funcProtoAnnot->m_FuncProto;
+			const uint32_t numArgs = jx_min_u32(funcProto->m_NumArgs, JX_COUNTOF(kMIRFuncArgIReg));
+			for (uint32_t iArg = 0; iArg < numArgs; ++iArg) {
+				jx_mir_reg_class argClass = jx_mir_typeGetClass(funcProto->m_Args[iArg]);
+				if (argClass == JMIR_REG_CLASS_GP) {
+					jmir_dce_instrAddUse(pass, instrInfo, kMIRFuncArgIReg[iArg]);
+				} else if (argClass == JMIR_REG_CLASS_XMM) {
+					jmir_dce_instrAddUse(pass, instrInfo, kMIRFuncArgFReg[iArg]);
+				} else {
+					JX_CHECK(false, "Unknown register class");
+				}
+			}
+		}
 
-			const uint32_t numCallerSavedRegs = JX_COUNTOF(kMIRFuncCallerSavedFReg);
-			for (uint32_t iReg = 0; iReg < numCallerSavedRegs; ++iReg) {
+		{
+			const uint32_t numCallerSavedIRegs = JX_COUNTOF(kMIRFuncCallerSavedIReg);
+			for (uint32_t iReg = 0; iReg < numCallerSavedIRegs; ++iReg) {
+				jmir_dce_instrAddDef(pass, instrInfo, kMIRFuncCallerSavedIReg[iReg]);
+			}
+
+			const uint32_t numCallerSavedFRegs = JX_COUNTOF(kMIRFuncCallerSavedFReg);
+			for (uint32_t iReg = 0; iReg < numCallerSavedFRegs; ++iReg) {
 				jmir_dce_instrAddDef(pass, instrInfo, kMIRFuncCallerSavedFReg[iReg]);
 			}
 		}
@@ -3053,8 +3073,8 @@ static bool jmir_dce_initInstrInfo(jmir_func_pass_dce_t* pass, jmir_dce_instr_in
 		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
 			jmir_dce_instrAddDef(pass, instrInfo, src->u.m_Reg);
 		} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_BaseReg);
-			jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef.m_IndexReg);
+			jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_BaseReg);
+			jmir_dce_instrAddUse(pass, instrInfo, src->u.m_MemRef->m_IndexReg);
 		}
 	} break;
 	case JMIR_OP_JO:
@@ -3373,7 +3393,6 @@ static bool jmir_funcPass_redundantConstEliminationRun(jx_mir_function_pass_o* i
 			case JMIR_OP_CMP:
 			case JMIR_OP_TEST:
 			case JMIR_OP_JMP:
-			case JMIR_OP_PHI: 
 			case JMIR_OP_PUSH:
 			case JMIR_OP_POP: 
 			case JMIR_OP_JO:

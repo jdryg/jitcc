@@ -21,8 +21,6 @@ typedef struct jx_ir_argument_t jx_ir_argument_t;
 typedef struct jx_ir_function_t jx_ir_function_t;
 typedef struct jx_ir_basic_block_t jx_ir_basic_block_t;
 typedef struct jx_ir_instruction_t jx_ir_instruction_t;
-typedef struct jx_ir_symbol_table_t jx_ir_symbol_table_t;
-typedef struct jx_ir_vm_t jx_ir_vm_t;
 typedef struct jx_ir_function_pass_t jx_ir_function_pass_t;
 
 typedef enum jx_ir_value_kind
@@ -77,45 +75,44 @@ typedef enum jx_ir_linkage_kind
 
 typedef enum jx_ir_opcode
 {
-	// Can execute ---------------*
-	// Can create -------------*  |
-	//                         |  |
-	JIR_OP_RET,             // OK OK
-	JIR_OP_BRANCH,          // OK OK
-	JIR_OP_ADD,             // OK OK
-	JIR_OP_SUB,             // OK OK
-	JIR_OP_MUL,             // OK OK
-	JIR_OP_DIV,             // OK OK
-	JIR_OP_REM,             // OK OK
-	JIR_OP_AND,             // OK OK
-	JIR_OP_OR,              // OK OK
-	JIR_OP_XOR,             // OK OK
-	JIR_OP_SET_LE,          // OK OK
-	JIR_OP_SET_GE,          // OK OK
-	JIR_OP_SET_LT,          // OK OK
-	JIR_OP_SET_GT,          // OK OK
-	JIR_OP_SET_EQ,          // OK OK
-	JIR_OP_SET_NE,          // OK OK
-	JIR_OP_ALLOCA,          // OK OK
-	JIR_OP_LOAD,            // OK OK
-	JIR_OP_STORE,           // OK OK
-	JIR_OP_GET_ELEMENT_PTR, // OK -
-	JIR_OP_PHI,             // OK -
-	JIR_OP_CALL,            // OK OK
-	JIR_OP_SHL,             // OK OK
-	JIR_OP_SHR,             // OK OK
-	JIR_OP_TRUNC,           // OK -
-	JIR_OP_ZEXT,            // OK -
-	JIR_OP_SEXT,            // OK -
-	JIR_OP_PTR_TO_INT,      // OK -
-	JIR_OP_INT_TO_PTR,      // OK -
-	JIR_OP_BITCAST,         // OK -
-	JIR_OP_FPEXT,           // OK - 
-	JIR_OP_FPTRUNC,         // OK - 
-	JIR_OP_FP2UI,           // OK - 
-	JIR_OP_FP2SI,           // OK - 
-	JIR_OP_UI2FP,           // OK - 
-	JIR_OP_SI2FP,           // OK - 
+	// Can create -------------*
+	//                         |
+	JIR_OP_RET,             // OK
+	JIR_OP_BRANCH,          // OK
+	JIR_OP_ADD,             // OK
+	JIR_OP_SUB,             // OK
+	JIR_OP_MUL,             // OK
+	JIR_OP_DIV,             // OK
+	JIR_OP_REM,             // OK
+	JIR_OP_AND,             // OK
+	JIR_OP_OR,              // OK
+	JIR_OP_XOR,             // OK
+	JIR_OP_SET_LE,          // OK
+	JIR_OP_SET_GE,          // OK
+	JIR_OP_SET_LT,          // OK
+	JIR_OP_SET_GT,          // OK
+	JIR_OP_SET_EQ,          // OK
+	JIR_OP_SET_NE,          // OK
+	JIR_OP_ALLOCA,          // OK
+	JIR_OP_LOAD,            // OK
+	JIR_OP_STORE,           // OK
+	JIR_OP_GET_ELEMENT_PTR, // OK
+	JIR_OP_PHI,             // OK
+	JIR_OP_CALL,            // OK
+	JIR_OP_SHL,             // OK
+	JIR_OP_SHR,             // OK
+	JIR_OP_TRUNC,           // OK
+	JIR_OP_ZEXT,            // OK
+	JIR_OP_SEXT,            // OK
+	JIR_OP_PTR_TO_INT,      // OK
+	JIR_OP_INT_TO_PTR,      // OK
+	JIR_OP_BITCAST,         // OK
+	JIR_OP_FPEXT,           // OK
+	JIR_OP_FPTRUNC,         // OK
+	JIR_OP_FP2UI,           // OK
+	JIR_OP_FP2SI,           // OK
+	JIR_OP_UI2FP,           // OK
+	JIR_OP_SI2FP,           // OK
 
 	JIR_OP_SET_CC_BASE = JIR_OP_SET_LE
 } jx_ir_opcode;
@@ -334,7 +331,6 @@ typedef struct jx_ir_function_t
 	jx_ir_function_t* m_Next;
 	jx_ir_basic_block_t* m_BasicBlockListHead;
 	jx_ir_argument_t* m_ArgListHead;
-	jx_ir_symbol_table_t* m_SymbolTable;
 	uint32_t m_NextTempID;
 	JX_PAD(4);
 } jx_ir_function_t;
@@ -348,23 +344,6 @@ typedef struct jx_ir_instruction_t
 	jx_ir_opcode m_OpCode;
 	JX_PAD(4);
 } jx_ir_instruction_t;
-
-typedef union jx_ir_generic_value_t
-{
-	bool m_Bool;
-	uint8_t m_U8;
-	int8_t m_I8;
-	uint16_t m_U16;
-	int16_t m_I16;
-	uint32_t m_U32;
-	int32_t m_I32;
-	uint64_t m_U64;
-	int64_t m_I64;
-	float m_F32;
-	double m_F64;
-	uintptr_t m_Ptr;
-	uint8_t m_Untyped[8];
-} jx_ir_generic_value_t;
 
 typedef struct jx_ir_function_pass_o jx_ir_function_pass_o;
 typedef struct jx_ir_function_pass_t
@@ -380,10 +359,6 @@ jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator);
 void jx_ir_destroyContext(jx_ir_context_t* ctx);
 void jx_ir_print(jx_ir_context_t* ctx, jx_string_buffer_t* sb);
 jx_ir_module_t* jx_ir_getModule(jx_ir_context_t* ctx, uint32_t id);
-
-jx_ir_vm_t* jx_ir_vmAlloc(jx_ir_context_t* ctx, jx_ir_module_t* mod);
-void jx_ir_vmFree(jx_ir_context_t* ctx, jx_ir_vm_t* vm);
-jx_ir_generic_value_t jx_ir_vmExecFunc(jx_ir_context_t* ctx, jx_ir_vm_t* vm, jx_ir_function_t* func, uint32_t numArgs, jx_ir_generic_value_t* args);
 
 jx_ir_module_t* jx_ir_moduleBegin(jx_ir_context_t* ctx, const char* name);
 void jx_ir_moduleEnd(jx_ir_context_t* ctx, jx_ir_module_t* mod);
