@@ -148,8 +148,7 @@ typedef struct jx_mir_frame_info_t
 typedef struct jx_mir_context_t
 {
 	jx_allocator_i* m_Allocator;
-	jx_allocator_i* m_OperandAllocator;
-	jx_allocator_i* m_MemRefAllocator;
+	jx_allocator_i* m_LinearAllocator;
 	jx_mir_function_t** m_FuncArr;
 	jx_mir_global_variable_t** m_GlobalVarArr;
 	jx_mir_function_pass_t* m_OnFuncEndPasses;
@@ -165,6 +164,7 @@ static jx_mir_instruction_t* jmir_instrAlloc3(jx_mir_context_t* ctx, uint32_t op
 static jx_mir_operand_t* jmir_funcCreateArgument(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb, uint32_t argID, jx_mir_type_kind argType);
 static void jmir_funcFree(jx_mir_context_t* ctx, jx_mir_function_t* func);
 static void jmir_globalVarFree(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv);
+static jx_mir_memory_ref_t* jmir_memRefAlloc(jx_mir_context_t* ctx, jx_mir_reg_t baseReg, jx_mir_reg_t indexReg, uint32_t scale, int32_t displacement);
 static jx_mir_frame_info_t* jmir_frameCreate(jx_mir_context_t* ctx);
 static void jmir_frameDestroy(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo);
 static jx_mir_memory_ref_t* jmir_frameAllocObj(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo, uint32_t sz, uint32_t alignment);
@@ -186,14 +186,8 @@ jx_mir_context_t* jx_mir_createContext(jx_allocator_i* allocator)
 	jx_memset(ctx, 0, sizeof(jx_mir_context_t));
 	ctx->m_Allocator = allocator;
 
-	ctx->m_OperandAllocator = allocator_api->createPoolAllocator(sizeof(jx_mir_operand_t), 512, allocator);
-	if (!ctx->m_OperandAllocator) {
-		jx_mir_destroyContext(ctx);
-		return NULL;
-	}
-
-	ctx->m_MemRefAllocator = allocator_api->createPoolAllocator(sizeof(jx_mir_memory_ref_t), 512, allocator);
-	if (!ctx->m_MemRefAllocator) {
+	ctx->m_LinearAllocator = allocator_api->createLinearAllocator(256 << 10, allocator);
+	if (!ctx->m_LinearAllocator) {
 		jx_mir_destroyContext(ctx);
 		return NULL;
 	}
@@ -453,14 +447,9 @@ void jx_mir_destroyContext(jx_mir_context_t* ctx)
 		ctx->m_FuncProtoMap = NULL;
 	}
 
-	if (ctx->m_MemRefAllocator) {
-		allocator_api->destroyPoolAllocator(ctx->m_MemRefAllocator);
-		ctx->m_MemRefAllocator = NULL;
-	}
-
-	if (ctx->m_OperandAllocator) {
-		allocator_api->destroyPoolAllocator(ctx->m_OperandAllocator);
-		ctx->m_OperandAllocator = NULL;
+	if (ctx->m_LinearAllocator) {
+		allocator_api->destroyLinearAllocator(ctx->m_LinearAllocator);
+		ctx->m_LinearAllocator = NULL;
 	}
 
 	JX_FREE(allocator, ctx);
@@ -1096,7 +1085,7 @@ jx_mir_operand_t* jx_mir_opMemoryRef(jx_mir_context_t* ctx, jx_mir_function_t* f
 		return NULL;
 	}
 
-	jx_mir_memory_ref_t* memRef = (jx_mir_memory_ref_t*)JX_ALLOC(ctx->m_MemRefAllocator, sizeof(jx_mir_memory_ref_t));
+	jx_mir_memory_ref_t* memRef = (jx_mir_memory_ref_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_mir_memory_ref_t));
 	if (!memRef) {
 		return NULL;
 	}
@@ -2047,7 +2036,7 @@ static bool jmir_opcodeIsTerminator(uint32_t opcode)
 
 static jx_mir_operand_t* jmir_operandAlloc(jx_mir_context_t* ctx, jx_mir_operand_kind kind, jx_mir_type_kind type)
 {
-	jx_mir_operand_t* op = (jx_mir_operand_t*)JX_ALLOC(ctx->m_OperandAllocator, sizeof(jx_mir_operand_t));
+	jx_mir_operand_t* op = (jx_mir_operand_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_mir_operand_t));
 	if (!op) {
 		return NULL;
 	}
@@ -2164,6 +2153,22 @@ static void jmir_globalVarFree(jx_mir_context_t* ctx, jx_mir_global_variable_t* 
 	JX_FREE(allocator, gv);
 }
 
+static jx_mir_memory_ref_t* jmir_memRefAlloc(jx_mir_context_t* ctx, jx_mir_reg_t baseReg, jx_mir_reg_t indexReg, uint32_t scale, int32_t displacement)
+{
+	jx_mir_memory_ref_t* memRef = (jx_mir_memory_ref_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_mir_memory_ref_t));
+	if (!memRef) {
+		return NULL;
+	}
+
+	jx_memset(memRef, 0, sizeof(jx_mir_memory_ref_t));
+	memRef->m_BaseReg = baseReg;
+	memRef->m_IndexReg = indexReg;
+	memRef->m_Scale = scale;
+	memRef->m_Displacement = displacement;
+
+	return memRef;
+}
+
 static jx_mir_frame_info_t* jmir_frameCreate(jx_mir_context_t* ctx)
 {
 	jx_mir_frame_info_t* fi = (jx_mir_frame_info_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_frame_info_t));
@@ -2183,26 +2188,17 @@ static jx_mir_frame_info_t* jmir_frameCreate(jx_mir_context_t* ctx)
 
 static void jmir_frameDestroy(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo)
 {
-	const uint32_t numStackObjects = jx_array_sizeu(frameInfo->m_StackObjArr);
-	for (uint32_t iStackObj = 0; iStackObj < numStackObjects; ++iStackObj) {
-		JX_FREE(ctx->m_MemRefAllocator, frameInfo->m_StackObjArr[iStackObj]);
-	}
 	jx_array_free(frameInfo->m_StackObjArr);
 	JX_FREE(ctx->m_Allocator, frameInfo);
 }
 
 static jx_mir_memory_ref_t* jmir_frameAllocObj(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo, uint32_t sz, uint32_t alignment)
 {
-	jx_mir_memory_ref_t* obj = (jx_mir_memory_ref_t*)JX_ALLOC(ctx->m_MemRefAllocator, sizeof(jx_mir_memory_ref_t));
+	jx_mir_memory_ref_t* obj = jmir_memRefAlloc(ctx, kMIRRegGP_SP, kMIRRegGPNone, 1, jx_roundup_u32(frameInfo->m_Size, alignment));
 	if (!obj) {
 		return NULL;
 	}
 
-	jx_memset(obj, 0, sizeof(jx_mir_memory_ref_t));
-	obj->m_BaseReg = kMIRRegGP_SP;
-	obj->m_IndexReg = kMIRRegGPNone;
-	obj->m_Scale = 1;
-	obj->m_Displacement = jx_roundup_u32(frameInfo->m_Size, alignment);
 	frameInfo->m_Size = obj->m_Displacement + sz;
 
 	jx_array_push_back(frameInfo->m_StackObjArr, obj);
@@ -2212,16 +2208,10 @@ static jx_mir_memory_ref_t* jmir_frameAllocObj(jx_mir_context_t* ctx, jx_mir_fra
 
 static jx_mir_memory_ref_t* jmir_frameObjRel(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo, jx_mir_memory_ref_t* baseObj, int32_t offset)
 {
-	jx_mir_memory_ref_t* obj = (jx_mir_memory_ref_t*)JX_ALLOC(ctx->m_MemRefAllocator, sizeof(jx_mir_memory_ref_t));
+	jx_mir_memory_ref_t* obj = jmir_memRefAlloc(ctx, baseObj->m_BaseReg, baseObj->m_IndexReg, baseObj->m_Scale, baseObj->m_Displacement + offset);
 	if (!obj) {
 		return NULL;
 	}
-
-	jx_memset(obj, 0, sizeof(jx_mir_memory_ref_t));
-	obj->m_BaseReg = baseObj->m_BaseReg;
-	obj->m_IndexReg = baseObj->m_IndexReg;
-	obj->m_Scale = baseObj->m_Scale;
-	obj->m_Displacement = baseObj->m_Displacement + offset;
 
 	jx_array_push_back(frameInfo->m_StackObjArr, obj);
 
