@@ -150,7 +150,12 @@ bool jx_irgen_moduleGen(jx_irgen_context_t* ctx, const char* moduleName, jx_cc_t
 						goto error;
 					}
 
-					if (jx_ir_funcBegin(irctx, func)) {
+					const bool funcIsInline = (global->m_Flags & JCC_OBJECT_FLAGS_IS_INLINE_Msk) != 0;
+
+					const uint32_t funcFlags = 0
+						| (funcIsInline ? JIR_FUNC_FLAGS_INLINE_Msk : 0)
+						;
+					if (jx_ir_funcBegin(irctx, func, funcFlags)) {
 						ctx->m_Func = func;
 						ctx->m_LocalVarMap = jx_hashmapCreate(ctx->m_Allocator, sizeof(jccObj_to_irVal_item_t), 64, 0, 0, jccObjHashCallback, jccObjCompareCallback, NULL, NULL);
 						ctx->m_LabeledBBMap = jx_hashmapCreate(ctx->m_Allocator, sizeof(jccLabel_to_irBB_item_t), 64, 0, 0, jccLabelHashCallback, jccLabelCompareCallback, NULL, NULL);

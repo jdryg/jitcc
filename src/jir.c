@@ -34,7 +34,8 @@ typedef struct jx_ir_context_t
 	jx_ir_type_t* m_BuildinTypes[JIR_TYPE_NUM_PRIMITIVE_TYPES];
 	jx_ir_constant_t* m_ConstBool[2]; // { false, true }
 	jx_ir_module_t* m_ModuleListHead;
-	jx_ir_function_pass_t* m_OnFuncEndPasses;
+	jx_ir_function_pass_t* m_OnFuncEndPassListHead;
+	jx_ir_module_pass_t* m_OnModuleEndPassListHead;
 } jx_ir_context_t;
 
 static jx_ir_instruction_t* jir_instrAlloc(jx_ir_context_t* ctx, jx_ir_type_t* type, uint32_t opcode, uint32_t numOperands);
@@ -53,6 +54,7 @@ static bool jir_userCtor(jx_ir_context_t* ctx, jx_ir_user_t* user, jx_ir_type_t*
 static void jir_userDtor(jx_ir_context_t* ctx, jx_ir_user_t* user);
 static void jir_userAddOperand(jx_ir_context_t* ctx, jx_ir_user_t* user, jx_ir_value_t* operand);
 static void jir_userRemoveOperand(jx_ir_context_t* ctx, jx_ir_user_t* user, uint32_t operandID);
+static jx_ir_value_t* jir_userReplaceOperand(jx_ir_context_t* ctx, jx_ir_user_t* user, uint32_t operandID, jx_ir_value_t* newVal);
 
 static bool jir_typeCtor(jx_ir_context_t* ctx, jx_ir_type_t* type, const char* name, jx_ir_type_kind kind, uint32_t flags);
 static void jir_typeDtor(jx_ir_context_t* ctx, jx_ir_type_t* type);
@@ -305,7 +307,33 @@ jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator)
 		}
 #endif
 
-		ctx->m_OnFuncEndPasses = head.m_Next;
+		ctx->m_OnFuncEndPassListHead = head.m_Next;
+	}
+
+	// Initialize module passes to be executed when moduleEnd is called
+	{
+		jx_ir_module_pass_t head = { 0 };
+		jx_ir_module_pass_t* cur = &head;
+
+		// Inline functions
+		{
+			jx_ir_module_pass_t* pass = (jx_ir_module_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_module_pass_t));
+			if (!pass) {
+				jx_ir_destroyContext(ctx);
+				return NULL;
+			}
+
+			jx_memset(pass, 0, sizeof(jx_ir_module_pass_t));
+			if (!jx_ir_modulePassCreate_inlineFuncs(pass, ctx->m_Allocator)) {
+				JX_CHECK(false, "Failed to initialize module pass!");
+				JX_FREE(ctx->m_Allocator, pass);
+			} else {
+				cur->m_Next = pass;
+				cur = cur->m_Next;
+			}
+		}
+
+		ctx->m_OnModuleEndPassListHead = head.m_Next;
 	}
 
 	return ctx;
@@ -375,9 +403,21 @@ void jx_ir_destroyContext(jx_ir_context_t* ctx)
 
 	// Free function passes
 	{
-		jx_ir_function_pass_t* pass = ctx->m_OnFuncEndPasses;
+		jx_ir_function_pass_t* pass = ctx->m_OnFuncEndPassListHead;
 		while (pass) {
 			jx_ir_function_pass_t* next = pass->m_Next;
+			pass->destroy(pass->m_Inst, allocator);
+			JX_FREE(allocator, pass);
+
+			pass = next;
+		}
+	}
+
+	// Free module passes
+	{
+		jx_ir_module_pass_t* pass = ctx->m_OnModuleEndPassListHead;
+		while (pass) {
+			jx_ir_module_pass_t* next = pass->m_Next;
 			pass->destroy(pass->m_Inst, allocator);
 			JX_FREE(allocator, pass);
 
@@ -515,6 +555,12 @@ jx_ir_module_t* jx_ir_moduleBegin(jx_ir_context_t* ctx, const char* name)
 
 void jx_ir_moduleEnd(jx_ir_context_t* ctx, jx_ir_module_t* mod)
 {
+	jx_ir_module_pass_t* pass = ctx->m_OnModuleEndPassListHead;
+	while (pass) {
+		bool moduleModified = pass->run(pass->m_Inst, ctx, mod);
+		JX_UNUSED(moduleModified);
+		pass = pass->m_Next;
+	}
 }
 
 jx_ir_global_value_t* jx_ir_moduleDeclareGlobalVal(jx_ir_context_t* ctx, jx_ir_module_t* mod, const char* name, jx_ir_type_t* type, jx_ir_linkage_kind linkageKind)
@@ -648,9 +694,10 @@ void jx_ir_modulePrint(jx_ir_context_t* ctx, jx_ir_module_t* mod, jx_string_buff
 	}
 }
 
-bool jx_ir_funcBegin(jx_ir_context_t* ctx, jx_ir_function_t* func)
+bool jx_ir_funcBegin(jx_ir_context_t* ctx, jx_ir_function_t* func, uint32_t flags)
 {
 	JX_CHECK(jx_ir_funcGetType(ctx, func), "Expected function type!");
+	func->m_Flags = flags;
 	return true;
 }
 
@@ -659,7 +706,7 @@ void jx_ir_funcEnd(jx_ir_context_t* ctx, jx_ir_function_t* func)
 #if JX_IR_CONFIG_APPLY_PASSES
 	if (func->m_BasicBlockListHead) {
 		JX_CHECK(jx_ir_funcCheck(ctx, func), "Function's IR and/or CFG is invalid!");
-		jx_ir_function_pass_t* pass = ctx->m_OnFuncEndPasses;
+		jx_ir_function_pass_t* pass = ctx->m_OnFuncEndPassListHead;
 		while (pass) {
 #if 0
 			{
@@ -1324,6 +1371,58 @@ bool jx_ir_bbConvertCondBranch(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, bo
 	return true;
 }
 
+jx_ir_basic_block_t* jx_ir_bbSplitAt(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_instruction_t* instr)
+{
+	if (instr->m_ParentBB != bb) {
+		JX_CHECK(false, "Instruction not part of the specified basic block!");
+		return NULL;
+	}
+
+	jx_ir_basic_block_t* contBB = jx_ir_bbAlloc(ctx, NULL);
+
+	// Move all instructions after instr to the new block
+	jx_ir_instruction_t* movedInstr = instr->m_Next;
+	while (movedInstr) {
+		jx_ir_instruction_t* nextInstr = movedInstr->m_Next;
+
+		jx_ir_bbRemoveInstr(ctx, bb, movedInstr);
+		jx_ir_bbAppendInstr(ctx, contBB, movedInstr);
+
+		movedInstr = nextInstr;
+	}
+
+	// Append an unconditional jump to the new block at the end of the original block.
+	jx_ir_bbAppendInstr(ctx, bb, jx_ir_instrBranch(ctx, contBB));
+
+	// Insert new block after the existing block.
+	{
+		contBB->m_ParentFunc = bb->m_ParentFunc;
+		contBB->m_Prev = bb;
+		contBB->m_Next = bb->m_Next;
+		bb->m_Next = contBB;
+	}
+
+	// Patch all phi instructions referencing the original block to have the same values
+	// but with the new block as the source.
+	jx_ir_use_t* bbUse = bb->super.m_UsesListHead;
+	while (bbUse) {
+		jx_ir_value_t* userValue = jx_ir_userToValue(bbUse->m_User);
+		if (userValue->m_Kind == JIR_VALUE_INSTRUCTION) {
+			jx_ir_instruction_t* userInstr = jx_ir_valueToInstr(userValue);
+			if (userInstr->m_OpCode == JIR_OP_PHI) {
+				if (jx_ir_instrPhiHasValue(ctx, userInstr, bb)) {
+					jx_ir_value_t* val = jx_ir_instrPhiRemoveValue(ctx, userInstr, bb);
+					jx_ir_instrPhiAddValue(ctx, userInstr, contBB, val);
+				}
+			}
+		}
+
+		bbUse = bbUse->m_Next;
+	}
+
+	return contBB;
+}
+
 void jx_ir_bbPrint(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_string_buffer_t* sb)
 {
 	jx_ir_value_t* bbValue = jx_ir_bbToValue(bb);
@@ -1355,6 +1454,26 @@ static jx_ir_instruction_t* jir_instrAlloc(jx_ir_context_t* ctx, jx_ir_type_t* t
 	}
 
 	return instr;
+}
+
+jx_ir_instruction_t* jx_ir_instrClone(jx_ir_context_t* ctx, jx_ir_instruction_t* instr)
+{
+	const uint32_t numOperands = (uint32_t)jx_array_sizeu(instr->super.m_OperandArr);
+	jx_ir_instruction_t* clone = jir_instrAlloc(ctx, instr->super.super.m_Type, instr->m_OpCode, numOperands);
+	if (!clone) {
+		return NULL;
+	}
+
+	for (uint32_t iOperand = 0; iOperand < numOperands; ++iOperand) {
+		jir_instrAddOperand(ctx, clone, instr->super.m_OperandArr[iOperand]->m_Value);
+	}
+
+	return clone;
+}
+
+jx_ir_value_t* jx_ir_instrReplaceOperand(jx_ir_context_t* ctx, jx_ir_instruction_t* instr, uint32_t id, jx_ir_value_t* val)
+{
+	return jir_userReplaceOperand(ctx, jx_ir_instrToUser(instr), id, val);
 }
 
 void jx_ir_instrFree(jx_ir_context_t* ctx, jx_ir_instruction_t* instr)
@@ -2679,6 +2798,22 @@ static void jir_userRemoveOperand(jx_ir_context_t* ctx, jx_ir_user_t* user, uint
 	jx_array_del(user->m_OperandArr, operandID);
 }
 
+static jx_ir_value_t* jir_userReplaceOperand(jx_ir_context_t* ctx, jx_ir_user_t* user, uint32_t operandID, jx_ir_value_t* newVal)
+{
+	if (operandID >= (uint32_t)jx_array_sizeu(user->m_OperandArr)) {
+		JX_CHECK(false, "Invalid operand ID");
+		return NULL;
+	}
+
+	jx_ir_use_t* use = user->m_OperandArr[operandID];
+	jx_ir_value_t* oldVal = use->m_Value;
+
+	jir_useDtor(ctx, use);
+	jir_useCtor(ctx, use, newVal, user);
+
+	return oldVal;
+}
+
 static bool jir_typeCtor(jx_ir_context_t* ctx, jx_ir_type_t* type, const char* name, jx_ir_type_kind kind, uint32_t flags)
 {
 	jx_memset(type, 0, sizeof(jx_ir_type_t));
@@ -3936,8 +4071,6 @@ static bool jir_funcCtor(jx_ir_context_t* ctx, jx_ir_function_t* func, jx_ir_typ
 		return false;
 	}
 
-	// TODO: Initialize symbol table
-
 	// Create arguments list
 	jx_ir_argument_t head = { 0 };
 	jx_ir_argument_t* prevArg = &head;
@@ -4014,8 +4147,6 @@ static void jir_funcDtor(jx_ir_context_t* ctx, jx_ir_function_t* func)
 		arg = next;
 	}
 	func->m_ArgListHead = NULL;
-
-	// TODO: Destroy symbol table
 
 	jir_globalValDtor(ctx, &func->super);
 }

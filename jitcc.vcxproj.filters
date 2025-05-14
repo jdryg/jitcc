@@ -929,6 +929,12 @@
     <ClCompile Include="bin\test\struct_as_arg.c">
       <Filter>bin\test</Filter>
     </ClCompile>
+    <ClCompile Include="bin\test\global_vars.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\inlining.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="3rdparty\jlib\include\jlib\inline\atomic_win32.inl">
