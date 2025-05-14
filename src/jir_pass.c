@@ -1953,11 +1953,140 @@ static bool jir_funcPass_canonicalizeOperandsRun(jx_ir_function_pass_o* inst, jx
 }
 
 //////////////////////////////////////////////////////////////////////////
+// Reorder Basic Blocks
+//
+#define JIR_REORDER_BB_FLAGS_IS_VISITED_Pos 31
+#define JIR_REORDER_BB_FLAGS_IS_VISITED_Msk (1u << JIR_REORDER_BB_FLAGS_IS_VISITED_Pos)
+
+typedef struct jir_func_pass_reorder_bb_t
+{
+	jx_allocator_i* m_Allocator;
+	jx_ir_basic_block_t** m_OrderedBBArr;
+	jx_ir_basic_block_t** m_Stack;
+} jir_func_pass_reorder_bb_t;
+
+static void jir_funcPass_reorderBasicBlocksDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator);
+static bool jir_funcPass_reorderBasicBlocksRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func);
+
+bool jx_ir_funcPassCreate_reorderBasicBlocks(jx_ir_function_pass_t* pass, jx_allocator_i* allocator)
+{
+	jir_func_pass_reorder_bb_t* inst = (jir_func_pass_reorder_bb_t*)JX_ALLOC(allocator, sizeof(jir_func_pass_reorder_bb_t));
+	if (!inst) {
+		return false;
+	}
+
+	jx_memset(inst, 0, sizeof(jir_func_pass_reorder_bb_t));
+	inst->m_Allocator = allocator;
+
+	inst->m_OrderedBBArr = (jx_ir_basic_block_t**)jx_array_create(allocator);
+	if (!inst->m_OrderedBBArr) {
+		jir_funcPass_reorderBasicBlocksDestroy((jx_ir_function_pass_o*)inst, allocator);
+		return false;
+	}
+
+	inst->m_Stack = (jx_ir_basic_block_t**)jx_array_create(allocator);
+	if (!inst->m_Stack) {
+		jir_funcPass_reorderBasicBlocksDestroy((jx_ir_function_pass_o*)inst, allocator);
+		return false;
+	}
+
+	pass->m_Inst = (jx_ir_function_pass_o*)inst;
+	pass->run = jir_funcPass_reorderBasicBlocksRun;
+	pass->destroy = jir_funcPass_reorderBasicBlocksDestroy;
+
+	return true;
+}
+
+static void jir_funcPass_reorderBasicBlocksDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator)
+{
+	jir_func_pass_reorder_bb_t* pass = (jir_func_pass_reorder_bb_t*)inst;
+	jx_array_free(pass->m_OrderedBBArr);
+	jx_array_free(pass->m_Stack);
+	JX_FREE(allocator, pass);
+}
+
+static bool jir_funcPass_reorderBasicBlocksRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
+{
+	jir_func_pass_reorder_bb_t* pass = (jir_func_pass_reorder_bb_t*)inst;
+
+	// Reset all basic block visited flags
+	{
+		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
+		while (bb) {
+			bb->super.m_Flags &= ~JIR_REORDER_BB_FLAGS_IS_VISITED_Msk;
+			bb = bb->m_Next;
+		}
+	}
+
+	jx_array_resize(pass->m_OrderedBBArr, 0);
+	jx_array_resize(pass->m_Stack, 0);
+
+	jx_array_push_back(pass->m_Stack, func->m_BasicBlockListHead);
+	while (jx_array_sizeu(pass->m_Stack) != 0) {
+		jx_ir_basic_block_t* bb = jx_array_pop_back(pass->m_Stack);
+
+		if ((bb->super.m_Flags & JIR_REORDER_BB_FLAGS_IS_VISITED_Msk) != 0) {
+			continue;
+		}
+
+		bb->super.m_Flags |= JIR_REORDER_BB_FLAGS_IS_VISITED_Msk;
+
+		jx_ir_instruction_t* lastInstr = jx_ir_bbGetLastInstr(ctx, bb);
+		if (lastInstr->m_OpCode == JIR_OP_BRANCH) {
+			const uint32_t numOperands = (uint32_t)jx_array_sizeu(lastInstr->super.m_OperandArr);
+			if (numOperands == 1) {
+				// Unconditional branch
+				jx_ir_basic_block_t* target = jx_ir_valueToBasicBlock(lastInstr->super.m_OperandArr[0]->m_Value);
+				JX_CHECK(target, "Expected basic block as branch target.");
+				jx_array_push_back(pass->m_Stack, target);
+			} else if (numOperands == 3) {
+				// Conditional branch
+				jx_ir_basic_block_t* trueTarget = jx_ir_valueToBasicBlock(lastInstr->super.m_OperandArr[1]->m_Value);
+				JX_CHECK(trueTarget, "Expected basic block as branch target.");
+
+				jx_ir_basic_block_t* falseTarget = jx_ir_valueToBasicBlock(lastInstr->super.m_OperandArr[2]->m_Value);
+				JX_CHECK(falseTarget, "Expected basic block as branch target.");
+
+				// Push in such order so that the false path is the fallthrough path.
+				// NOTE: The target pushed last on the stack will be processed first (LIFO)
+				// so it will be added to the ordered list first.
+				jx_array_push_back(pass->m_Stack, trueTarget);
+				jx_array_push_back(pass->m_Stack, falseTarget);
+			} else {
+				JX_CHECK(false, "Unknown branch instruction.");
+			}
+		} else {
+			JX_CHECK(lastInstr->m_OpCode == JIR_OP_RET, "Unknown terminator instruction");
+		}
+
+		jx_array_push_back(pass->m_OrderedBBArr, bb);
+	}
+
+	// Reset all basic block visited flags
+	{
+		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
+		while (bb) {
+			bb->super.m_Flags &= ~JIR_REORDER_BB_FLAGS_IS_VISITED_Msk;
+			bb = bb->m_Next;
+		}
+	}
+
+	// Relink all basic blocks
+	JX_CHECK(func->m_BasicBlockListHead == pass->m_OrderedBBArr[0], "Entry block has been changed?");
+
+	const uint32_t numBasicBlocks = (uint32_t)jx_array_sizeu(pass->m_OrderedBBArr);
+	for (uint32_t iBB = 0; iBB < numBasicBlocks; ++iBB) {
+		jx_ir_basic_block_t* bb = pass->m_OrderedBBArr[iBB];
+		bb->m_Next = iBB != (numBasicBlocks - 1) ? pass->m_OrderedBBArr[iBB + 1] : NULL;
+		bb->m_Prev = iBB != 0 ? pass->m_OrderedBBArr[iBB - 1] : NULL;
+	}
+
+	return true;
+}
+
+//////////////////////////////////////////////////////////////////////////
 // Simple Function inliner
 //
-#define JIR_INLINER_BB_FLAGS_IS_VISITED_Pos 31
-#define JIR_INLINER_BB_FLAGS_IS_VISITED_Msk (1u << JIR_INLINER_BB_FLAGS_IS_VISITED_Pos)
-
 typedef struct jir_call_graph_node_t jir_call_graph_node_t;
 typedef struct jir_call_graph_scc_t jir_call_graph_scc_t;
 
@@ -2017,7 +2146,6 @@ static void jir_funcPass_inlineFuncsDestroy(jx_ir_module_pass_o* inst, jx_alloca
 static bool jir_funcPass_inlineFuncsRun(jx_ir_module_pass_o* inst, jx_ir_context_t* ctx, jx_ir_module_t* func);
 
 static bool jir_inliner_inlineCall(jir_module_pass_inliner_t* pass, jx_ir_instruction_t* callInstr);
-static bool jir_inliner_reorderFuncRPO(jir_module_pass_inliner_t* pass, jx_ir_function_t* func);
 
 static jir_call_graph_t* jir_callGraphCreate(jx_allocator_i* allocator);
 static void jir_callGraphDestroy(jir_call_graph_t* cg);
@@ -2118,16 +2246,6 @@ static bool jir_funcPass_inlineFuncsRun(jx_ir_module_pass_o* inst, jx_ir_context
 						++numCallsInlined;
 					}
 				}
-			}
-
-			if (numCallsInlined) {
-				// TODO: Move to a separate pass?
-				jir_inliner_reorderFuncRPO(pass, node->m_Func);
-
-				// TODO: HACK: Call jx_ir_funcEnd() to force applying passes to new function
-				// The only meaningful passes to apply at this point is everything after SSA construction
-				// There is not need for any pass before SSA (incl. SSA).
-				jx_ir_funcEnd(ctx, node->m_Func);
 			}
 		}
 
@@ -2309,94 +2427,6 @@ static bool jir_inliner_inlineCall(jir_module_pass_inliner_t* pass, jx_ir_instru
 
 	// At this point the caller must be valid!
 	JX_CHECK(jx_ir_funcCheck(ctx, callerFunc), "Caller function is not valid!");
-
-	return true;
-}
-
-static bool jir_inliner_reorderFuncRPO(jir_module_pass_inliner_t* pass, jx_ir_function_t* func)
-{
-	// Reset all basic block visited flags
-	{
-		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
-		while (bb) {
-			bb->super.m_Flags &= ~JIR_INLINER_BB_FLAGS_IS_VISITED_Msk;
-			bb = bb->m_Next;
-		}
-	}
-
-	jx_ir_basic_block_t** orderedList = (jx_ir_basic_block_t**)jx_array_create(pass->m_Allocator);
-	if (!orderedList) {
-		return false;
-	}
-
-	jx_ir_basic_block_t** stack = (jx_ir_basic_block_t**)jx_array_create(pass->m_Allocator);
-	if (!stack) {
-		jx_array_free(orderedList);
-		return false;
-	}
-
-	jx_array_push_back(stack, func->m_BasicBlockListHead);
-	while (jx_array_sizeu(stack) != 0) {
-		jx_ir_basic_block_t* bb = jx_array_pop_back(stack);
-
-		if ((bb->super.m_Flags & JIR_INLINER_BB_FLAGS_IS_VISITED_Msk) != 0) {
-			continue;
-		}
-
-		bb->super.m_Flags |= JIR_INLINER_BB_FLAGS_IS_VISITED_Msk;
-
-		jx_ir_instruction_t* lastInstr = jx_ir_bbGetLastInstr(pass->m_Ctx, bb);
-		if (lastInstr->m_OpCode == JIR_OP_BRANCH) {
-			const uint32_t numOperands = (uint32_t)jx_array_sizeu(lastInstr->super.m_OperandArr);
-			if (numOperands == 1) {
-				// Unconditional branch
-				jx_ir_basic_block_t* target = jx_ir_valueToBasicBlock(lastInstr->super.m_OperandArr[0]->m_Value);
-				JX_CHECK(target, "Expected basic block as branch target.");
-				jx_array_push_back(stack, target);
-			} else if (numOperands == 3) {
-				// Conditional branch
-				jx_ir_basic_block_t* trueTarget = jx_ir_valueToBasicBlock(lastInstr->super.m_OperandArr[1]->m_Value);
-				JX_CHECK(trueTarget, "Expected basic block as branch target.");
-
-				jx_ir_basic_block_t* falseTarget = jx_ir_valueToBasicBlock(lastInstr->super.m_OperandArr[2]->m_Value);
-				JX_CHECK(falseTarget, "Expected basic block as branch target.");
-				
-				// Push in such order so that the false path is the fallthrough path.
-				// NOTE: The target pushed last on the stack will be processed first (LIFO)
-				// so it will be added to the ordered list first.
-				jx_array_push_back(stack, trueTarget);
-				jx_array_push_back(stack, falseTarget);
-			} else {
-				JX_CHECK(false, "Unknown branch instruction.");
-			}
-		} else {
-			JX_CHECK(lastInstr->m_OpCode == JIR_OP_RET, "Unknown terminator instruction");
-		}
-
-		jx_array_push_back(orderedList, bb);
-	}
-	jx_array_free(stack);
-
-	// Reset all basic block visited flags
-	{
-		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
-		while (bb) {
-			bb->super.m_Flags &= ~JIR_INLINER_BB_FLAGS_IS_VISITED_Msk;
-			bb = bb->m_Next;
-		}
-	}
-
-	// Relink all basic blocks
-	JX_CHECK(func->m_BasicBlockListHead == orderedList[0], "Entry block has been changed?");
-
-	const uint32_t numBasicBlocks = (uint32_t)jx_array_sizeu(orderedList);
-	for (uint32_t iBB = 0; iBB < numBasicBlocks; ++iBB) {
-		jx_ir_basic_block_t* bb = orderedList[iBB];
-		bb->m_Next = iBB != (numBasicBlocks - 1) ? orderedList[iBB + 1] : NULL;
-		bb->m_Prev = iBB != 0 ? orderedList[iBB - 1] : NULL;
-	}
-
-	jx_array_free(orderedList);
 
 	return true;
 }
