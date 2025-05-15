@@ -11,7 +11,6 @@
 #include <jlib/string.h>
 
 #define JX_IR_CONFIG_PRINT_ABSTRACT_POINTERS 0
-#define JX_IR_CONFIG_APPLY_PASSES            1
 #define JX_IR_CONFIG_FORCE_VALUE_NAMES       1
 
 typedef struct jir_vm_stack_frame_t
@@ -34,15 +33,16 @@ typedef struct jx_ir_context_t
 	jx_ir_type_t* m_BuildinTypes[JIR_TYPE_NUM_PRIMITIVE_TYPES];
 	jx_ir_constant_t* m_ConstBool[2]; // { false, true }
 	jx_ir_module_t* m_ModuleListHead;
-	jx_ir_function_pass_t* m_OnFuncEndPassListHead;
-	jx_ir_module_pass_t* m_OnModuleEndModulePassListHead;
-	jx_ir_function_pass_t* m_OnModuleEndFuncPassListHead;
+	jx_ir_function_pass_t* m_PreFuncPassListHead;
+	jx_ir_function_pass_t* m_PostFuncPassListHead;
+	jx_ir_module_pass_t* m_ModulePassListHead;
 } jx_ir_context_t;
 
 static jx_ir_instruction_t* jir_instrAlloc(jx_ir_context_t* ctx, jx_ir_type_t* type, uint32_t opcode, uint32_t numOperands);
 
 static bool jir_moduleCtor(jx_ir_context_t* ctx, jx_ir_module_t* mod, const char* name);
 static void jir_moduleDtor(jx_ir_context_t* ctx, jx_ir_module_t* mod);
+static jx_ir_module_pass_t* jir_modulePassCreate(jx_ir_context_t* ctx, jirModulePassCtorFunc ctorFunc, void* passConfig);
 
 static bool jir_valueCtor(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_type_t* type, jx_ir_value_kind kind, const char* name);
 static void jir_valueDtor(jx_ir_context_t* ctx, jx_ir_value_t* val);
@@ -87,6 +87,7 @@ static void jir_funcDtor(jx_ir_context_t* ctx, jx_ir_function_t* func);
 static const char* jir_funcGenTempName(jx_ir_context_t* ctx, jx_ir_function_t* func);
 static bool jir_funcIsExternal(jx_ir_context_t* ctx, jx_ir_function_t* func);
 static void jir_funcApplyPasses(jx_ir_context_t* ctx, jx_ir_function_t* func, jx_ir_function_pass_t* passListHead);
+static jx_ir_function_pass_t* jir_funcPassCreate(jx_ir_context_t* ctx, jirFuncPassCtorFunc ctorFunc, void* passConfig);
 
 static bool jir_instrCtor(jx_ir_context_t* ctx, jx_ir_instruction_t* instr, jx_ir_type_t* type, uint32_t opcode, const char* name, uint32_t numOperands);
 static void jir_instrDtor(jx_ir_context_t* ctx, jx_ir_instruction_t* instr);
@@ -194,79 +195,19 @@ jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator)
 		jx_ir_function_pass_t head = { 0 };
 		jx_ir_function_pass_t* cur = &head;
 
-		// Canonicalize operands
-		{
-			jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));
-			if (!pass) {
-				jx_ir_destroyContext(ctx);
-				return NULL;
-			}
+		cur->m_Next = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_canonicalizeOperands, NULL);
+		cur = cur->m_Next;
 
-			jx_memset(pass, 0, sizeof(jx_ir_function_pass_t));
-			if (!jx_ir_funcPassCreate_canonicalizeOperands(pass, ctx->m_Allocator)) {
-				JX_CHECK(false, "Failed to initialize function pass!");
-				JX_FREE(ctx->m_Allocator, pass);
-			} else {
-				cur->m_Next = pass;
-				cur = cur->m_Next;
-			}
-		}
+		cur->m_Next = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_simplifyCFG, NULL);
+		cur = cur->m_Next;
 
-		// Single return block
-		{
-			jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));
-			if (!pass) {
-				jx_ir_destroyContext(ctx);
-				return NULL;
-			}
+		cur->m_Next = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_singleRetBlock, NULL);
+		cur = cur->m_Next;
 
-			jx_memset(pass, 0, sizeof(jx_ir_function_pass_t));
-			if (!jx_ir_funcPassCreate_singleRetBlock(pass, ctx->m_Allocator)) {
-				JX_CHECK(false, "Failed to initialize function pass!");
-				JX_FREE(ctx->m_Allocator, pass);
-			} else {
-				cur->m_Next = pass;
-				cur = cur->m_Next;
-			}
-		}
+		cur->m_Next = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_simpleSSA, NULL);
+		cur = cur->m_Next;
 
-		// Simplify CFG
-		{
-			jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));
-			if (!pass) {
-				jx_ir_destroyContext(ctx);
-				return NULL;
-			}
-
-			jx_memset(pass, 0, sizeof(jx_ir_function_pass_t));
-			if (!jx_ir_funcPassCreate_simplifyCFG(pass, ctx->m_Allocator)) {
-				JX_CHECK(false, "Failed to initialize function pass!");
-				JX_FREE(ctx->m_Allocator, pass);
-			} else {
-				cur->m_Next = pass;
-				cur = cur->m_Next;
-			}
-		}
-
-		// Simple SSA
-		{
-			jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));
-			if (!pass) {
-				jx_ir_destroyContext(ctx);
-				return NULL;
-			}
-
-			jx_memset(pass, 0, sizeof(jx_ir_function_pass_t));
-			if (!jx_ir_funcPassCreate_simpleSSA(pass, ctx->m_Allocator)) {
-				JX_CHECK(false, "Failed to initialize function pass!");
-				JX_FREE(ctx->m_Allocator, pass);
-			} else {
-				cur->m_Next = pass;
-				cur = cur->m_Next;
-			}
-		}
-
-		ctx->m_OnFuncEndPassListHead = head.m_Next;
+		ctx->m_PreFuncPassListHead = head.m_Next;
 	}
 
 	// Initialize function passes to be executed when moduleEnd is called
@@ -274,61 +215,19 @@ jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator)
 		jx_ir_function_pass_t head = { 0 };
 		jx_ir_function_pass_t* cur = &head;
 
-		// Constant folding
-		{
-			jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));
-			if (!pass) {
-				jx_ir_destroyContext(ctx);
-				return NULL;
-			}
+		cur->m_Next = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_constantFolding, NULL);
+		cur = cur->m_Next;
 
-			jx_memset(pass, 0, sizeof(jx_ir_function_pass_t));
-			if (!jx_ir_funcPassCreate_reorderBasicBlocks(pass, ctx->m_Allocator)) {
-				JX_CHECK(false, "Failed to initialize function pass!");
-				JX_FREE(ctx->m_Allocator, pass);
-			} else {
-				cur->m_Next = pass;
-				cur = cur->m_Next;
-			}
-		}
+		cur->m_Next = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_reorderBasicBlocks, NULL);
+		cur = cur->m_Next;
 
-		// Constant folding
-		{
-			jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));
-			if (!pass) {
-				jx_ir_destroyContext(ctx);
-				return NULL;
-			}
+		cur->m_Next = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_peephole, NULL);
+		cur = cur->m_Next;
 
-			jx_memset(pass, 0, sizeof(jx_ir_function_pass_t));
-			if (!jx_ir_funcPassCreate_constantFolding(pass, ctx->m_Allocator)) {
-				JX_CHECK(false, "Failed to initialize function pass!");
-				JX_FREE(ctx->m_Allocator, pass);
-			} else {
-				cur->m_Next = pass;
-				cur = cur->m_Next;
-			}
-		}
+//		cur->m_Next = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_simplifyCFG, NULL);
+//		cur = cur->m_Next;
 
-		// Peephole optimizations
-		{
-			jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));
-			if (!pass) {
-				jx_ir_destroyContext(ctx);
-				return NULL;
-			}
-
-			jx_memset(pass, 0, sizeof(jx_ir_function_pass_t));
-			if (!jx_ir_funcPassCreate_peephole(pass, ctx->m_Allocator)) {
-				JX_CHECK(false, "Failed to initialize function pass!");
-				JX_FREE(ctx->m_Allocator, pass);
-			} else {
-				cur->m_Next = pass;
-				cur = cur->m_Next;
-			}
-		}
-
-		ctx->m_OnModuleEndFuncPassListHead = head.m_Next;
+		ctx->m_PostFuncPassListHead = head.m_Next;
 	}
 
 	// Initialize module passes to be executed when moduleEnd is called
@@ -336,25 +235,10 @@ jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator)
 		jx_ir_module_pass_t head = { 0 };
 		jx_ir_module_pass_t* cur = &head;
 
-		// Inline functions
-		{
-			jx_ir_module_pass_t* pass = (jx_ir_module_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_module_pass_t));
-			if (!pass) {
-				jx_ir_destroyContext(ctx);
-				return NULL;
-			}
+		cur->m_Next = jir_modulePassCreate(ctx, jx_ir_modulePassCreate_inlineFuncs, NULL);
+		cur = cur->m_Next;
 
-			jx_memset(pass, 0, sizeof(jx_ir_module_pass_t));
-			if (!jx_ir_modulePassCreate_inlineFuncs(pass, ctx->m_Allocator)) {
-				JX_CHECK(false, "Failed to initialize module pass!");
-				JX_FREE(ctx->m_Allocator, pass);
-			} else {
-				cur->m_Next = pass;
-				cur = cur->m_Next;
-			}
-		}
-
-		ctx->m_OnModuleEndModulePassListHead = head.m_Next;
+		ctx->m_ModulePassListHead = head.m_Next;
 	}
 
 	return ctx;
@@ -424,7 +308,7 @@ void jx_ir_destroyContext(jx_ir_context_t* ctx)
 
 	// Free function passes
 	{
-		jx_ir_function_pass_t* pass = ctx->m_OnFuncEndPassListHead;
+		jx_ir_function_pass_t* pass = ctx->m_PreFuncPassListHead;
 		while (pass) {
 			jx_ir_function_pass_t* next = pass->m_Next;
 			pass->destroy(pass->m_Inst, allocator);
@@ -434,7 +318,7 @@ void jx_ir_destroyContext(jx_ir_context_t* ctx)
 		}
 	}
 	{
-		jx_ir_function_pass_t* pass = ctx->m_OnModuleEndFuncPassListHead;
+		jx_ir_function_pass_t* pass = ctx->m_PostFuncPassListHead;
 		while (pass) {
 			jx_ir_function_pass_t* next = pass->m_Next;
 			pass->destroy(pass->m_Inst, allocator);
@@ -446,7 +330,7 @@ void jx_ir_destroyContext(jx_ir_context_t* ctx)
 
 	// Free module passes
 	{
-		jx_ir_module_pass_t* pass = ctx->m_OnModuleEndModulePassListHead;
+		jx_ir_module_pass_t* pass = ctx->m_ModulePassListHead;
 		while (pass) {
 			jx_ir_module_pass_t* next = pass->m_Next;
 			pass->destroy(pass->m_Inst, allocator);
@@ -586,20 +470,38 @@ jx_ir_module_t* jx_ir_moduleBegin(jx_ir_context_t* ctx, const char* name)
 
 void jx_ir_moduleEnd(jx_ir_context_t* ctx, jx_ir_module_t* mod)
 {
-	jx_ir_module_pass_t* pass = ctx->m_OnModuleEndModulePassListHead;
-	while (pass) {
-		bool moduleModified = pass->run(pass->m_Inst, ctx, mod);
-		JX_UNUSED(moduleModified);
-		pass = pass->m_Next;
+	// Apply pre func passes
+	{
+		jx_ir_function_t* func = mod->m_FunctionListHead;
+		while (func) {
+			if (!jir_funcIsExternal(ctx, func)) {
+				jir_funcApplyPasses(ctx, func, ctx->m_PreFuncPassListHead);
+			}
+
+			func = func->m_Next;
+		}
 	}
 
-	jx_ir_function_t* func = mod->m_FunctionListHead;
-	while (func) {
-		if (!jir_funcIsExternal(ctx, func)) {
-			jir_funcApplyPasses(ctx, func, ctx->m_OnModuleEndFuncPassListHead);
+	// Apply whole module passes
+	{
+		jx_ir_module_pass_t* pass = ctx->m_ModulePassListHead;
+		while (pass) {
+			bool moduleModified = pass->run(pass->m_Inst, ctx, mod);
+			JX_UNUSED(moduleModified);
+			pass = pass->m_Next;
 		}
+	}
 
-		func = func->m_Next;
+	// Apply post func passes
+	{
+		jx_ir_function_t* func = mod->m_FunctionListHead;
+		while (func) {
+			if (!jir_funcIsExternal(ctx, func)) {
+				jir_funcApplyPasses(ctx, func, ctx->m_PostFuncPassListHead);
+			}
+
+			func = func->m_Next;
+		}
 	}
 }
 
@@ -743,11 +645,6 @@ bool jx_ir_funcBegin(jx_ir_context_t* ctx, jx_ir_function_t* func, uint32_t flag
 
 void jx_ir_funcEnd(jx_ir_context_t* ctx, jx_ir_function_t* func)
 {
-#if JX_IR_CONFIG_APPLY_PASSES
-	if (!jir_funcIsExternal(ctx, func)) {
-		jir_funcApplyPasses(ctx, func, ctx->m_OnFuncEndPassListHead);
-	}
-#endif
 }
 
 jx_ir_argument_t* jx_ir_funcGetArgument(jx_ir_context_t* ctx, jx_ir_function_t* func, uint32_t argID)
@@ -4647,4 +4544,36 @@ static void jir_funcApplyPasses(jx_ir_context_t* ctx, jx_ir_function_t* func, jx
 		JX_CHECK(jx_ir_funcCheck(ctx, func), "Function's IR and/or CFG is invalid!");
 		pass = pass->m_Next;
 	}
+}
+
+static jx_ir_function_pass_t* jir_funcPassCreate(jx_ir_context_t* ctx, jirFuncPassCtorFunc ctorFunc, void* passConfig)
+{
+	jx_ir_function_pass_t* pass = (jx_ir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_function_pass_t));
+	if (!pass) {
+		return NULL;
+	}
+
+	jx_memset(pass, 0, sizeof(jx_ir_function_pass_t));
+	if (!ctorFunc(pass, ctx->m_Allocator)) {
+		JX_FREE(ctx->m_Allocator, pass);
+		return NULL;
+	}
+
+	return pass;
+}
+
+static jx_ir_module_pass_t* jir_modulePassCreate(jx_ir_context_t* ctx, jirModulePassCtorFunc ctorFunc, void* passConfig)
+{
+	jx_ir_module_pass_t* pass = (jx_ir_module_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_module_pass_t));
+	if (!pass) {
+		return NULL;
+	}
+
+	jx_memset(pass, 0, sizeof(jx_ir_module_pass_t));
+	if (!ctorFunc(pass, ctx->m_Allocator)) {
+		JX_FREE(ctx->m_Allocator, pass);
+		return NULL;
+	}
+
+	return pass;
 }

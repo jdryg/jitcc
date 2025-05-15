@@ -174,7 +174,8 @@ static bool jir_funcPass_simplifyCFGRun(jx_ir_function_pass_o* inst, jx_ir_conte
 		cfgChanged = false;
 
 		// Always skip the entry block
-		// NOTE: WHY?
+		// NOTE: I'm skipping the entry block because all merges are performed with 
+		// a predecessor. Entry blocks don't have predecessors by definition...
 		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead->m_Next;
 		while (bb && !cfgChanged) {
 			jx_ir_basic_block_t* bbNext = bb->m_Next;
@@ -225,8 +226,10 @@ static bool jir_funcPass_simplifyCFGRun(jx_ir_function_pass_o* inst, jx_ir_conte
 				jx_ir_bbFree(ctx, bb);
 				numBasicBlocksChanged++;
 				cfgChanged = true;
-#if 0
 			} else if (jir_bbIsUnconditionalJump(bb)) {
+#if 1
+				// TODO: 
+#else
 				// The code below does not work correctly when phi instructions are included in the target 
 				// block. There are cases where both targets of a conditional jump in a predecessor end
 				// up pointing to the same block. This messes up the phi instructions. Ideally, the phis
@@ -2062,12 +2065,69 @@ static bool jir_funcPass_reorderBasicBlocksRun(jx_ir_function_pass_o* inst, jx_i
 		jx_array_push_back(pass->m_OrderedBBArr, bb);
 	}
 
-	// Reset all basic block visited flags
+	// Remove all basic blocks which haven't been visited
 	{
+		jx_ir_basic_block_t head = { 0 };
+		jx_ir_basic_block_t* cur = &head;
+
 		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
 		while (bb) {
-			bb->super.m_Flags &= ~JIR_REORDER_BB_FLAGS_IS_VISITED_Msk;
-			bb = bb->m_Next;
+			jx_ir_basic_block_t* bbNext = bb->m_Next;
+			if ((bb->super.m_Flags & JIR_REORDER_BB_FLAGS_IS_VISITED_Msk) != 0) {
+				// Block has been visited. Reset the flag and keep it.
+				bb->super.m_Flags &= ~JIR_REORDER_BB_FLAGS_IS_VISITED_Msk;
+			} else {
+				// Block hasn't been visited. Remove any uses of it (they should 
+				// all be phi instructions) and then remove it from the function.
+
+				// Remove the terminator instruction which will force update the CFG
+				// NOTE: If I don't it at this point and free all basic blocks in the order
+				// they appear here, the bbDtor function complains about not finding predecessors.
+				jx_ir_instruction_t* lastInstr = jx_ir_bbGetLastInstr(ctx, bb);
+				JX_CHECK(jx_ir_opcodeIsTerminator(lastInstr->m_OpCode), "Expected terminator instruction!");
+				jx_ir_bbRemoveInstr(ctx, bb, lastInstr);
+				jx_ir_instrFree(ctx, lastInstr);
+
+				// Remove all uses of this basic block. Should only be phi instructions or branches
+				// from other unvisited basic blocks.
+				jx_ir_use_t* bbUse = bb->super.m_UsesListHead;
+				while (bbUse) {
+					jx_ir_use_t* bbUseNext = bbUse->m_Next;
+
+					jx_ir_instruction_t* instr = jx_ir_valueToInstr(jx_ir_userToValue(bbUse->m_User));
+					JX_CHECK(instr, "Basic block use expected to be an instruction!");
+					if (instr->m_OpCode == JIR_OP_PHI) {
+						jx_ir_instrPhiRemoveValue(ctx, instr, bb);
+					} else if (instr->m_OpCode == JIR_OP_BRANCH) {
+						// Might happen if another unvisited/dead block references this 
+						// one in a branch instruction. Make sure this is true and then 
+						// remove it. The other block will be removed later so there is no
+						// need to patch the branch.
+						jx_ir_basic_block_t* predBB = instr->m_ParentBB;
+						JX_CHECK((predBB->super.m_Flags & JIR_REORDER_BB_FLAGS_IS_VISITED_Msk) == 0, "Something has gone really wrong. An unvisited block is the branch target of a visited block?");
+					} else {
+						JX_CHECK(false, "Unknown user of basic block!");
+					}
+
+					bbUse = bbUseNext;
+				}
+
+				// Remove the basic block from the function and add it to the list of blocks
+				// to free.
+				jx_ir_funcRemoveBasicBlock(ctx, func, bb);
+				cur->m_Next = bb;
+				cur = cur->m_Next;
+			}
+			
+			bb = bbNext;
+		}
+
+		// Free all unvisited blocks.
+		bb = head.m_Next;
+		while (bb) {
+			jx_ir_basic_block_t* bbNext = bb->m_Next;
+			jx_ir_bbFree(ctx, bb);
+			bb = bbNext;
 		}
 	}
 

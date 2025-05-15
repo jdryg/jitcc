@@ -155,7 +155,7 @@ int main(int argc, char** argv)
 #elif 1
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-//	const char* sourceFile = "test/c-testsuite/00089.c";
+//	const char* sourceFile = "test/c-testsuite/00215.c";
 	const char* sourceFile = "test/inlining.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);

@@ -8,6 +8,9 @@ typedef struct jx_allocator_i jx_allocator_i;
 typedef struct jx_ir_function_pass_t jx_ir_function_pass_t;
 typedef struct jx_ir_module_pass_t jx_ir_module_pass_t;
 
+typedef bool (*jirFuncPassCtorFunc)(jx_ir_function_pass_t* pass, jx_allocator_i* allocator);
+typedef bool (*jirModulePassCtorFunc)(jx_ir_module_pass_t* pass, jx_allocator_i* allocator);
+
 bool jx_ir_funcPassCreate_singleRetBlock(jx_ir_function_pass_t* pass, jx_allocator_i* allocator);
 bool jx_ir_funcPassCreate_simplifyCFG(jx_ir_function_pass_t* pass, jx_allocator_i* allocator);
 bool jx_ir_funcPassCreate_simpleSSA(jx_ir_function_pass_t* pass, jx_allocator_i* allocator);
