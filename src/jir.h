@@ -22,6 +22,7 @@ typedef struct jx_ir_function_t jx_ir_function_t;
 typedef struct jx_ir_basic_block_t jx_ir_basic_block_t;
 typedef struct jx_ir_instruction_t jx_ir_instruction_t;
 typedef struct jx_ir_function_pass_t jx_ir_function_pass_t;
+typedef struct jx_ir_module_pass_t jx_ir_module_pass_t;
 
 typedef enum jx_ir_value_kind
 {
@@ -324,6 +325,9 @@ typedef struct jx_ir_basic_block_t
 	jx_ir_basic_block_t** m_SuccArr; // Successors, max 2 but keep it as a dynamic array for consistency.
 } jx_ir_basic_block_t;
 
+#define JIR_FUNC_FLAGS_INLINE_Pos  0
+#define JIR_FUNC_FLAGS_INLINE_Msk  (1u << JIR_FUNC_FLAGS_INLINE_Pos)
+
 typedef struct jx_ir_function_t
 {
 	JX_INHERITS(jx_ir_global_value_t);
@@ -332,7 +336,7 @@ typedef struct jx_ir_function_t
 	jx_ir_basic_block_t* m_BasicBlockListHead;
 	jx_ir_argument_t* m_ArgListHead;
 	uint32_t m_NextTempID;
-	JX_PAD(4);
+	uint32_t m_Flags; // JIR_FUNC_FLAGS_xxx
 } jx_ir_function_t;
 
 typedef struct jx_ir_instruction_t
@@ -355,6 +359,16 @@ typedef struct jx_ir_function_pass_t
 	void (*destroy)(jx_ir_function_pass_o* pass, jx_allocator_i* allocator);
 } jx_ir_function_pass_t;
 
+typedef struct jx_ir_module_pass_o jx_ir_module_pass_o;
+typedef struct jx_ir_module_pass_t
+{
+	jx_ir_module_pass_o* m_Inst;
+	jx_ir_module_pass_t* m_Next;
+
+	bool (*run)(jx_ir_module_pass_o* pass, jx_ir_context_t* ctx, jx_ir_module_t* mod);
+	void (*destroy)(jx_ir_module_pass_o* pass, jx_allocator_i* allocator);
+} jx_ir_module_pass_t;
+
 jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator);
 void jx_ir_destroyContext(jx_ir_context_t* ctx);
 void jx_ir_print(jx_ir_context_t* ctx, jx_string_buffer_t* sb);
@@ -368,7 +382,7 @@ jx_ir_function_t* jx_ir_moduleGetFunc(jx_ir_context_t* ctx, jx_ir_module_t* mod,
 jx_ir_global_variable_t* jx_ir_moduleGetGlobalVar(jx_ir_context_t* ctx, jx_ir_module_t* mod, const char* name);
 void jx_ir_modulePrint(jx_ir_context_t* ctx, jx_ir_module_t* mod, jx_string_buffer_t* sb);
 
-bool jx_ir_funcBegin(jx_ir_context_t* ctx, jx_ir_function_t* func);
+bool jx_ir_funcBegin(jx_ir_context_t* ctx, jx_ir_function_t* func, uint32_t flags);
 void jx_ir_funcEnd(jx_ir_context_t* ctx, jx_ir_function_t* func);
 jx_ir_argument_t* jx_ir_funcGetArgument(jx_ir_context_t* ctx, jx_ir_function_t* func, uint32_t argID);
 void jx_ir_funcAppendBasicBlock(jx_ir_context_t* ctx, jx_ir_function_t* func, jx_ir_basic_block_t* bb);
@@ -388,8 +402,11 @@ bool jx_ir_bbPrependInstr(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_i
 bool jx_ir_bbInsertInstrBefore(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_instruction_t* anchor, jx_ir_instruction_t* instr);
 void jx_ir_bbRemoveInstr(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_instruction_t* instr);
 bool jx_ir_bbConvertCondBranch(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, bool condVal);
+jx_ir_basic_block_t* jx_ir_bbSplitAt(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_instruction_t* instr);
 void jx_ir_bbPrint(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_string_buffer_t* sb);
 
+jx_ir_instruction_t* jx_ir_instrClone(jx_ir_context_t* ctx, jx_ir_instruction_t* instr);
+jx_ir_value_t* jx_ir_instrReplaceOperand(jx_ir_context_t* ctx, jx_ir_instruction_t* instr, uint32_t id, jx_ir_value_t* val);
 void jx_ir_instrFree(jx_ir_context_t* ctx, jx_ir_instruction_t* instr);
 jx_ir_instruction_t* jx_ir_instrRet(jx_ir_context_t* ctx, jx_ir_value_t* val);
 jx_ir_instruction_t* jx_ir_instrBranch(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb);

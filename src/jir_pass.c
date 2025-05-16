@@ -9,6 +9,8 @@
 #include <jlib/array.h>
 #include <jlib/dbg.h>
 #include <jlib/hashmap.h>
+#include <jlib/logger.h>
+#include <jlib/math.h>
 #include <jlib/memory.h>
 #include <jlib/string.h>
 
@@ -172,6 +174,8 @@ static bool jir_funcPass_simplifyCFGRun(jx_ir_function_pass_o* inst, jx_ir_conte
 		cfgChanged = false;
 
 		// Always skip the entry block
+		// NOTE: I'm skipping the entry block because all merges are performed with 
+		// a predecessor. Entry blocks don't have predecessors by definition...
 		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead->m_Next;
 		while (bb && !cfgChanged) {
 			jx_ir_basic_block_t* bbNext = bb->m_Next;
@@ -222,8 +226,10 @@ static bool jir_funcPass_simplifyCFGRun(jx_ir_function_pass_o* inst, jx_ir_conte
 				jx_ir_bbFree(ctx, bb);
 				numBasicBlocksChanged++;
 				cfgChanged = true;
-#if 0
 			} else if (jir_bbIsUnconditionalJump(bb)) {
+#if 1
+				// TODO: 
+#else
 				// The code below does not work correctly when phi instructions are included in the target 
 				// block. There are cases where both targets of a conditional jump in a predecessor end
 				// up pointing to the same block. This messes up the phi instructions. Ideally, the phis
@@ -916,6 +922,7 @@ static jx_ir_constant_t* jir_constFold_fp2si(jx_ir_context_t* ctx, jx_ir_constan
 static jx_ir_constant_t* jir_constFold_si2fp(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
 static jx_ir_constant_t* jir_constFold_fptrunc(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
 static jx_ir_constant_t* jir_constFold_fpext(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
+static jx_ir_constant_t* jir_constFold_bitcast(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
 
 bool jx_ir_funcPassCreate_constantFolding(jx_ir_function_pass_t* pass, jx_allocator_i* allocator)
 {
@@ -1178,13 +1185,22 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_instrFree(ctx, instr);
 					}
 				} break;
+				case JIR_OP_BITCAST: {
+					jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
+					jx_ir_constant_t* op = jx_ir_valueToConst(instrUser->m_OperandArr[0]->m_Value);
+					if (op) {
+						jx_ir_constant_t* resConst = jir_constFold_bitcast(ctx, op, jx_ir_instrToValue(instr)->m_Type);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					}
+				} break;
 				case JIR_OP_RET:
 				case JIR_OP_ALLOCA:
 				case JIR_OP_LOAD:
 				case JIR_OP_STORE:
 				case JIR_OP_PTR_TO_INT:
 				case JIR_OP_INT_TO_PTR:
-				case JIR_OP_BITCAST: 
 				case JIR_OP_FP2UI:	 // TODO: 
 				case JIR_OP_UI2FP: { // TODO: 
 					// No op
@@ -1730,6 +1746,13 @@ static jx_ir_constant_t* jir_constFold_fpext(jx_ir_context_t* ctx, jx_ir_constan
 	return jx_ir_constGetFloat(ctx, type->m_Kind, op->u.m_F64);
 }
 
+static jx_ir_constant_t* jir_constFold_bitcast(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(op)->m_Type;
+	JX_CHECK(jx_ir_typeIsInteger(operandType), "Expected integer type");
+	return jx_ir_constGetInteger(ctx, type->m_Kind, op->u.m_I64);
+}
+
 //////////////////////////////////////////////////////////////////////////
 // Peephole optimizations
 //
@@ -1947,4 +1970,1401 @@ static bool jir_funcPass_canonicalizeOperandsRun(jx_ir_function_pass_o* inst, jx
 	}
 
 	return false;
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Reorder Basic Blocks
+//
+#if 1
+typedef struct jir_cfg_node_t jir_cfg_node_t;
+typedef struct jir_cfg_scc_t jir_cfg_scc_t;
+
+typedef struct jir_cfg_node_t
+{
+	jx_ir_basic_block_t* m_BasicBlock;
+	jir_cfg_scc_t* m_ParentSCC;
+	jir_cfg_node_t* m_Succ[2];
+	uint32_t m_NumSucc;
+	uint32_t m_ID;
+	uint32_t m_LowLink;
+	bool m_IsOnStack; // TODO: Use a bit from the ID?
+	JX_PAD(3);
+} jir_cfg_node_t;
+
+typedef struct jir_cfg_scc_list_t
+{
+	jir_cfg_scc_t* m_Head;
+	jir_cfg_scc_t* m_Tail;
+} jir_cfg_scc_list_t;
+
+typedef struct jir_cfg_scc_t
+{
+	jir_cfg_scc_t* m_Next;
+	jir_cfg_scc_t* m_Prev;
+
+	jir_cfg_node_t** m_NodesArr;
+	jir_cfg_node_t* m_EntryNode;
+	jir_cfg_scc_list_t m_SubSCCList;
+} jir_cfg_scc_t;
+
+typedef struct jir_bb_cfgnode_item_t
+{
+	jx_ir_basic_block_t* m_BB;
+	jir_cfg_node_t* m_Node;
+} jir_bb_cfgnode_item_t;
+
+typedef struct jir_cfg_t
+{
+	jx_allocator_i* m_Allocator;
+	jir_cfg_node_t** m_NodesArr;
+	jx_hashmap_t* m_BBToNodeMap;
+	jir_cfg_scc_list_t m_SCCList;
+} jir_cfg_t;
+
+typedef struct jir_cfg_scc_tarjan_state_t
+{
+	jx_allocator_i* m_Allocator;
+	jir_cfg_node_t** m_Stack;
+	jir_cfg_scc_list_t m_List;
+	uint32_t m_NextIndex;
+} jir_cfg_scc_tarjan_state_t;
+
+typedef struct jir_func_pass_reorder_bb_t
+{
+	jx_allocator_i* m_Allocator;
+	jir_cfg_scc_list_t m_List;
+	jx_ir_basic_block_t** m_BBArr;
+} jir_func_pass_reorder_bb_t;
+
+static void jir_funcPass_reorderBasicBlocksDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator);
+static bool jir_funcPass_reorderBasicBlocksRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func);
+
+static void jir_reorderBB_walkSCCTree(jir_func_pass_reorder_bb_t* pass, jir_cfg_scc_list_t* sccList);
+
+static jir_cfg_t* jir_cfgCreate(jx_allocator_i* allocator);
+static void jir_cfgDestroy(jir_cfg_t* cfg);
+static jir_cfg_node_t* jir_cfgAddBasicBlock(jir_cfg_t* cfg, jx_ir_basic_block_t* bb);
+static bool jir_cfgBuild(jir_cfg_t* cfg, jx_ir_context_t* ctx);
+static jir_cfg_node_t* jir_cfgGetNodeForBB(jir_cfg_t* cfg, jx_ir_basic_block_t* bb);
+static jir_cfg_scc_list_t jir_cfgFindSCCs(jir_cfg_t* cfg, jir_cfg_node_t** nodes, uint32_t numNodes, jx_allocator_i* allocator);
+static bool jir_cfgStrongConnect(jir_cfg_scc_tarjan_state_t* sccState, jir_cfg_node_t* node);
+static jir_cfg_node_t* jir_cfgNodeAlloc(jir_cfg_t* cfg, jx_ir_basic_block_t* func);
+static void jir_cfgNodeFree(jir_cfg_t* cfg, jir_cfg_node_t* node);
+static jir_cfg_scc_t* jir_cfgSCCAlloc(jx_allocator_i* allocator);
+static void jir_cfgSCCFree(jir_cfg_scc_t* scc, jx_allocator_i* allocator);
+static uint64_t jir_bbCFGNodeItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
+static int32_t jir_bbCFGNodeItemCompare(const void* a, const void* b, void* udata);
+static void jir_cfgSCCPrint(jir_cfg_scc_t* scc, jx_string_buffer_t* sb);
+
+bool jx_ir_funcPassCreate_reorderBasicBlocks(jx_ir_function_pass_t* pass, jx_allocator_i* allocator)
+{
+	jir_func_pass_reorder_bb_t* inst = (jir_func_pass_reorder_bb_t*)JX_ALLOC(allocator, sizeof(jir_func_pass_reorder_bb_t));
+	if (!inst) {
+		return false;
+	}
+
+	jx_memset(inst, 0, sizeof(jir_func_pass_reorder_bb_t));
+	inst->m_Allocator = allocator;
+
+	inst->m_BBArr = (jx_ir_basic_block_t**)jx_array_create(allocator);
+	if (!inst->m_BBArr) {
+		jir_funcPass_reorderBasicBlocksDestroy((jx_ir_function_pass_o*)inst, allocator);
+		return false;
+	}
+
+	pass->m_Inst = (jx_ir_function_pass_o*)inst;
+	pass->run = jir_funcPass_reorderBasicBlocksRun;
+	pass->destroy = jir_funcPass_reorderBasicBlocksDestroy;
+
+	return true;
+}
+
+static void jir_funcPass_reorderBasicBlocksDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator)
+{
+	jir_func_pass_reorder_bb_t* pass = (jir_func_pass_reorder_bb_t*)inst;
+	jx_array_free(pass->m_BBArr);
+	JX_FREE(allocator, pass);
+}
+
+static bool jir_funcPass_reorderBasicBlocksRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
+{
+	jir_func_pass_reorder_bb_t* pass = (jir_func_pass_reorder_bb_t*)inst;
+
+	jir_cfg_t* cfg = jir_cfgCreate(pass->m_Allocator);
+
+	jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
+	while (bb) {
+		jir_cfgAddBasicBlock(cfg, bb);
+		bb = bb->m_Next;
+	}
+
+	jir_cfgBuild(cfg, ctx);
+
+#if 0
+	{
+		jx_string_buffer_t* sb = jx_strbuf_create(cfg->m_Allocator);
+
+		jir_cfg_scc_t* scc = cfg->m_SCCList.m_Head;
+		while (scc) {
+			jir_cfgSCCPrint(scc, sb);
+			scc = scc->m_Next;
+		}
+
+		jx_strbuf_nullTerminate(sb);
+		JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
+		jx_strbuf_destroy(sb);
+	}
+#endif
+
+#if 1
+	// Rebuild basic block order by walking the SCC tree backwards
+	jx_array_resize(pass->m_BBArr, 0);
+	jir_reorderBB_walkSCCTree(pass, &cfg->m_SCCList);
+
+	JX_CHECK(pass->m_BBArr[0] == func->m_BasicBlockListHead, "Changed entry basic block?");
+	const uint32_t numBasicBlocks = (uint32_t)jx_array_sizeu(pass->m_BBArr);
+	jx_ir_basic_block_t* prevBlock = func->m_BasicBlockListHead;
+	for (uint32_t iBB = 1; iBB < numBasicBlocks; ++iBB) {
+		jx_ir_basic_block_t* bb = pass->m_BBArr[iBB];
+		prevBlock->m_Next = bb;
+		bb->m_Prev = prevBlock;
+		prevBlock = bb;
+	}
+	prevBlock->m_Next = NULL;
+#endif
+
+	jir_cfgDestroy(cfg);
+
+	return true;
+}
+
+static void jir_reorderBB_walkSCCTree(jir_func_pass_reorder_bb_t* pass, jir_cfg_scc_list_t* sccList)
+{
+	jir_cfg_scc_t* scc = sccList->m_Tail;
+	while (scc) {
+		const uint32_t numNodes = (uint32_t)jx_array_sizeu(scc->m_NodesArr);
+		if (numNodes == 1 && !scc->m_EntryNode) {
+			// Single-node scc.
+			jir_cfg_node_t* node = scc->m_NodesArr[0];
+			jx_array_push_back(pass->m_BBArr, node->m_BasicBlock);
+		} else {
+			if (scc->m_EntryNode) {
+				// Natural loop. Insert entry node and walk the sub-tree
+				jir_cfg_node_t* entry = scc->m_EntryNode;
+				jx_array_push_back(pass->m_BBArr, entry->m_BasicBlock);
+				jir_reorderBB_walkSCCTree(pass, &scc->m_SubSCCList);
+			} else {
+				// Cycle with many entry points.
+				JX_CHECK(false, "This is untested. If it comes up it might fail down the line. Debug if necessary and remove this assert if everything is fine.");
+				for (uint32_t iNode = numNodes; iNode > 0; --iNode) {
+					jx_array_push_back(pass->m_BBArr, scc->m_NodesArr[iNode - 1]->m_BasicBlock);
+				}
+			}
+		}
+
+		scc = scc->m_Prev;
+	}
+}
+
+static jir_cfg_t* jir_cfgCreate(jx_allocator_i* allocator)
+{
+	jir_cfg_t* cfg = (jir_cfg_t*)JX_ALLOC(allocator, sizeof(jir_cfg_t));
+	if (!cfg) {
+		return NULL;
+	}
+
+	jx_memset(cfg, 0, sizeof(jir_cfg_t));
+	cfg->m_Allocator = allocator;
+	cfg->m_NodesArr = (jir_cfg_node_t**)jx_array_create(allocator);
+	if (!cfg->m_NodesArr) {
+		jir_cfgDestroy(cfg);
+		return NULL;
+	}
+
+	cfg->m_BBToNodeMap = jx_hashmapCreate(allocator, sizeof(jir_bb_cfgnode_item_t), 64, 0, 0, jir_bbCFGNodeItemHash, jir_bbCFGNodeItemCompare, NULL, NULL);
+	if (!cfg->m_BBToNodeMap) {
+		jir_cfgDestroy(cfg);
+		return NULL;
+	}
+
+	return cfg;
+}
+
+static void jir_cfgDestroy(jir_cfg_t* cfg)
+{
+	if (cfg->m_BBToNodeMap) {
+		jx_hashmapDestroy(cfg->m_BBToNodeMap);
+		cfg->m_BBToNodeMap = NULL;
+	}
+
+	jir_cfg_scc_t* scc = cfg->m_SCCList.m_Head;
+	while (scc) {
+		jir_cfg_scc_t* sccNext = scc->m_Next;
+		jir_cfgSCCFree(scc, cfg->m_Allocator);
+		scc = sccNext;
+	}
+
+	const uint32_t numNodes = (uint32_t)jx_array_sizeu(cfg->m_NodesArr);
+	for (uint32_t iNode = 0; iNode < numNodes; ++iNode) {
+		jir_cfgNodeFree(cfg, cfg->m_NodesArr[iNode]);
+	}
+	jx_array_free(cfg->m_NodesArr);
+	JX_FREE(cfg->m_Allocator, cfg);
+}
+
+static jir_cfg_node_t* jir_cfgAddBasicBlock(jir_cfg_t* cfg, jx_ir_basic_block_t* bb)
+{
+	jir_cfg_node_t* node = jir_cfgNodeAlloc(cfg, bb);
+	if (!node) {
+		return NULL;
+	}
+
+	jx_array_push_back(cfg->m_NodesArr, node);
+	jx_hashmapSet(cfg->m_BBToNodeMap, &(jir_bb_cfgnode_item_t){ .m_BB= bb, .m_Node = node });
+
+	return node;
+}
+
+static bool jir_cfgBuild(jir_cfg_t* cfg, jx_ir_context_t* ctx)
+{
+	const uint32_t numNodes = (uint32_t)jx_array_sizeu(cfg->m_NodesArr);
+	for (uint32_t iNode = 0; iNode < numNodes; ++iNode) {
+		jir_cfg_node_t* node = cfg->m_NodesArr[iNode];
+		jx_ir_basic_block_t* bb = node->m_BasicBlock;
+		jx_ir_instruction_t* termInstr = jx_ir_bbGetLastInstr(ctx, bb);
+		if (termInstr->m_OpCode == JIR_OP_BRANCH) {
+			const uint32_t numOperands = (uint32_t)jx_array_sizeu(termInstr->super.m_OperandArr);
+			if (numOperands == 1) {
+				node->m_Succ[0] = jir_cfgGetNodeForBB(cfg, jx_ir_valueToBasicBlock(termInstr->super.m_OperandArr[0]->m_Value));
+				node->m_NumSucc = 1;
+			} else if (numOperands == 3) {
+				node->m_Succ[0] = jir_cfgGetNodeForBB(cfg, jx_ir_valueToBasicBlock(termInstr->super.m_OperandArr[1]->m_Value));
+				node->m_Succ[1] = jir_cfgGetNodeForBB(cfg, jx_ir_valueToBasicBlock(termInstr->super.m_OperandArr[2]->m_Value));
+				node->m_NumSucc = 2;
+			} else {
+				JX_CHECK(false, "Unknown branch instruction");
+			}
+		} else {
+			JX_CHECK(termInstr->m_OpCode == JIR_OP_RET, "Unknown terminator instruction!");
+			node->m_NumSucc = 0;
+		}
+	}
+
+	cfg->m_SCCList = jir_cfgFindSCCs(cfg, cfg->m_NodesArr, jx_array_sizeu(cfg->m_NodesArr), cfg->m_Allocator);
+
+	return true;
+}
+
+static jir_cfg_node_t* jir_cfgGetNodeForBB(jir_cfg_t* cfg, jx_ir_basic_block_t* bb)
+{
+	jir_bb_cfgnode_item_t* item = jx_hashmapGet(cfg->m_BBToNodeMap, &(jir_bb_cfgnode_item_t){.m_BB = bb});
+	if (!item) {
+		JX_CHECK(false, "Basic block not found in map");
+		return NULL;
+	}
+
+	return item->m_Node;
+}
+
+static jir_cfg_scc_list_t jir_cfgFindSCCs(jir_cfg_t* cfg, jir_cfg_node_t** nodes, uint32_t numNodes, jx_allocator_i* allocator)
+{
+	// Reset all nodes' SCC state
+	for (uint32_t iNode = 0; iNode < numNodes; ++iNode) {
+		nodes[iNode]->m_ID = UINT32_MAX;
+		nodes[iNode]->m_LowLink = UINT32_MAX;
+		nodes[iNode]->m_IsOnStack = false;
+		nodes[iNode]->m_ParentSCC = NULL;
+	}
+
+	// https://en.wikipedia.org/wiki/Tarjan%27s_strongly_connected_components_algorithm
+	jir_cfg_scc_tarjan_state_t* sccState = &(jir_cfg_scc_tarjan_state_t) { 0 };
+	sccState->m_Allocator = allocator;
+	sccState->m_Stack = (jir_cfg_node_t**)jx_array_create(allocator);
+	jx_array_reserve(sccState->m_Stack, numNodes);
+
+	for (uint32_t iNode = 0; iNode < numNodes; ++iNode) {
+		jir_cfg_node_t* node = nodes[iNode];
+		if (node->m_ID == UINT32_MAX) {
+			jir_cfgStrongConnect(sccState, node);
+		}
+	}
+
+	jx_array_free(sccState->m_Stack);
+
+	jir_cfg_scc_t* scc = sccState->m_List.m_Head;
+	while (scc) {
+		const uint32_t numSCCNodes = (uint32_t)jx_array_sizeu(scc->m_NodesArr);
+		if (numSCCNodes != 1) {
+			// Check if this a natural loop (single entry into the SCC).
+			// If it is "remove" the entry node from the node list and recursively
+			// find all sub-SCCs.
+			// 
+			// For a node to be the entry node it must be the only node with a predecessor
+			// from another SCC.
+			uint32_t entryNodeID = UINT32_MAX;
+			uint32_t numEntries = 0;
+			for (uint32_t iNode = 0; iNode < numSCCNodes && numEntries <= 1; ++iNode) {
+				jir_cfg_node_t* node = scc->m_NodesArr[iNode];
+				jx_ir_basic_block_t* bb = node->m_BasicBlock;
+				const uint32_t numPreds = (uint32_t)jx_array_sizeu(bb->m_PredArr);
+				for (uint32_t iPred = 0; iPred < numPreds; ++iPred) {
+					jir_cfg_node_t* predNode = jir_cfgGetNodeForBB(cfg, bb->m_PredArr[iPred]);
+					JX_CHECK(predNode, "Predecessor node not found in the CFG!");
+					if (predNode->m_ParentSCC != scc) {
+						entryNodeID = iNode;
+						++numEntries;
+					}
+				}
+			}
+
+			JX_CHECK(numEntries != 0 && entryNodeID != UINT32_MAX, "Unconnected SCC?");
+			if (numEntries == 1) {
+				// This is a single-entry SCC.
+				scc->m_EntryNode = scc->m_NodesArr[entryNodeID];
+				jx_array_del(scc->m_NodesArr, entryNodeID);
+
+				scc->m_SubSCCList = jir_cfgFindSCCs(cfg, scc->m_NodesArr, jx_array_sizeu(scc->m_NodesArr), cfg->m_Allocator);
+			} else {
+				// This is an irreducible SCC. Cannot dive deeper.
+			}
+		}
+
+		scc = scc->m_Next;
+	}
+
+	return sccState->m_List;
+}
+
+static bool jir_cfgStrongConnect(jir_cfg_scc_tarjan_state_t* sccState, jir_cfg_node_t* node)
+{
+	const uint32_t id = sccState->m_NextIndex++;
+	node->m_ID = id;
+	node->m_LowLink = id;
+
+	jx_array_push_back(sccState->m_Stack, node);
+	node->m_IsOnStack = true;
+
+	const uint32_t numSucc = node->m_NumSucc;
+	for (uint32_t iSucc = 0; iSucc < numSucc; ++iSucc) {
+		jir_cfg_node_t* succNode = node->m_Succ[iSucc];
+		if (succNode->m_ID == UINT32_MAX) {
+			// Successor w has not yet been visited; recurse on it
+			jir_cfgStrongConnect(sccState, succNode);
+			node->m_LowLink = jx_min_u32(node->m_LowLink, succNode->m_LowLink);
+		} else if (succNode->m_IsOnStack) {
+			// Successor w is in stack S and hence in the current SCC
+			node->m_LowLink = jx_min_u32(node->m_LowLink, succNode->m_ID);
+		} else {
+			// If w is not on stack, then (v, w) is an edge pointing to 
+			// an SCC already found and must be ignored
+		}
+	}
+
+	// If v is a root node, pop the stack and generate an SCC
+	if (node->m_LowLink == node->m_ID) {
+		jir_cfg_scc_t* scc = jir_cfgSCCAlloc(sccState->m_Allocator);
+		if (!scc) {
+			return false;
+		}
+
+		jir_cfg_node_t* stackNode = NULL;
+		do {
+			stackNode = jx_array_pop_back(sccState->m_Stack);
+			stackNode->m_IsOnStack = false;
+			stackNode->m_ParentSCC = scc;
+			jx_array_push_back(scc->m_NodesArr, stackNode);
+		} while (stackNode != node);
+
+		if (!sccState->m_List.m_Head) {
+			sccState->m_List.m_Head = scc;
+			sccState->m_List.m_Tail = scc;
+		} else {
+			scc->m_Prev = sccState->m_List.m_Tail;
+			sccState->m_List.m_Tail->m_Next = scc;
+			sccState->m_List.m_Tail = scc;
+		}
+	}
+
+	return true;
+}
+
+static jir_cfg_node_t* jir_cfgNodeAlloc(jir_cfg_t* cfg, jx_ir_basic_block_t* bb)
+{
+	jir_cfg_node_t* node = (jir_cfg_node_t*)JX_ALLOC(cfg->m_Allocator, sizeof(jir_cfg_node_t));
+	if (!node) {
+		return NULL;
+	}
+
+	jx_memset(node, 0, sizeof(jir_cfg_node_t));
+	node->m_BasicBlock = bb;
+	node->m_ID = UINT32_MAX;
+	node->m_LowLink = UINT32_MAX;
+	node->m_IsOnStack = false;
+	
+	return node;
+}
+
+static void jir_cfgNodeFree(jir_cfg_t* cfg, jir_cfg_node_t* node)
+{
+	JX_FREE(cfg->m_Allocator, node);
+}
+
+static jir_cfg_scc_t* jir_cfgSCCAlloc(jx_allocator_i* allocator)
+{
+	jir_cfg_scc_t* scc = (jir_cfg_scc_t*)JX_ALLOC(allocator, sizeof(jir_cfg_scc_t));
+	if (!scc) {
+		return NULL;
+	}
+
+	jx_memset(scc, 0, sizeof(jir_cfg_scc_t));
+	scc->m_NodesArr = (jir_cfg_node_t**)jx_array_create(allocator);
+	if (!scc->m_NodesArr) {
+		jir_cfgSCCFree(scc, allocator);
+		return NULL;
+	}
+
+	return scc;
+}
+
+static void jir_cfgSCCFree(jir_cfg_scc_t* scc, jx_allocator_i* allocator)
+{
+	jir_cfg_scc_t* sub = scc->m_SubSCCList.m_Head;
+	while (sub) {
+		jir_cfg_scc_t* subNext = sub->m_Next;
+		jir_cfgSCCFree(sub, allocator);
+		sub = subNext;
+	}
+	jx_array_free(scc->m_NodesArr);
+	JX_FREE(allocator, scc);
+}
+
+static uint64_t jir_bbCFGNodeItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata)
+{
+	const jir_bb_cfgnode_item_t* var = (const jir_bb_cfgnode_item_t*)item;
+	uint64_t hash = jx_hashFNV1a(&var->m_BB, sizeof(jx_ir_basic_block_t*), seed0, seed1);
+	return hash;
+}
+
+static int32_t jir_bbCFGNodeItemCompare(const void* a, const void* b, void* udata)
+{
+	const jir_bb_cfgnode_item_t* varA = (const jir_bb_cfgnode_item_t*)a;
+	const jir_bb_cfgnode_item_t* varB = (const jir_bb_cfgnode_item_t*)b;
+	int32_t res = jir_comparePtrs(varA->m_BB, varB->m_BB);
+	return res;
+}
+
+static void jir_cfgSCCPrint(jir_cfg_scc_t* scc, jx_string_buffer_t* sb)
+{
+	const uint32_t numNodes = (uint32_t)jx_array_sizeu(scc->m_NodesArr);
+	if (numNodes == 1 && !scc->m_EntryNode) {
+		JX_CHECK(!scc->m_EntryNode && !scc->m_SubSCCList.m_Head, "?");
+		jir_cfg_node_t* node = scc->m_NodesArr[0];
+		jx_strbuf_printf(sb, "single: %s\n", node->m_BasicBlock->super.m_Name);
+	} else {
+		if (scc->m_EntryNode) {
+			jx_strbuf_printf(sb, "loop: %s\n", scc->m_EntryNode->m_BasicBlock->super.m_Name);
+
+			jir_cfg_scc_t* sub = scc->m_SubSCCList.m_Head;
+			while (sub) {
+				jir_cfgSCCPrint(sub, sb);
+				sub = sub->m_Next;
+			}
+			jx_strbuf_printf(sb, "endloop\n");
+		} else {
+			jx_strbuf_printf(sb, "cycle:");
+			for (uint32_t iNode = 0; iNode < numNodes; ++iNode) {
+				jir_cfg_node_t* node = scc->m_NodesArr[iNode];
+
+				if (iNode != 0) {
+					jx_strbuf_pushCStr(sb, ", ");
+				}
+				jx_strbuf_printf(sb, "%s", node->m_BasicBlock->super.m_Name);
+			}
+			jx_strbuf_pushCStr(sb, "\n");
+		}
+	}
+}
+#else
+#define JIR_REORDER_BB_FLAGS_IS_VISITED_Pos 31
+#define JIR_REORDER_BB_FLAGS_IS_VISITED_Msk (1u << JIR_REORDER_BB_FLAGS_IS_VISITED_Pos)
+
+typedef struct jir_func_pass_reorder_bb_t
+{
+	jx_allocator_i* m_Allocator;
+	jx_ir_basic_block_t** m_OrderedBBArr;
+	jx_ir_basic_block_t** m_Stack;
+} jir_func_pass_reorder_bb_t;
+
+static void jir_funcPass_reorderBasicBlocksDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator);
+static bool jir_funcPass_reorderBasicBlocksRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func);
+
+bool jx_ir_funcPassCreate_reorderBasicBlocks(jx_ir_function_pass_t* pass, jx_allocator_i* allocator)
+{
+	jir_func_pass_reorder_bb_t* inst = (jir_func_pass_reorder_bb_t*)JX_ALLOC(allocator, sizeof(jir_func_pass_reorder_bb_t));
+	if (!inst) {
+		return false;
+	}
+
+	jx_memset(inst, 0, sizeof(jir_func_pass_reorder_bb_t));
+	inst->m_Allocator = allocator;
+
+	inst->m_OrderedBBArr = (jx_ir_basic_block_t**)jx_array_create(allocator);
+	if (!inst->m_OrderedBBArr) {
+		jir_funcPass_reorderBasicBlocksDestroy((jx_ir_function_pass_o*)inst, allocator);
+		return false;
+	}
+
+	inst->m_Stack = (jx_ir_basic_block_t**)jx_array_create(allocator);
+	if (!inst->m_Stack) {
+		jir_funcPass_reorderBasicBlocksDestroy((jx_ir_function_pass_o*)inst, allocator);
+		return false;
+	}
+
+	pass->m_Inst = (jx_ir_function_pass_o*)inst;
+	pass->run = jir_funcPass_reorderBasicBlocksRun;
+	pass->destroy = jir_funcPass_reorderBasicBlocksDestroy;
+
+	return true;
+}
+
+static void jir_funcPass_reorderBasicBlocksDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator)
+{
+	jir_func_pass_reorder_bb_t* pass = (jir_func_pass_reorder_bb_t*)inst;
+	jx_array_free(pass->m_OrderedBBArr);
+	jx_array_free(pass->m_Stack);
+	JX_FREE(allocator, pass);
+}
+
+static bool jir_funcPass_reorderBasicBlocksRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
+{
+	jir_func_pass_reorder_bb_t* pass = (jir_func_pass_reorder_bb_t*)inst;
+
+	// Reset all basic block visited flags
+	{
+		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
+		while (bb) {
+			bb->super.m_Flags &= ~JIR_REORDER_BB_FLAGS_IS_VISITED_Msk;
+			bb = bb->m_Next;
+		}
+	}
+
+	jx_array_resize(pass->m_OrderedBBArr, 0);
+	jx_array_resize(pass->m_Stack, 0);
+
+	jx_array_push_back(pass->m_Stack, func->m_BasicBlockListHead);
+	while (jx_array_sizeu(pass->m_Stack) != 0) {
+		jx_ir_basic_block_t* bb = jx_array_pop_back(pass->m_Stack);
+
+		if ((bb->super.m_Flags & JIR_REORDER_BB_FLAGS_IS_VISITED_Msk) != 0) {
+#if 0
+			// Remove it from the ordered list and push it to the end.
+			// TODO: Convert ordered list into linked list for faster reordering.
+			bool found = false;
+			const uint32_t orderedListSize = (uint32_t)jx_array_sizeu(pass->m_OrderedBBArr);
+			for (uint32_t iBB = 0; iBB < orderedListSize; ++iBB) {
+				if (pass->m_OrderedBBArr[iBB] == bb) {
+					jx_array_del(pass->m_OrderedBBArr, iBB);
+					found = true;
+					break;
+				}
+			}
+			JX_CHECK(found, "Basic block not found");
+
+			jx_array_push_back(pass->m_OrderedBBArr, bb);
+#endif
+
+			continue;
+		}
+
+		bb->super.m_Flags |= JIR_REORDER_BB_FLAGS_IS_VISITED_Msk;
+
+		jx_ir_instruction_t* lastInstr = jx_ir_bbGetLastInstr(ctx, bb);
+		if (lastInstr->m_OpCode == JIR_OP_BRANCH) {
+			const uint32_t numOperands = (uint32_t)jx_array_sizeu(lastInstr->super.m_OperandArr);
+			if (numOperands == 1) {
+				// Unconditional branch
+				jx_ir_basic_block_t* target = jx_ir_valueToBasicBlock(lastInstr->super.m_OperandArr[0]->m_Value);
+				JX_CHECK(target, "Expected basic block as branch target.");
+				jx_array_push_back(pass->m_Stack, target);
+			} else if (numOperands == 3) {
+				// Conditional branch
+				jx_ir_basic_block_t* trueTarget = jx_ir_valueToBasicBlock(lastInstr->super.m_OperandArr[1]->m_Value);
+				JX_CHECK(trueTarget, "Expected basic block as branch target.");
+
+				jx_ir_basic_block_t* falseTarget = jx_ir_valueToBasicBlock(lastInstr->super.m_OperandArr[2]->m_Value);
+				JX_CHECK(falseTarget, "Expected basic block as branch target.");
+
+				// Push in such order so that the false path is the fallthrough path.
+				// NOTE: The target pushed last on the stack will be processed first (LIFO)
+				// so it will be added to the ordered list first.
+				jx_array_push_back(pass->m_Stack, trueTarget);
+				jx_array_push_back(pass->m_Stack, falseTarget);
+			} else {
+				JX_CHECK(false, "Unknown branch instruction.");
+			}
+		} else {
+			JX_CHECK(lastInstr->m_OpCode == JIR_OP_RET, "Unknown terminator instruction");
+		}
+
+		jx_array_push_back(pass->m_OrderedBBArr, bb);
+	}
+
+	// Remove all basic blocks which haven't been visited
+	{
+		jx_ir_basic_block_t head = { 0 };
+		jx_ir_basic_block_t* cur = &head;
+
+		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
+		while (bb) {
+			jx_ir_basic_block_t* bbNext = bb->m_Next;
+			if ((bb->super.m_Flags & JIR_REORDER_BB_FLAGS_IS_VISITED_Msk) != 0) {
+				// Block has been visited. Reset the flag and keep it.
+				bb->super.m_Flags &= ~JIR_REORDER_BB_FLAGS_IS_VISITED_Msk;
+			} else {
+				// Block hasn't been visited. Remove any uses of it (they should 
+				// all be phi instructions) and then remove it from the function.
+
+				// Remove the terminator instruction which will force update the CFG
+				// NOTE: If I don't it at this point and free all basic blocks in the order
+				// they appear here, the bbDtor function complains about not finding predecessors.
+				jx_ir_instruction_t* lastInstr = jx_ir_bbGetLastInstr(ctx, bb);
+				JX_CHECK(jx_ir_opcodeIsTerminator(lastInstr->m_OpCode), "Expected terminator instruction!");
+				jx_ir_bbRemoveInstr(ctx, bb, lastInstr);
+				jx_ir_instrFree(ctx, lastInstr);
+
+				// Remove all uses of this basic block. Should only be phi instructions or branches
+				// from other unvisited basic blocks.
+				jx_ir_use_t* bbUse = bb->super.m_UsesListHead;
+				while (bbUse) {
+					jx_ir_use_t* bbUseNext = bbUse->m_Next;
+
+					jx_ir_instruction_t* instr = jx_ir_valueToInstr(jx_ir_userToValue(bbUse->m_User));
+					JX_CHECK(instr, "Basic block use expected to be an instruction!");
+					if (instr->m_OpCode == JIR_OP_PHI) {
+						jx_ir_instrPhiRemoveValue(ctx, instr, bb);
+					} else if (instr->m_OpCode == JIR_OP_BRANCH) {
+						// Might happen if another unvisited/dead block references this 
+						// one in a branch instruction. Make sure this is true and then 
+						// remove it. The other block will be removed later so there is no
+						// need to patch the branch.
+						jx_ir_basic_block_t* predBB = instr->m_ParentBB;
+						JX_CHECK((predBB->super.m_Flags & JIR_REORDER_BB_FLAGS_IS_VISITED_Msk) == 0, "Something has gone really wrong. An unvisited block is the branch target of a visited block?");
+					} else {
+						JX_CHECK(false, "Unknown user of basic block!");
+					}
+
+					bbUse = bbUseNext;
+				}
+
+				// Remove the basic block from the function and add it to the list of blocks
+				// to free.
+				jx_ir_funcRemoveBasicBlock(ctx, func, bb);
+				cur->m_Next = bb;
+				cur = cur->m_Next;
+			}
+			
+			bb = bbNext;
+		}
+
+		// Free all unvisited blocks.
+		bb = head.m_Next;
+		while (bb) {
+			jx_ir_basic_block_t* bbNext = bb->m_Next;
+			jx_ir_bbFree(ctx, bb);
+			bb = bbNext;
+		}
+	}
+
+	// Relink all basic blocks
+	JX_CHECK(func->m_BasicBlockListHead == pass->m_OrderedBBArr[0], "Entry block has been changed?");
+
+	const uint32_t numBasicBlocks = (uint32_t)jx_array_sizeu(pass->m_OrderedBBArr);
+	for (uint32_t iBB = 0; iBB < numBasicBlocks; ++iBB) {
+		jx_ir_basic_block_t* bb = pass->m_OrderedBBArr[iBB];
+		bb->m_Next = iBB != (numBasicBlocks - 1) ? pass->m_OrderedBBArr[iBB + 1] : NULL;
+		bb->m_Prev = iBB != 0 ? pass->m_OrderedBBArr[iBB - 1] : NULL;
+	}
+
+	return true;
+}
+#endif
+
+//////////////////////////////////////////////////////////////////////////
+// Remove Redundant Phis
+//
+typedef struct jir_func_pass_remove_redundant_phis_t
+{
+	jx_allocator_i* m_Allocator;
+} jir_func_pass_remove_redundant_phis_t;
+
+static void jir_funcPass_removeRedundantPhisDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator);
+static bool jir_funcPass_removeRedundantPhisRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func);
+
+bool jx_ir_funcPassCreate_removeRedundantPhis(jx_ir_function_pass_t* pass, jx_allocator_i* allocator)
+{
+	jir_func_pass_remove_redundant_phis_t* inst = (jir_func_pass_remove_redundant_phis_t*)JX_ALLOC(allocator, sizeof(jir_func_pass_remove_redundant_phis_t));
+	if (!inst) {
+		return false;
+	}
+
+	jx_memset(inst, 0, sizeof(jir_func_pass_remove_redundant_phis_t));
+	inst->m_Allocator = allocator;
+
+	pass->m_Inst = (jx_ir_function_pass_o*)inst;
+	pass->run = jir_funcPass_removeRedundantPhisRun;
+	pass->destroy = jir_funcPass_removeRedundantPhisDestroy;
+
+	return true;
+}
+
+static void jir_funcPass_removeRedundantPhisDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator)
+{
+	jir_func_pass_remove_redundant_phis_t* pass = (jir_func_pass_remove_redundant_phis_t*)inst;
+	JX_FREE(allocator, pass);
+}
+
+static bool jir_funcPass_removeRedundantPhisRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
+{
+	jir_func_pass_remove_redundant_phis_t* pass = (jir_func_pass_remove_redundant_phis_t*)inst;
+
+	jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
+	while (bb) {
+		if (jx_array_sizeu(bb->m_PredArr) == 1) {
+			jx_ir_instruction_t* instr = bb->m_InstrListHead;
+			while (instr && instr->m_OpCode == JIR_OP_PHI) {
+				jx_ir_instruction_t* instrNext = instr->m_Next;
+				JX_CHECK(jx_ir_valueToBasicBlock(instr->super.m_OperandArr[1]->m_Value) == bb->m_PredArr[0], "Invalid CFG state");
+
+				jx_ir_value_t* val = instr->super.m_OperandArr[0]->m_Value;
+				jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), val);
+				jx_ir_bbRemoveInstr(ctx, bb, instr);
+				jx_ir_instrFree(ctx, instr);
+
+				instr = instrNext;
+			}
+		}
+
+		bb = bb->m_Next;
+	}
+
+	return false;
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Simple Function inliner
+//
+typedef struct jir_call_graph_node_t jir_call_graph_node_t;
+typedef struct jir_call_graph_scc_t jir_call_graph_scc_t;
+
+typedef struct jir_value_map_item_t
+{
+	jx_ir_value_t* m_Key;
+	jx_ir_value_t* m_Value;
+} jir_value_map_item_t;
+
+typedef struct jir_func_cgnode_item_t
+{
+	jx_ir_function_t* m_Func;
+	jir_call_graph_node_t* m_Node;
+} jir_func_cgnode_item_t;
+
+typedef struct jir_call_graph_node_t
+{
+	jx_ir_function_t* m_Func;
+	jir_call_graph_node_t** m_CalledFuncsArr;
+	jx_ir_instruction_t** m_CallInstrArr;
+	uint32_t m_ID;
+	uint32_t m_LowLink;
+	bool m_IsOnStack; // TODO: Use a bit from the ID?
+	JX_PAD(7);
+} jir_call_graph_node_t;
+
+typedef struct jir_call_graph_scc_t
+{
+	jir_call_graph_scc_t* m_Next;
+	jir_call_graph_scc_t* m_Prev;
+	jir_call_graph_node_t** m_NodesArr;
+} jir_call_graph_scc_t;
+
+typedef struct jir_call_graph_t
+{
+	jx_allocator_i* m_Allocator;
+	jir_call_graph_node_t** m_NodesArr;
+	jx_hashmap_t* m_FuncToNodeMap;
+	jir_call_graph_scc_t* m_SCCListHead;
+	jir_call_graph_scc_t* m_SCCListTail;
+} jir_call_graph_t;
+
+typedef struct jir_call_graph_scc_tarjan_state_t
+{
+	jir_call_graph_node_t** m_Stack;
+	uint32_t m_NextIndex;
+} jir_call_graph_scc_tarjan_state_t;
+
+typedef struct jir_module_pass_inliner_t
+{
+	jx_allocator_i* m_Allocator;
+	jx_ir_context_t* m_Ctx;
+	jx_hashmap_t* m_ValueMap;
+} jir_module_pass_inliner_t;
+
+static void jir_funcPass_inlineFuncsDestroy(jx_ir_module_pass_o* inst, jx_allocator_i* allocator);
+static bool jir_funcPass_inlineFuncsRun(jx_ir_module_pass_o* inst, jx_ir_context_t* ctx, jx_ir_module_t* func);
+
+static bool jir_inliner_inlineCall(jir_module_pass_inliner_t* pass, jx_ir_instruction_t* callInstr);
+
+static jir_call_graph_t* jir_callGraphCreate(jx_allocator_i* allocator);
+static void jir_callGraphDestroy(jir_call_graph_t* cg);
+static jir_call_graph_node_t* jir_callGraphAddFunc(jir_call_graph_t* cg, jx_ir_function_t* func);
+static bool jir_callGraphBuild(jir_call_graph_t* cg);
+static bool jir_callGraphNodeCallsFunc(jir_call_graph_node_t* node, jx_ir_function_t* func);
+static void jir_callGraphStrongConnect(jir_call_graph_t* cg, jir_call_graph_node_t* node, jir_call_graph_scc_tarjan_state_t* sccState);
+static void jir_callGraphAppendSCC(jir_call_graph_t* cg, jir_call_graph_scc_t* scc);
+static jir_call_graph_node_t* jir_callGraphNodeAlloc(jir_call_graph_t* cg, jx_ir_function_t* func);
+static void jir_callGraphNodeFree(jir_call_graph_t* cg, jir_call_graph_node_t* node);
+static jir_call_graph_scc_t* jir_callGraphSCCAlloc(jir_call_graph_t* cg);
+static void jir_callGraphSCCFree(jir_call_graph_t* cg, jir_call_graph_scc_t* scc);
+
+static uint64_t jir_funcCGNodeItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
+static int32_t jir_funcCGNodeItemCompare(const void* a, const void* b, void* udata);
+static uint64_t jir_valueMapItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
+static int32_t jir_valueMapItemCompare(const void* a, const void* b, void* udata);
+
+bool jx_ir_modulePassCreate_inlineFuncs(jx_ir_module_pass_t* pass, jx_allocator_i* allocator)
+{
+	jir_module_pass_inliner_t* inst = (jir_module_pass_inliner_t*)JX_ALLOC(allocator, sizeof(jir_module_pass_inliner_t));
+	if (!inst) {
+		return false;
+	}
+
+	jx_memset(inst, 0, sizeof(jir_module_pass_inliner_t));
+	inst->m_Allocator = allocator;
+
+	inst->m_ValueMap = jx_hashmapCreate(allocator, sizeof(jir_value_map_item_t), 64, 0, 0, jir_valueMapItemHash, jir_valueMapItemCompare, NULL, NULL);
+	if (!inst->m_ValueMap) {
+		jir_funcPass_simpleSSADestroy((jx_ir_function_pass_o*)inst, allocator);
+		return false;
+	}
+
+	pass->m_Inst = (jx_ir_module_pass_o*)inst;
+	pass->run = jir_funcPass_inlineFuncsRun;
+	pass->destroy = jir_funcPass_inlineFuncsDestroy;
+
+	return true;
+}
+
+static void jir_funcPass_inlineFuncsDestroy(jx_ir_module_pass_o* inst, jx_allocator_i* allocator)
+{
+	jir_module_pass_inliner_t* pass = (jir_module_pass_inliner_t*)inst;
+
+	if (pass->m_ValueMap) {
+		jx_hashmapDestroy(pass->m_ValueMap);
+		pass->m_ValueMap = NULL;
+	}
+
+	JX_FREE(allocator, pass);
+}
+
+static bool jir_funcPass_inlineFuncsRun(jx_ir_module_pass_o* inst, jx_ir_context_t* ctx, jx_ir_module_t* mod)
+{
+	jir_module_pass_inliner_t* pass = (jir_module_pass_inliner_t*)inst;
+	pass->m_Ctx = ctx;
+
+	// Create the call graph.
+	jir_call_graph_t* callGraph = jir_callGraphCreate(pass->m_Allocator);
+
+	jx_ir_function_t* func = mod->m_FunctionListHead;
+	while (func) {
+		if (func->m_BasicBlockListHead) {
+			jir_callGraphAddFunc(callGraph, func);
+		}
+
+		func = func->m_Next;
+	}
+
+	jir_callGraphBuild(callGraph);
+
+	jir_call_graph_scc_t* scc = callGraph->m_SCCListHead;
+	while (scc) {
+		// Inline any function which is it's own SCC (i.e. it's not part of a cycle).
+		const uint32_t numSCCNodes = (uint32_t)jx_array_sizeu(scc->m_NodesArr);
+		if (numSCCNodes == 1) {
+			jir_call_graph_node_t* node = scc->m_NodesArr[0];
+
+			uint32_t numCallsInlined = 0;
+
+			const uint32_t numCalls = (uint32_t)jx_array_sizeu(node->m_CallInstrArr);
+			for (uint32_t iCall = 0; iCall < numCalls; ++iCall) {
+				jx_ir_instruction_t* callInstr = node->m_CallInstrArr[iCall];
+				JX_CHECK(node->m_Func == callInstr->m_ParentBB->m_ParentFunc, "Invalid call instruction!");
+
+				jx_ir_function_t* calleeFunc = jx_ir_valueToFunc(callInstr->super.m_OperandArr[0]->m_Value);
+
+				// Avoid recursive calls
+				if (calleeFunc == node->m_Func) {
+					continue;
+				}
+
+				// TODO: Better heuristic
+				const bool shouldInline = (calleeFunc->m_Flags & JIR_FUNC_FLAGS_INLINE_Msk) != 0;
+				if (shouldInline) {
+					if (jir_inliner_inlineCall(pass, callInstr)) {
+						++numCallsInlined;
+					}
+				}
+			}
+		}
+
+		scc = scc->m_Next;
+	}
+
+	jir_callGraphDestroy(callGraph);
+
+	return false;
+}
+
+static bool jir_inliner_inlineCall(jir_module_pass_inliner_t* pass, jx_ir_instruction_t* callInstr)
+{
+	jx_ir_context_t* ctx = pass->m_Ctx;
+
+	jx_ir_basic_block_t* callBB = callInstr->m_ParentBB;
+	jx_ir_function_t* callerFunc = callBB->m_ParentFunc;
+	jx_ir_function_t* calleeFunc = jx_ir_valueToFunc(callInstr->super.m_OperandArr[0]->m_Value);
+
+	JX_CHECK(callerFunc != calleeFunc, "Cannot self-inline!");
+	JX_CHECK(jx_ir_funcCheck(ctx, callerFunc), "Caller function is not valid!");
+
+	jx_hashmapClear(pass->m_ValueMap, false);
+
+	// Insert all callee arguments to the map
+	uint32_t argID = 0;
+	jx_ir_argument_t* calleeArg = calleeFunc->m_ArgListHead;
+	while (calleeArg) {
+		jx_ir_value_t* operandVal = callInstr->super.m_OperandArr[1 + argID]->m_Value;
+		
+		jx_hashmapSet(pass->m_ValueMap, &(jir_value_map_item_t){ .m_Key = jx_ir_argToValue(calleeArg), .m_Value = operandVal });
+
+		++argID;
+		calleeArg = calleeArg->m_Next;
+	}
+
+	// Clone callee basic blocks and instructions, WITHOUT adding any of them 
+	// to the caller yet (not even the cloned instructions to the cloned basic blocks).
+	// This is needed because the bbs/instructions have to patched to use the new operands
+	// before adding them to a func/bb otherwise the CFG will be invalid.
+	{
+		jx_ir_basic_block_t* calleeBB = calleeFunc->m_BasicBlockListHead;
+		while (calleeBB) {
+			jx_ir_basic_block_t* clonedBB = jx_ir_bbAlloc(ctx, NULL);
+			jx_hashmapSet(pass->m_ValueMap, &(jir_value_map_item_t){ .m_Key = jx_ir_bbToValue(calleeBB), .m_Value = jx_ir_bbToValue(clonedBB) });
+
+			jx_ir_instruction_t* calleeInstr = calleeBB->m_InstrListHead;
+			while (calleeInstr) {
+				jx_ir_instruction_t* clonedInstr = jx_ir_instrClone(ctx, calleeInstr);
+				jx_hashmapSet(pass->m_ValueMap, &(jir_value_map_item_t){ .m_Key = jx_ir_instrToValue(calleeInstr), jx_ir_instrToValue(clonedInstr) });
+		
+				calleeInstr = calleeInstr->m_Next;
+			}
+
+			calleeBB = calleeBB->m_Next;
+		}
+	}
+
+	// Patch all cloned instructions to use the new values.
+	jx_ir_basic_block_t* firstClonedBB = NULL;
+	{
+		jx_ir_basic_block_t* originalBB = calleeFunc->m_BasicBlockListHead;
+		while (originalBB) {
+			jir_value_map_item_t* bbItem = (jir_value_map_item_t*)jx_hashmapGet(pass->m_ValueMap, &(jir_value_map_item_t){.m_Key = jx_ir_bbToValue(originalBB)});
+			JX_CHECK(bbItem, "Basic block not found in map!");
+			jx_ir_basic_block_t* clonedBB = jx_ir_valueToBasicBlock(bbItem->m_Value);
+
+			jx_ir_instruction_t* originalInstr = originalBB->m_InstrListHead;
+			while (originalInstr) {
+				jir_value_map_item_t* instrItem = (jir_value_map_item_t*)jx_hashmapGet(pass->m_ValueMap, &(jir_value_map_item_t){.m_Key = jx_ir_instrToValue(originalInstr)});
+				JX_CHECK(instrItem, "Instruction not found in map!");
+				jx_ir_instruction_t* clonedInstr = jx_ir_valueToInstr(instrItem->m_Value);
+
+				const uint32_t numOperands = (uint32_t)jx_array_sizeu(clonedInstr->super.m_OperandArr);
+				for (uint32_t iOp = 0; iOp < numOperands; ++iOp) {
+					jx_ir_value_t* operandVal = clonedInstr->super.m_OperandArr[iOp]->m_Value;
+					jir_value_map_item_t* item = (jir_value_map_item_t*)jx_hashmapGet(pass->m_ValueMap, &(jir_value_map_item_t){ .m_Key = operandVal });
+					if (item) {
+						jx_ir_instrReplaceOperand(ctx, clonedInstr, iOp, item->m_Value);
+					} else {
+						JX_CHECK(operandVal->m_Kind == JIR_VALUE_CONSTANT || operandVal->m_Kind == JIR_VALUE_FUNCTION || operandVal->m_Kind == JIR_VALUE_GLOBAL_VARIABLE, "Operand should have been found in the map!");
+					}
+				}
+
+				jx_ir_bbAppendInstr(ctx, clonedBB, clonedInstr);
+
+				originalInstr = originalInstr->m_Next;
+			}
+
+			jx_ir_funcAppendBasicBlock(ctx, callerFunc, clonedBB);
+
+			if (!firstClonedBB) {
+				firstClonedBB = clonedBB;
+			}
+
+			originalBB = originalBB->m_Next;
+		}
+	}
+
+	// Move all allocas to the caller's entry block.
+	{
+		jx_ir_basic_block_t* callerEntryBB = callerFunc->m_BasicBlockListHead;
+		jx_ir_instruction_t* instr = firstClonedBB->m_InstrListHead;
+		while (instr && instr->m_OpCode == JIR_OP_ALLOCA) {
+			jx_ir_bbRemoveInstr(ctx, instr->m_ParentBB, instr);
+			jx_ir_bbPrependInstr(ctx, callerEntryBB, instr);
+
+			instr = instr->m_Next;
+		}
+	}
+
+	// Split call's basic block at the call instruction.
+	jx_ir_basic_block_t* contBB = jx_ir_bbSplitAt(ctx, callBB, callInstr);
+	JX_CHECK(contBB, "Failed to split basic block!");
+	
+	JX_CHECK(jx_ir_funcCheck(ctx, callerFunc), "Caller function is not valid!");
+
+	// Now, callBB ends in an unconditional branch to contBB. 
+	// Patch the unconditional branch to point to the cloned BB and 
+	// remove the actual call instruction from callBB.
+	{
+		jx_ir_instruction_t* termInstr = jx_ir_bbGetLastInstr(ctx, callBB);
+		JX_CHECK(termInstr && termInstr->m_OpCode == JIR_OP_BRANCH && jx_array_sizeu(termInstr->super.m_OperandArr) == 1 && termInstr->super.m_OperandArr[0]->m_Value == jx_ir_bbToValue(contBB), "Unexpected instruction!");
+
+		jx_ir_bbRemoveInstr(ctx, callBB, termInstr);
+		jx_ir_instrReplaceOperand(ctx, termInstr, 0, jx_ir_bbToValue(firstClonedBB));
+		jx_ir_bbAppendInstr(ctx, callBB, termInstr);
+	}
+
+	// Replace all ret instructions in the cloned blocks with unconditional branches to the contBB.
+	// If the function returned a value, add a phi instruction in contBB with all the values collected.
+	{
+		jx_ir_type_function_t* calleeFuncType = jx_ir_funcGetType(ctx, calleeFunc);
+		jx_ir_instruction_t* phiInstr = calleeFuncType->m_RetType->m_Kind != JIR_TYPE_VOID
+			? jx_ir_instrPhi(ctx, calleeFuncType->m_RetType)
+			: NULL
+			;
+		
+		jx_ir_basic_block_t* bb = firstClonedBB;
+		while (bb) {
+			jx_ir_instruction_t* lastInstr = jx_ir_bbGetLastInstr(ctx, bb);
+			if (lastInstr->m_OpCode == JIR_OP_RET) {
+				jx_ir_bbRemoveInstr(ctx, bb, lastInstr);
+
+				jx_ir_instruction_t* branchInstr = jx_ir_instrBranch(ctx, contBB);
+				jx_ir_bbAppendInstr(ctx, bb, branchInstr);
+
+				if (phiInstr) {
+					JX_CHECK(jx_array_sizeu(lastInstr->super.m_OperandArr) == 1, "ret instruction expected to have an operand");
+					jx_ir_instrPhiAddValue(ctx, phiInstr, bb, lastInstr->super.m_OperandArr[0]->m_Value);
+				}
+
+				jx_ir_instrFree(ctx, lastInstr);
+			}
+
+			bb = bb->m_Next;
+		}
+
+		if (phiInstr) {
+			// NOTE: Currently due to the way mirgen walks the function's basic block list
+			// I cannot eliminate single operand phis at this point. Once this is fixed,
+			// I can uncomment the following check.
+#if 0
+			if (jx_array_sizeu(phiInstr->super.m_OperandArr) == 2) {
+				jx_ir_value_t* phiVal = phiInstr->super.m_OperandArr[0]->m_Value;
+				jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(callInstr), phiVal);
+				jx_ir_instrFree(ctx, phiInstr);
+			} else 
+#endif
+			{
+				jx_ir_bbPrependInstr(ctx, contBB, phiInstr);
+				jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(callInstr), jx_ir_instrToValue(phiInstr));
+			}
+		}
+
+		jx_ir_bbRemoveInstr(ctx, callBB, callInstr);
+		jx_ir_instrFree(ctx, callInstr);
+	}
+
+	// At this point the caller must be valid!
+	JX_CHECK(jx_ir_funcCheck(ctx, callerFunc), "Caller function is not valid!");
+
+	return true;
+}
+
+static jir_call_graph_t* jir_callGraphCreate(jx_allocator_i* allocator)
+{
+	jir_call_graph_t* cg = (jir_call_graph_t*)JX_ALLOC(allocator, sizeof(jir_call_graph_t));
+	if (!cg) {
+		return NULL;
+	}
+
+	jx_memset(cg, 0, sizeof(jir_call_graph_t));
+	cg->m_Allocator = allocator;
+	cg->m_FuncToNodeMap = jx_hashmapCreate(allocator, sizeof(jir_func_cgnode_item_t), 64, 0, 0, jir_funcCGNodeItemHash, jir_funcCGNodeItemCompare, NULL, NULL);
+	if (!cg->m_FuncToNodeMap) {
+		jir_callGraphDestroy(cg);
+		return NULL;
+	}
+
+	cg->m_NodesArr = (jir_call_graph_node_t**)jx_array_create(allocator);
+	if (!cg->m_NodesArr) {
+		jir_callGraphDestroy(cg);
+		return NULL;
+	}
+
+	return cg;
+}
+
+static void jir_callGraphDestroy(jir_call_graph_t* cg)
+{
+	jir_call_graph_scc_t* scc = cg->m_SCCListHead;
+	while (scc) {
+		jir_call_graph_scc_t* sccNext = scc->m_Next;
+		jir_callGraphSCCFree(cg, scc);
+		scc = sccNext;
+	}
+
+	if (cg->m_FuncToNodeMap) {
+		jx_hashmapDestroy(cg->m_FuncToNodeMap);
+		cg->m_FuncToNodeMap = NULL;
+	}
+
+	const uint32_t numNodes = (uint32_t)jx_array_sizeu(cg->m_NodesArr);
+	for (uint32_t iNode = 0; iNode < numNodes; ++iNode) {
+		jir_callGraphNodeFree(cg, cg->m_NodesArr[iNode]);
+	}
+	jx_array_free(cg->m_NodesArr);
+	cg->m_NodesArr = NULL;
+
+	JX_FREE(cg->m_Allocator, cg);
+}
+
+static jir_call_graph_node_t* jir_callGraphAddFunc(jir_call_graph_t* cg, jx_ir_function_t* func)
+{
+	jir_call_graph_node_t* node = jir_callGraphNodeAlloc(cg, func);
+	if (!node) {
+		return NULL;
+	}
+
+	jx_array_push_back(cg->m_NodesArr, node);
+	jx_hashmapSet(cg->m_FuncToNodeMap, &(jir_func_cgnode_item_t){ .m_Func = func, .m_Node = node });
+
+	return node;
+}
+
+static bool jir_callGraphBuild(jir_call_graph_t* cg)
+{
+	// Find all call instructions and create edges between nodes.
+	// TODO: Avoid scanning the whole function and just use the uses list of each function.
+	// If a use is a call instruction, create an edge between the caller (parent of the call instruction
+	// and the current function). Otherwise, ignore use.
+	const uint32_t numNodes = (uint32_t)jx_array_sizeu(cg->m_NodesArr);
+	for (uint32_t iNode = 0; iNode < numNodes; ++iNode) {
+		jir_call_graph_node_t* node = cg->m_NodesArr[iNode];
+		jx_ir_function_t* func = node->m_Func;
+
+		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
+		while (bb) {
+			jx_ir_instruction_t* instr = bb->m_InstrListHead;
+			while (instr) {
+				if (instr->m_OpCode == JIR_OP_CALL) {
+					// Check if this is a direct call to an internal function.
+					jx_ir_function_t* calleeFunc = jx_ir_valueToFunc(instr->super.m_OperandArr[0]->m_Value);
+					if (calleeFunc && calleeFunc->m_BasicBlockListHead) {
+						jir_func_cgnode_item_t* item = (jir_func_cgnode_item_t*)jx_hashmapGet(cg->m_FuncToNodeMap, &(jir_func_cgnode_item_t){ .m_Func = calleeFunc });
+						if (item) {
+							jx_array_push_back(node->m_CallInstrArr, instr);
+
+							if (!jir_callGraphNodeCallsFunc(node, calleeFunc)) {
+								jx_array_push_back(node->m_CalledFuncsArr, item->m_Node);
+							}
+						}
+					}
+				}
+
+				instr = instr->m_Next;
+			}
+
+			bb = bb->m_Next;
+		}
+	}
+
+	// Find strongly-connected components
+	// https://en.wikipedia.org/wiki/Tarjan%27s_strongly_connected_components_algorithm
+	{
+		jir_call_graph_scc_tarjan_state_t* sccState = &(jir_call_graph_scc_tarjan_state_t){ 0 };
+
+		sccState->m_Stack = (jir_call_graph_node_t**)jx_array_create(cg->m_Allocator);
+		jx_array_reserve(sccState->m_Stack, numNodes);
+
+		for (uint32_t iNode = 0; iNode < numNodes; ++iNode) {
+			jir_call_graph_node_t* node = cg->m_NodesArr[iNode];
+			if (node->m_ID == UINT32_MAX) {
+				jir_callGraphStrongConnect(cg, node, sccState);
+			}
+		}
+
+		jx_array_free(sccState->m_Stack);
+	}
+
+	return true;
+}
+
+static bool jir_callGraphNodeCallsFunc(jir_call_graph_node_t* node, jx_ir_function_t* func)
+{
+	const uint32_t numCalledFuncs = (uint32_t)jx_array_sizeu(node->m_CalledFuncsArr);
+	for (uint32_t iFunc = 0; iFunc < numCalledFuncs; ++iFunc) {
+		if (node->m_CalledFuncsArr[iFunc]->m_Func == func) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static void jir_callGraphStrongConnect(jir_call_graph_t* cg, jir_call_graph_node_t* node, jir_call_graph_scc_tarjan_state_t* sccState)
+{
+	const uint32_t id = sccState->m_NextIndex++;
+	node->m_ID = id;
+	node->m_LowLink = id;
+
+	jx_array_push_back(sccState->m_Stack, node);
+	node->m_IsOnStack = true;
+
+	const uint32_t numEdges = (uint32_t)jx_array_sizeu(node->m_CalledFuncsArr);
+	for (uint32_t iEdge = 0; iEdge < numEdges; ++iEdge) {
+		jir_call_graph_node_t* calledNode = node->m_CalledFuncsArr[iEdge];
+		if (calledNode->m_ID == UINT32_MAX) {
+			// Successor w has not yet been visited; recurse on it
+			jir_callGraphStrongConnect(cg, calledNode, sccState);
+			node->m_LowLink = jx_min_u32(node->m_LowLink, calledNode->m_LowLink);
+		} else if (calledNode->m_IsOnStack) {
+			// Successor w is in stack S and hence in the current SCC
+			node->m_LowLink = jx_min_u32(node->m_LowLink, calledNode->m_ID);
+		} else {
+			// If w is not on stack, then (v, w) is an edge pointing to 
+			// an SCC already found and must be ignored
+		}
+	}
+
+	// If v is a root node, pop the stack and generate an SCC
+	if (node->m_LowLink == node->m_ID) {
+		jir_call_graph_scc_t* scc = jir_callGraphSCCAlloc(cg);
+		
+		jir_call_graph_node_t* stackNode = NULL;
+		do {
+			stackNode = jx_array_pop_back(sccState->m_Stack);
+			stackNode->m_IsOnStack = false;
+			jx_array_push_back(scc->m_NodesArr, stackNode);
+		} while (stackNode != node);
+
+		jir_callGraphAppendSCC(cg, scc);
+	}
+}
+
+static void jir_callGraphAppendSCC(jir_call_graph_t* cg, jir_call_graph_scc_t* scc)
+{
+	if (!cg->m_SCCListHead) {
+		JX_CHECK(!cg->m_SCCListTail, "Invalid linked-list state");
+		cg->m_SCCListHead = scc;
+		cg->m_SCCListTail = scc;
+	} else {
+		JX_CHECK(cg->m_SCCListTail, "Invalid linked-list state");
+		cg->m_SCCListTail->m_Next = scc;
+		scc->m_Prev = cg->m_SCCListTail;
+		cg->m_SCCListTail = scc;
+	}
+}
+
+static jir_call_graph_node_t* jir_callGraphNodeAlloc(jir_call_graph_t* cg, jx_ir_function_t* func)
+{
+	jir_call_graph_node_t* node = (jir_call_graph_node_t*)JX_ALLOC(cg->m_Allocator, sizeof(jir_call_graph_node_t));
+	if (!node) {
+		return NULL;
+	}
+
+	jx_memset(node, 0, sizeof(jir_call_graph_node_t));
+	node->m_Func = func;
+	node->m_ID = UINT32_MAX;
+	node->m_LowLink = 0;
+	node->m_IsOnStack = false;
+	node->m_CallInstrArr = (jx_ir_instruction_t**)jx_array_create(cg->m_Allocator);
+	if (!node->m_CallInstrArr) {
+		jir_callGraphNodeFree(cg, node);
+		return NULL;
+	}
+
+	node->m_CalledFuncsArr = (jir_call_graph_node_t**)jx_array_create(cg->m_Allocator);
+	if (!node->m_CalledFuncsArr) {
+		jir_callGraphNodeFree(cg, node);
+		return NULL;
+	}
+
+	return node;
+}
+
+static void jir_callGraphNodeFree(jir_call_graph_t* cg, jir_call_graph_node_t* node)
+{
+	jx_array_free(node->m_CallInstrArr);
+	jx_array_free(node->m_CalledFuncsArr);
+	JX_FREE(cg->m_Allocator, node);
+}
+
+static jir_call_graph_scc_t* jir_callGraphSCCAlloc(jir_call_graph_t* cg)
+{
+	jir_call_graph_scc_t* scc = (jir_call_graph_scc_t*)JX_ALLOC(cg->m_Allocator, sizeof(jir_call_graph_scc_t));
+	if (!scc) {
+		return NULL;
+	}
+
+	jx_memset(scc, 0, sizeof(jir_call_graph_scc_t));
+	scc->m_NodesArr = (jir_call_graph_node_t**)jx_array_create(cg->m_Allocator);
+	if (!scc->m_NodesArr) {
+		jir_callGraphSCCFree(cg, scc);
+		return NULL;
+	}
+
+	return scc;
+}
+
+static void jir_callGraphSCCFree(jir_call_graph_t* cg, jir_call_graph_scc_t* scc)
+{
+	jx_array_free(scc->m_NodesArr);
+	JX_FREE(cg->m_Allocator, scc);
+}
+
+static uint64_t jir_funcCGNodeItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata)
+{
+	const jir_func_cgnode_item_t* var = (const jir_func_cgnode_item_t*)item;
+	uint64_t hash = jx_hashFNV1a(&var->m_Func, sizeof(jx_ir_function_t*), seed0, seed1);
+	return hash;
+}
+
+static int32_t jir_funcCGNodeItemCompare(const void* a, const void* b, void* udata)
+{
+	const jir_func_cgnode_item_t* varA = (const jir_func_cgnode_item_t*)a;
+	const jir_func_cgnode_item_t* varB = (const jir_func_cgnode_item_t*)b;
+	int32_t res = jir_comparePtrs(varA->m_Func, varB->m_Func);
+	return res;
+}
+
+static uint64_t jir_valueMapItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata)
+{
+	const jir_value_map_item_t* var = (const jir_value_map_item_t*)item;
+	uint64_t hash = jx_hashFNV1a(&var->m_Key, sizeof(jx_ir_value_t*), seed0, seed1);
+	return hash;
+}
+
+static int32_t jir_valueMapItemCompare(const void* a, const void* b, void* udata)
+{
+	const jir_value_map_item_t* varA = (const jir_value_map_item_t*)a;
+	const jir_value_map_item_t* varB = (const jir_value_map_item_t*)b;
+	int32_t res = jir_comparePtrs(varA->m_Key, varB->m_Key);
+	return res;
 }

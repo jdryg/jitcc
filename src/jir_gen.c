@@ -150,7 +150,12 @@ bool jx_irgen_moduleGen(jx_irgen_context_t* ctx, const char* moduleName, jx_cc_t
 						goto error;
 					}
 
-					if (jx_ir_funcBegin(irctx, func)) {
+					const bool funcIsInline = (global->m_Flags & JCC_OBJECT_FLAGS_IS_INLINE_Msk) != 0;
+
+					const uint32_t funcFlags = 0
+						| (funcIsInline ? JIR_FUNC_FLAGS_INLINE_Msk : 0)
+						;
+					if (jx_ir_funcBegin(irctx, func, funcFlags)) {
 						ctx->m_Func = func;
 						ctx->m_LocalVarMap = jx_hashmapCreate(ctx->m_Allocator, sizeof(jccObj_to_irVal_item_t), 64, 0, 0, jccObjHashCallback, jccObjCompareCallback, NULL, NULL);
 						ctx->m_LabeledBBMap = jx_hashmapCreate(ctx->m_Allocator, sizeof(jccLabel_to_irBB_item_t), 64, 0, 0, jccLabelHashCallback, jccLabelCompareCallback, NULL, NULL);
@@ -1443,9 +1448,11 @@ static void jirgenGenStore(jx_irgen_context_t* ctx, jx_ir_value_t* ptr, jx_ir_va
 			const uint32_t valSize = (uint32_t)jx_ir_typeGetSize(val->m_Type);
 			const uint32_t baseTypeSize = (uint32_t)jx_ir_typeGetSize(baseType);
 			if (valSize == baseTypeSize) {
-				jx_ir_instruction_t* bitcastInstr = jx_ir_instrBitcast(irctx, ptr, jx_ir_typeGetPointer(irctx, val->m_Type));
+				// NOTE: The value is bitcasted to the pointer's base type instead of the pointer being casted
+				// to the value's type (old version) because it messes up SSA construction.
+				jx_ir_instruction_t* bitcastInstr = jx_ir_instrBitcast(irctx, val, baseType);
 				jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, bitcastInstr);
-				jx_ir_instruction_t* storeInstr = jx_ir_instrStore(irctx, jx_ir_instrToValue(bitcastInstr), val);
+				jx_ir_instruction_t* storeInstr = jx_ir_instrStore(irctx, ptr, jx_ir_instrToValue(bitcastInstr));
 				jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, storeInstr);
 			} else {
 				JX_NOT_IMPLEMENTED();
