@@ -236,6 +236,9 @@ jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator)
 		cur->m_Next = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_reorderBasicBlocks, NULL);
 		cur = cur->m_Next;
 
+		cur->m_Next = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_removeRedundantPhis, NULL);
+		cur = cur->m_Next;
+
 		cur->m_Next = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_simplifyCFG, NULL);
 		cur = cur->m_Next;
 
