@@ -495,8 +495,8 @@ static jx_mir_operand_t* jmirgen_instrBuild_branch(jx_mirgen_context_t* ctx, jx_
 	} else if (numOperands == 3) {
 		// Conditional branch
 		// test cond, cond
-		// jz bb_false
-		// jmp bb_true
+		// jz bb_false or jnz bb_true
+		// jmp bb_true or jmp bb_false
 		jx_ir_value_t* condVal = branchInstr->super.m_OperandArr[0]->m_Value;
 		jx_ir_basic_block_t* trueBB = jx_ir_valueToBasicBlock(branchInstr->super.m_OperandArr[1]->m_Value);
 		jx_ir_basic_block_t* falseBB = jx_ir_valueToBasicBlock(branchInstr->super.m_OperandArr[2]->m_Value);
@@ -508,8 +508,16 @@ static jx_mir_operand_t* jmirgen_instrBuild_branch(jx_mirgen_context_t* ctx, jx_
 
 		jx_mir_operand_t* condOperand = jmirgen_getOperand(ctx, condVal);
 		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_test(ctx->m_MIRCtx, condOperand, condOperand));
-		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_jcc(ctx->m_MIRCtx, JMIR_CC_Z, jx_mir_opBasicBlock(ctx->m_MIRCtx, ctx->m_Func, mirFalseBB)));
-		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_jmp(ctx->m_MIRCtx, jx_mir_opBasicBlock(ctx->m_MIRCtx, ctx->m_Func, mirTrueBB)));
+
+		// NOTE: The code below tries to maximize fallthrough jumps (which will be eliminated) by
+		// checking which of the 2 target BBs are the next in the list to be handled.
+		if (falseBB == branchInstr->m_ParentBB->m_Next) {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_jcc(ctx->m_MIRCtx, JMIR_CC_NZ, jx_mir_opBasicBlock(ctx->m_MIRCtx, ctx->m_Func, mirTrueBB)));
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_jmp(ctx->m_MIRCtx, jx_mir_opBasicBlock(ctx->m_MIRCtx, ctx->m_Func, mirFalseBB)));
+		} else {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_jcc(ctx->m_MIRCtx, JMIR_CC_Z, jx_mir_opBasicBlock(ctx->m_MIRCtx, ctx->m_Func, mirFalseBB)));
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_jmp(ctx->m_MIRCtx, jx_mir_opBasicBlock(ctx->m_MIRCtx, ctx->m_Func, mirTrueBB)));
+		}
 	} else {
 		JX_CHECK(false, "Unknown branch type");
 	}

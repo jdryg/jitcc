@@ -1448,9 +1448,11 @@ static void jirgenGenStore(jx_irgen_context_t* ctx, jx_ir_value_t* ptr, jx_ir_va
 			const uint32_t valSize = (uint32_t)jx_ir_typeGetSize(val->m_Type);
 			const uint32_t baseTypeSize = (uint32_t)jx_ir_typeGetSize(baseType);
 			if (valSize == baseTypeSize) {
-				jx_ir_instruction_t* bitcastInstr = jx_ir_instrBitcast(irctx, ptr, jx_ir_typeGetPointer(irctx, val->m_Type));
+				// NOTE: The value is bitcasted to the pointer's base type instead of the pointer being casted
+				// to the value's type (old version) because it messes up SSA construction.
+				jx_ir_instruction_t* bitcastInstr = jx_ir_instrBitcast(irctx, val, baseType);
 				jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, bitcastInstr);
-				jx_ir_instruction_t* storeInstr = jx_ir_instrStore(irctx, jx_ir_instrToValue(bitcastInstr), val);
+				jx_ir_instruction_t* storeInstr = jx_ir_instrStore(irctx, ptr, jx_ir_instrToValue(bitcastInstr));
 				jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, storeInstr);
 			} else {
 				JX_NOT_IMPLEMENTED();

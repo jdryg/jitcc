@@ -54,7 +54,7 @@ int main(int argc, char** argv)
 
 	jx_allocator_i* allocator = allocator_api->createAllocator("jcc");
 
-#if 0
+#if 1
 	uint32_t totalTests = 0;
 	uint32_t numSkipped = 0;
 	uint32_t numPass = 0;
@@ -155,8 +155,8 @@ int main(int argc, char** argv)
 #elif 1
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 
-//	const char* sourceFile = "test/c-testsuite/00215.c";
-	const char* sourceFile = "test/inlining.c";
+//	const char* sourceFile = "test/c-testsuite/00006.c";
+	const char* sourceFile = "test/nested_loops.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
 	jx_cc_translation_unit_t* tu = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_INSTALL, sourceFile);

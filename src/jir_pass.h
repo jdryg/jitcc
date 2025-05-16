@@ -18,6 +18,7 @@ bool jx_ir_funcPassCreate_constantFolding(jx_ir_function_pass_t* pass, jx_alloca
 bool jx_ir_funcPassCreate_peephole(jx_ir_function_pass_t* pass, jx_allocator_i* allocator);
 bool jx_ir_funcPassCreate_canonicalizeOperands(jx_ir_function_pass_t* pass, jx_allocator_i* allocator);
 bool jx_ir_funcPassCreate_reorderBasicBlocks(jx_ir_function_pass_t* pass, jx_allocator_i* allocator);
+bool jx_ir_funcPassCreate_removeRedundantPhis(jx_ir_function_pass_t* pass, jx_allocator_i* allocator);
 
 bool jx_ir_modulePassCreate_inlineFuncs(jx_ir_module_pass_t* pass, jx_allocator_i* allocator);
 
