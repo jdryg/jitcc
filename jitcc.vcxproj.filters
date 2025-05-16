@@ -935,6 +935,12 @@
     <ClCompile Include="bin\test\inlining.c">
       <Filter>bin\test</Filter>
     </ClCompile>
+    <ClCompile Include="bin\test\basic_block_placement.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\nested_loops.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="3rdparty\jlib\include\jlib\inline\atomic_win32.inl">
