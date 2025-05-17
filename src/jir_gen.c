@@ -838,10 +838,16 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 		jirgenSwitchBasicBlock(ctx, bbTrue);
 
 		jx_ir_value_t* trueVal = jirgenGenExpression(ctx, condExpr->m_ThenExpr);
+		if (trueVal->m_Type != valType) {
+			trueVal = jirgenConvertType(ctx, trueVal, valType);
+		}
 		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, jx_ir_instrBranch(irctx, bbEnd));
 		jirgenSwitchBasicBlock(ctx, bbFalse);
 
 		jx_ir_value_t* falseVal = jirgenGenExpression(ctx, condExpr->m_ElseExpr);
+		if (falseVal->m_Type != valType) {
+			falseVal = jirgenConvertType(ctx, falseVal, valType);
+		}
 		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, jx_ir_instrBranch(irctx, bbEnd));
 		jirgenSwitchBasicBlock(ctx, bbEnd);
 
