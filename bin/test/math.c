@@ -1,5 +1,4 @@
-typedef int int32_t;
-typedef unsigned int uint32_t;
+#include <stdint.h>
 
 static const float kPif = 3.14159274101257324219f; // Pi value from Windows calculator rounded by https://float.exposed/ to float
 static const float kPi2f = 6.283185307179586476925286766559f;
