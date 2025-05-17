@@ -1307,6 +1307,9 @@ void jx_mir_opPrint(jx_mir_context_t* ctx, jx_mir_operand_t* op, jx_string_buffe
 		case JMIR_TYPE_F64:
 			jx_strbuf_pushCStr(sb, "qword ptr");
 			break;
+		case JMIR_TYPE_F128:
+			jx_strbuf_pushCStr(sb, "xmmword ptr");
+			break;
 		case JMIR_TYPE_VOID:
 			JX_NOT_IMPLEMENTED();
 			break;
