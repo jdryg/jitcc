@@ -1,6 +1,4 @@
-//#include <stdint.h>
-typedef int int32_t;
-typedef long long int int64_t;
+#include <stdint.h>
 
 int main(void)
 {

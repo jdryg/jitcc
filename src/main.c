@@ -94,6 +94,8 @@ int main(int argc, char** argv)
 		}
 
 		jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
+		jx_cc_addIncludePath(ctx, JX_FILE_BASE_DIR_INSTALL, "include");
+
 		jx_cc_translation_unit_t* tu = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_INSTALL, sourceFile);
 		if (tu && tu->m_NumErrors == 0) {
 			jx_ir_context_t* irCtx = jx_ir_createContext(allocator);
