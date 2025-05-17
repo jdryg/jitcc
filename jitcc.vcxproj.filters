@@ -150,6 +150,9 @@
     <ClInclude Include="bin\include\stdint.h">
       <Filter>bin\include</Filter>
     </ClInclude>
+    <ClInclude Include="bin\test\test.h">
+      <Filter>bin\test</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\jcc.c">
