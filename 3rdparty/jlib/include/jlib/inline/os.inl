@@ -338,12 +338,17 @@ static inline int32_t jx_os_fsRemoveEmptyDirectory(jx_file_base_dir baseDir, con
 	return os_api->fsRemoveEmptyDirectory(baseDir, relPath);
 }
 
-static int32_t jx_os_fsEnumFilesAndFolders(jx_file_base_dir baseDir, const char* pattern, josEnumFilesAndFoldersCallback callback, void* userData)
+static inline int32_t jx_os_fsEnumFilesAndFolders(jx_file_base_dir baseDir, const char* pattern, josEnumFilesAndFoldersCallback callback, void* userData)
 {
 	return os_api->fsEnumFilesAndFolders(baseDir, pattern, callback, userData);
 }
 
-static void* jx_os_fsReadFile(jx_file_base_dir baseDir, const char* relPath, jx_allocator_i* allocator, bool nullTerminate, uint64_t* sz)
+static inline bool jx_os_fsFileExists(jx_file_base_dir baseDir, const char* relPath)
+{
+	return os_api->fsFileExists(baseDir, relPath);
+}
+
+static inline void* jx_os_fsReadFile(jx_file_base_dir baseDir, const char* relPath, jx_allocator_i* allocator, bool nullTerminate, uint64_t* sz)
 {
 	jx_os_file_t* f = os_api->fileOpenRead(baseDir, relPath);
 	if (!f) {

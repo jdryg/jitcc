@@ -324,6 +324,7 @@ typedef struct jx_cc_context_t
 	jx_string_table_t* m_StringTable;
 	jx_cc_translation_unit_t** m_TranslationUnitsArr;
 	jx_logger_i* m_Logger;
+	const char** m_IncludePathsArr;
 	uint32_t m_NumErrors;
 	uint32_t m_NumWarnings;
 } jx_cc_context_t;
@@ -442,6 +443,12 @@ jx_cc_context_t* jx_cc_createContext(jx_allocator_i* allocator, jx_logger_i* log
 		return NULL;
 	}
 
+	ctx->m_IncludePathsArr = (const char**)jx_array_create(allocator);
+	if (!ctx->m_IncludePathsArr) {
+		jx_cc_destroyContext(ctx);
+		return NULL;
+	}
+
 	jx_strtable_insert(ctx->m_StringTable, "void", UINT32_MAX);
 	jx_strtable_insert(ctx->m_StringTable, "bool", UINT32_MAX);
 	jx_strtable_insert(ctx->m_StringTable, "char", UINT32_MAX);
@@ -459,6 +466,8 @@ jx_cc_context_t* jx_cc_createContext(jx_allocator_i* allocator, jx_logger_i* log
 void jx_cc_destroyContext(jx_cc_context_t* ctx)
 {
 	jx_allocator_i* allocator = ctx->m_Allocator;
+
+	jx_array_free(ctx->m_IncludePathsArr);
 
 	const uint32_t numTranslationUnits = (uint32_t)jx_array_sizeu(ctx->m_TranslationUnitsArr);
 	for (uint32_t iTU = 0; iTU < numTranslationUnits; ++iTU) {
@@ -490,6 +499,18 @@ void jx_cc_destroyContext(jx_cc_context_t* ctx)
 	}
 
 	JX_FREE(allocator, ctx);
+}
+
+void jx_cc_addIncludePath(jx_cc_context_t* ctx, jx_file_base_dir baseDir, const char* relPath)
+{
+	char baseDirPath[256];
+	jx_os_fsGetBaseDir(baseDir, baseDirPath, JX_COUNTOF(baseDirPath));
+
+	char fullPath[512];
+	jx_snprintf(fullPath, JX_COUNTOF(fullPath), "%s%s", baseDirPath, relPath);
+	
+	const char* fullPathInterned = jx_strtable_insert(ctx->m_StringTable, fullPath, UINT32_MAX);
+	jx_array_push_back(ctx->m_IncludePathsArr, fullPathInterned);
 }
 
 jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_dir baseDir, const char* filename)
@@ -8734,6 +8755,10 @@ static jx_cc_token_t* jcc_ppSkipConditionalInclude(jx_cc_context_t* ctx, jcc_tra
 static jx_cc_token_t* jcc_ppSkipLine(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok);
 static int64_t jcc_ppEvalConstExpression(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr, bool* err);
 static jx_cc_token_t* jcc_ppReadConstExpression(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr);
+static const char* jcc_ppReadIncludeFilename(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr, bool* isDoubleQuote);
+static char* jcc_ppRelIncludePath(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* filename);
+static const char* jcc_ppSearchIncludePaths(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* filename);
+static jx_cc_token_t* jcc_ppIncludeFile(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok, const char* path, jx_cc_token_t* filenameToken);
 
 static jx_cc_hideset_t* jcc_hidesetCreate(jx_cc_context_t* ctx, const char* name);
 static bool jcc_hidesetContains(jx_cc_context_t* ctx, jx_cc_hideset_t* hs, const char* name);
@@ -8761,7 +8786,27 @@ static jx_cc_token_t* jcc_preprocess(jx_cc_context_t* ctx, jcc_translation_unit_
 		tok = tok->m_Next;
 
 		if (jcc_tokIs(tok, JCC_TOKEN_INCLUDE)) {
-			JX_NOT_IMPLEMENTED();
+			tok = tok->m_Next;
+			bool isDoubleQuote = false;
+			const char* filename = jcc_ppReadIncludeFilename(ctx, tu, &tok, &isDoubleQuote);
+			if (!filename) {
+				jcc_logError(ctx, &tok->m_Loc, "Failed to read include filename.");
+				return NULL;
+			}
+
+			bool included = false;
+			if (filename[0] != '/' && isDoubleQuote) {
+				char* path = jcc_ppRelIncludePath(ctx, tu, filename);
+				if (jx_os_fsFileExists(JX_FILE_BASE_DIR_ABSOLUTE_PATH, path)) {
+					tok = jcc_ppIncludeFile(ctx, tu, tok, path, start->m_Next->m_Next);
+					included = true;
+				}
+			}
+
+			if (!included) {
+				const char* path = jcc_ppSearchIncludePaths(ctx, tu, filename);
+				tok = jcc_ppIncludeFile(ctx, tu, tok, path ? path : filename, start->m_Next->m_Next);
+			}
 		} else if (jcc_tokIs(tok, JCC_TOKEN_INCLUDE_NEXT)) {
 			JX_NOT_IMPLEMENTED();
 		} else if (jcc_tokIs(tok, JCC_TOKEN_DEFINE)) {
@@ -9712,6 +9757,136 @@ static jx_cc_token_t* jcc_ppReadConstExpression(jx_cc_context_t* ctx, jcc_transl
 	cur->m_Next = tok;
 
 	return head.m_Next;
+}
+
+static const char* jcc_ppReadIncludeFilename(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr, bool* isDoubleQuote)
+{
+	jx_cc_token_t* tok = *tokenListPtr;
+
+	// Pattern 1: #include "foo.h"
+	if (jcc_tokIs(tok, JCC_TOKEN_STRING_LITERAL)) {
+		// A double-quoted filename for #include is a special kind of
+		// token, and we don't want to interpret any escape sequences in it.
+		// For example, "\f" in "C:\foo" is not a formfeed character but
+		// just two non-control characters, backslash and f.
+		// So we don't want to use token->str.
+		*isDoubleQuote = true;
+		*tokenListPtr = jcc_ppSkipLine(ctx, tu, tok->m_Next);
+		return jx_strtable_insert(ctx->m_StringTable, tok->m_String + 1, tok->m_Length - 2);
+	}
+
+	// Pattern 2: #include <foo.h>
+	if (jcc_tokIs(tok, JCC_TOKEN_LESS)) {
+		// Reconstruct a filename from a sequence of tokens between
+		// "<" and ">".
+		jx_cc_token_t* start = tok;
+
+		// Find closing ">".
+		for (; !jcc_tokIs(tok, JCC_TOKEN_GREATER); tok = tok->m_Next) {
+			if ((tok->m_Flags & JCC_TOKEN_FLAGS_AT_BEGIN_OF_LINE_Msk) != 0 || jcc_tokIs(tok, JCC_TOKEN_EOF)) {
+				jcc_logError(ctx, &tok->m_Loc, "Expected '>'");
+				return NULL;
+			}
+		}
+
+		*isDoubleQuote = false;
+		*tokenListPtr = jcc_ppSkipLine(ctx, tu, tok->m_Next);
+		return jcc_ppJoinTokens(ctx, tu, start->m_Next, tok);
+	}
+
+	// Pattern 3: #include FOO
+	// In this case FOO must be macro-expanded to either
+	// a single string token or a sequence of "<" ... ">".
+	if (jcc_tokIs(tok, JCC_TOKEN_IDENTIFIER)) {
+		JX_NOT_IMPLEMENTED();
+	}
+
+	jcc_logError(ctx, &tok->m_Loc, "Expected a filename.");
+
+	return NULL;
+}
+
+static char* jcc_ppRelIncludePath(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* filename)
+{
+	JX_NOT_IMPLEMENTED();
+	return NULL;
+}
+
+static const char* jcc_ppSearchIncludePaths(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* filename)
+{
+	if (filename[0] == '/') {
+		return filename;
+	}
+
+#if 0 // TODO: 
+	char* cached = hashmap_get(&cache, filename);
+	if (cached)
+		return cached;
+#endif
+
+	// Search a file from the include paths.
+	const uint32_t numIncludePaths = (uint32_t)jx_array_sizeu(ctx->m_IncludePathsArr);
+	for (uint32_t i = 0; i < numIncludePaths; ++i) {
+		char path[512];
+		jx_snprintf(path, JX_COUNTOF(path), "%s/%s", ctx->m_IncludePathsArr[i], filename);
+		if (!jx_os_fsFileExists(JX_FILE_BASE_DIR_ABSOLUTE_PATH, path)) {
+			continue;
+		}
+
+#if 0
+		hashmap_put(&cache, filename, path);
+		include_next_idx = i + 1;
+#endif
+
+		return jx_strtable_insert(ctx->m_StringTable, path, UINT32_MAX);
+	}
+
+	return NULL;
+}
+
+static jx_cc_token_t* jcc_ppIncludeFile(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok, const char* path, jx_cc_token_t* filenameToken)
+{
+	// Check for "#pragma once"
+#if 0 // TODO: 
+	if (hashmap_get(&pragma_once, path)) {
+		return tok;
+	}
+#endif
+
+	// If we read the same file before, and if the file was guarded
+	// by the usual #ifndef ... #endif pattern, we may be able to
+	// skip the file without opening it.
+#if 0
+	static HashMap include_guards;
+	char* guard_name = hashmap_get(&include_guards, path);
+	if (guard_name && hashmap_get(&macros, guard_name)) {
+		return tok;
+	}
+#endif
+
+	uint64_t sourceLen = 0ull;
+	char* source = (char*)jx_os_fsReadFile(JX_FILE_BASE_DIR_ABSOLUTE_PATH, path, ctx->m_Allocator, true, &sourceLen);
+	if (!source) {
+		jcc_logError(ctx, &filenameToken->m_Loc, "%s: cannot open file", path);
+		return NULL;
+	}
+
+	jx_cc_token_t* tok2 = jcc_tokenizeString(ctx, tu, source, sourceLen);
+
+	JX_FREE(ctx->m_Allocator, source);
+
+	if (!tok2) {
+		jcc_logError(ctx, &filenameToken->m_Loc, "%s: failed to tokenize file.", path);
+		return NULL;
+	}
+
+#if 0
+	guard_name = detect_include_guard(tok2);
+	if (guard_name)
+		hashmap_put(&include_guards, path, guard_name);
+#endif
+
+	return jcc_ppAppend(ctx, tu, tok2, tok);
 }
 
 static jx_cc_hideset_t* jcc_hidesetCreate(jx_cc_context_t* ctx, const char* name)

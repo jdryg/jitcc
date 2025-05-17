@@ -94,6 +94,7 @@ static int32_t _jx_os_fsMoveFile(jx_file_base_dir srcBaseDir, const char* srcRel
 static int32_t _jx_os_fsCreateDirectory(jx_file_base_dir baseDir, const char* relPath);
 static int32_t _jx_os_fsRemoveEmptyDirectory(jx_file_base_dir baseDir, const char* relPath);
 static int32_t _jx_os_fsEnumFilesAndFolders(jx_file_base_dir baseDir, const char* pattern, josEnumFilesAndFoldersCallback callback, void* userData);
+static bool _jx_os_fsFileExists(jx_file_base_dir baseDir, const char* relPath);
 static uint32_t _jx_os_vmemGetPageSize(void);
 static void* _jx_os_vmemAlloc(void* desiredAddr, size_t sz, uint32_t protectFlags);
 static void _jx_os_vmemFree(void* addr, size_t sz);
@@ -169,6 +170,7 @@ jx_os_api* os_api = &(jx_os_api){
 	.fsCreateDirectory = _jx_os_fsCreateDirectory,
 	.fsRemoveEmptyDirectory = _jx_os_fsRemoveEmptyDirectory,
 	.fsEnumFilesAndFolders = _jx_os_fsEnumFilesAndFolders,
+	.fsFileExists = _jx_os_fsFileExists,
 	.vmemGetPageSize = _jx_os_vmemGetPageSize,
 	.vmemAlloc = _jx_os_vmemAlloc,
 	.vmemFree = _jx_os_vmemFree,
@@ -2240,6 +2242,29 @@ static int32_t _jx_os_fsEnumFilesAndFolders(jx_file_base_dir baseDir, const char
 		? JX_ERROR_NONE
 		: JX_ERROR_OPERATION_FAILED
 		;
+}
+
+static bool _jx_os_fsFileExists(jx_file_base_dir baseDir, const char* relPath)
+{
+	const char* baseDirPath = _jx_os_getBaseDirPathUTF8(baseDir);
+	if (!baseDirPath) {
+		return JX_ERROR_INVALID_ARGUMENT;
+	}
+
+	char absPath[1024];
+	jx_snprintf(absPath, JX_COUNTOF(absPath), "%s%s", baseDirPath, relPath);
+
+	wchar_t absPathW[1024];
+	if (!jx_utf8to_utf16((uint16_t*)absPathW, JX_COUNTOF(absPathW), absPath, UINT32_MAX, NULL)) {
+		return JX_ERROR_INVALID_ARGUMENT;
+	}
+
+	const DWORD attrs = GetFileAttributesW(absPathW);
+	if (attrs == INVALID_FILE_ATTRIBUTES) {
+		return false;
+	}
+
+	return !(attrs & FILE_ATTRIBUTE_DIRECTORY);
 }
 
 static uint32_t _vmemProtectToWin32(uint32_t protectFlags)

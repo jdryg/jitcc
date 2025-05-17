@@ -392,6 +392,7 @@ typedef struct jx_os_api
 	int32_t         (*fsCreateDirectory)(jx_file_base_dir baseDir, const char* relPath);
 	int32_t         (*fsRemoveEmptyDirectory)(jx_file_base_dir baseDir, const char* relPath);
 	int32_t         (*fsEnumFilesAndFolders)(jx_file_base_dir baseDir, const char* pattern, josEnumFilesAndFoldersCallback callback, void* userData);
+	bool            (*fsFileExists)(jx_file_base_dir baseDir, const char* relPath);
 
 	uint32_t        (*vmemGetPageSize)(void);
 	void*           (*vmemAlloc)(void* desiredAddr, size_t sz, uint32_t protectFlags);
@@ -480,6 +481,7 @@ static int32_t jx_os_fsMoveFile(jx_file_base_dir srcBaseDir, const char* srcRelP
 static int32_t jx_os_fsCreateDirectory(jx_file_base_dir baseDir, const char* relPath);
 static int32_t jx_os_fsRemoveEmptyDirectory(jx_file_base_dir baseDir, const char* relPath);
 static int32_t jx_os_fsEnumFilesAndFolders(jx_file_base_dir baseDir, const char* pattern, josEnumFilesAndFoldersCallback callback, void* userData);
+static bool jx_os_fsFileExists(jx_file_base_dir baseDir, const char* relPath);
 static void* jx_os_fsReadFile(jx_file_base_dir baseDir, const char* relPath, jx_allocator_i* allocator, bool nullTerminate, uint64_t* sz);
 
 static uint32_t jx_os_vmemGetPageSize(void);
