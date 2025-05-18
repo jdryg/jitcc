@@ -4866,6 +4866,9 @@ static double jcc_astEvalConstExpressionDouble(jx_cc_context_t* ctx, jcc_transla
 static jx_cc_ast_expr_t* jcc_astConvertToAssign(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_ast_expr_t* expr)
 {
 	jx_cc_ast_expr_t* node = NULL;
+	if (!expr) {
+		return NULL;
+	}
 
 	if (jcc_astNodeIsExprBinary(expr)) {
 		jx_cc_ast_expr_binary_t* binary = (jx_cc_ast_expr_binary_t*)expr;
@@ -6291,11 +6294,11 @@ static jx_cc_ast_expr_t* jcc_parsePrimaryExpression(jx_cc_context_t* ctx, jcc_tr
 		}
 
 		if (jx_cc_typeIsInteger(ty) || ty->m_Kind == JCC_TYPE_PTR) {
-			node = jcc_astAllocExprIConst(ctx, 0, kType_int, start);
+			node = jcc_astAllocExprIConst(ctx, 0, start);
 		} else if (jx_cc_typeIsFloat(ty)) {
-			node = jcc_astAllocExprIConst(ctx, 1, kType_int, start);
+			node = jcc_astAllocExprIConst(ctx, 1, start);
 		} else {
-			node = jcc_astAllocExprIConst(ctx, 2, kType_int, start);
+			node = jcc_astAllocExprIConst(ctx, 2, start);
 		}
 #endif
 #if 0
