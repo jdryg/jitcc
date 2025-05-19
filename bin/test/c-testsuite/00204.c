@@ -3,7 +3,9 @@
 
 #include <stdarg.h>
 #include <stdint.h>
-#include <stdio.h>
+//#include <stdio.h>
+int printf(const char* fmt, ...);
+int putchar(int ch);
 
 struct s1 { char x[1]; } s1 = { "0" };
 struct s2 { char x[2]; } s2 = { "12" };
