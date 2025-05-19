@@ -716,6 +716,19 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 	if (frameInfo->m_Size != 0) {
 		// NOTE: Prepend prologue instructions in reverse order.
 		jx_mir_basic_block_t* entryBlock = func->m_BasicBlockListHead;
+		if ((func->m_Prototype->m_Flags & JMIR_FUNC_FLAGS_VARARG_Msk) != 0) {
+			// Store register operands into their shadow space.
+			for (uint32_t iArgReg = 0; iArgReg < JX_COUNTOF(kMIRFuncArgIReg); ++iArgReg) {
+#if 1
+				jx_mir_operand_t* shadowSpaceSlot = jx_mir_opMemoryRef(ctx, func, JMIR_TYPE_I64, kMIRRegGP_BP, kMIRRegGPNone, 1, 16 + iArgReg * 8);
+#else
+				// NOTE: RSP. There is not reason to keep this, but leave it here in case I need it in the future.
+				jx_mir_operand_t* shadowSpaceSlot = jx_mir_opMemoryRef(ctx, func, JMIR_TYPE_I64, kMIRRegGP_SP, kMIRRegGPNone, 1, frameInfo->m_Size + 16 + iArgReg * 8);
+#endif
+				jx_mir_bbPrependInstr(ctx, entryBlock, jx_mir_mov(ctx, shadowSpaceSlot, jx_mir_opHWReg(ctx, func, JMIR_TYPE_I64, kMIRFuncArgIReg[iArgReg])));
+			}
+		}
+
 		jx_mir_bbPrependInstr(ctx, entryBlock, jx_mir_sub(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, kMIRRegGP_SP), jx_mir_opIConst(ctx, func, JMIR_TYPE_I32, (int64_t)frameInfo->m_Size)));
 		jx_mir_bbPrependInstr(ctx, entryBlock, jx_mir_mov(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, kMIRRegGP_BP), jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, kMIRRegGP_SP)));
 		jx_mir_bbPrependInstr(ctx, entryBlock, jx_mir_push(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, kMIRRegGP_BP)));
@@ -1037,6 +1050,20 @@ jx_mir_operand_t* jx_mir_opHWReg(jx_mir_context_t* ctx, jx_mir_function_t* func,
 	operand->u.m_Reg = reg;
 
 	func->m_UsedHWRegs[reg.m_Class] |= 1u << reg.m_ID;
+
+	return operand;
+}
+
+jx_mir_operand_t* jx_mir_opRegAlias(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, jx_mir_reg_t reg)
+{
+	jx_mir_operand_t* operand = jmir_operandAlloc(ctx, JMIR_OPERAND_REGISTER, type);
+	if (!operand) {
+		return NULL;
+	}
+
+	operand->u.m_Reg = reg;
+
+	JX_CHECK(reg.m_IsVirtual || (func->m_UsedHWRegs[reg.m_Class] & (1u << reg.m_ID)) != 0, "Trying to alias a hw register which hasn't been used yet.");
 
 	return operand;
 }
@@ -1413,6 +1440,10 @@ void jx_mir_instrAddAnnotation(jx_mir_context_t* ctx, jx_mir_instruction_t* inst
 jx_mir_instruction_t* jx_mir_mov(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	JX_CHECK(!jx_mir_typeIsFloatingPoint(dst->m_Type) && !jx_mir_typeIsFloatingPoint(src->m_Type), "Floating point types not allowed!");
+	JX_CHECK(jx_mir_typeGetSize(dst->m_Type) == jx_mir_typeGetSize(src->m_Type), "mov expected same size operands.");
+	if (dst->m_Kind != JMIR_OPERAND_REGISTER) {
+		JX_CHECK(src->m_Kind != JMIR_OPERAND_CONST || src->m_Type != JMIR_TYPE_I64 || (src->u.m_ConstI64 >= INT32_MIN && src->u.m_ConstI64 <= INT32_MAX), "Wrong immediate!");
+	}
 	return jmir_instrAlloc2(ctx, JMIR_OP_MOV, dst, src);
 }
 
@@ -2210,15 +2241,15 @@ static jx_mir_memory_ref_t* jmir_frameObjRel(jx_mir_context_t* ctx, jx_mir_frame
 
 static void jmir_frameMakeRoomForCall(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo, uint32_t numArguments)
 {
-	if (numArguments <= frameInfo->m_MaxCallArgs) {
-		// Already have enough space for that many arguments.
-		return;
-	}
-
 	// This might be the first call for the current frame. Make sure there is a 
 	// shadow space for at least 4 arguments. This is needed even if the called
 	// function has less than 4 arguments.
 	const uint32_t maxCallArgs = jx_max_u32(numArguments, 4);
+	if (maxCallArgs <= frameInfo->m_MaxCallArgs) {
+		// Already have enough space for that many arguments.
+		return;
+	}
+
 	const uint32_t delta = (maxCallArgs - frameInfo->m_MaxCallArgs) * 8;
 
 	// Move all local variables.

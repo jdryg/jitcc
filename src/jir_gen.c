@@ -705,9 +705,7 @@ static bool jirgenGenStatement(jx_irgen_context_t* ctx, jx_cc_ast_stmt_t* stmt)
 	} break;
 	case JCC_NODE_STMT_EXPR: {
 		jx_cc_ast_stmt_expr_t* exprNode = (jx_cc_ast_stmt_expr_t*)stmt;
-		if (!jirgenGenExpression(ctx, exprNode->m_Expr)) {
-			return false;
-		}
+		jirgenGenExpression(ctx, exprNode->m_Expr);
 	} break;
 	case JCC_NODE_STMT_ASM: {
 		JX_NOT_IMPLEMENTED();
@@ -829,6 +827,10 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 		jx_ir_type_t* valType = jccTypeToIRType(ctx, expr->m_Type);
 
 #if 1
+		if (valType->m_Kind == JIR_TYPE_STRUCT || valType->m_Kind == JIR_TYPE_ARRAY) {
+			valType = jx_ir_typeGetPointer(irctx, valType);
+		}
+
 		// Use phi instructions
 		jx_ir_value_t* condVal = jirgenGenExpression(ctx, condExpr->m_CondExpr);
 
@@ -842,6 +844,8 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 			trueVal = jirgenConvertType(ctx, trueVal, valType);
 		}
 		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, jx_ir_instrBranch(irctx, bbEnd));
+
+		bbTrue = ctx->m_BasicBlock;
 		jirgenSwitchBasicBlock(ctx, bbFalse);
 
 		jx_ir_value_t* falseVal = jirgenGenExpression(ctx, condExpr->m_ElseExpr);
@@ -849,6 +853,8 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 			falseVal = jirgenConvertType(ctx, falseVal, valType);
 		}
 		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, jx_ir_instrBranch(irctx, bbEnd));
+
+		bbFalse = ctx->m_BasicBlock;
 		jirgenSwitchBasicBlock(ctx, bbEnd);
 
 		jx_ir_instruction_t* phiInstr = jx_ir_instrPhi(irctx, valType);
@@ -1048,7 +1054,9 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 		jx_cc_ast_expr_unary_t* castNode = (jx_cc_ast_expr_unary_t*)expr;
 		jx_ir_value_t* exprVal = jirgenGenExpression(ctx, castNode->m_Expr);
 		jx_ir_type_t* dstType = jccTypeToIRType(ctx, expr->m_Type);
-		val = jirgenConvertType(ctx, exprVal, dstType);
+		if (dstType->m_Kind != JCC_TYPE_VOID) {
+			val = jirgenConvertType(ctx, exprVal, dstType);
+		}
 	} break;
 	case JCC_NODE_EXPR_MEMZERO: {
 		jx_cc_ast_expr_variable_t* varNode = (jx_cc_ast_expr_variable_t*)expr;
@@ -1203,9 +1211,14 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 				}
 			}
 		} else {
-			JX_NOT_IMPLEMENTED();
-//			lhs = jirgenIntegerPromotion(ctx, lhs);
-//			rhs = jirgenIntegerPromotion(ctx, rhs);
+			jx_ir_type_t* lhsPromoted = jirgenIntegerPromotion(ctx, lhs->m_Type);
+			if (lhsPromoted != lhs->m_Type) {
+				lhs = jirgenConvertType(ctx, lhs, lhsPromoted);
+			}
+			jx_ir_type_t* rhsPromoted = jirgenIntegerPromotion(ctx, rhs->m_Type);
+			if (rhsPromoted != rhs->m_Type) {
+				rhs = jirgenConvertType(ctx, rhs, rhsPromoted);
+			}
 		}
 
 		jx_ir_instruction_t* binInstr = kIRBinaryOps[assignExpr->m_Op](irctx, lhs, rhs);
@@ -1283,6 +1296,11 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 		jx_cc_ast_expr_get_element_ptr_t* gepNode = (jx_cc_ast_expr_get_element_ptr_t*)expr;
 		jx_ir_value_t* ptrVal = jirgenGenExpression(ctx, gepNode->m_ExprPtr);
 		jx_ir_value_t* idxVal = jirgenGenExpression(ctx, gepNode->m_ExprIndex);
+
+		JX_CHECK(jx_ir_typeIsInteger(idxVal->m_Type), "Expected integer index.");
+		if (idxVal->m_Type->m_Kind != JIR_TYPE_I32 && idxVal->m_Type->m_Kind != JIR_TYPE_I64 && idxVal->m_Type->m_Kind != JIR_TYPE_U32 && idxVal->m_Type->m_Kind != JIR_TYPE_U64) {
+			idxVal = jirgenConvertType(ctx, idxVal, jx_ir_typeGetPrimitive(irctx, JIR_TYPE_I64));
+		}
 
 		// If gepNode->m_ExprPtr is an array, use a 2 index GEP because the first index
 		// refers to the array itself.
@@ -1387,6 +1405,39 @@ static jx_ir_value_t* jirgenGenAddress(jx_irgen_context_t* ctx, jx_cc_ast_expr_t
 					val = jx_ir_globalVarToValue(gv);
 				}
 			}
+		}
+	} break;
+	case JCC_NODE_EXPR_FUNC_CALL: {
+		val = jirgenGenExpression(ctx, expr);
+		if (expr->m_Type->m_Kind == JCC_TYPE_STRUCT || expr->m_Type->m_Kind == JCC_TYPE_UNION) {
+			const bool shouldCast = true
+				&& expr->m_Type->m_Size <= 8
+				&& jx_isPow2_u32(expr->m_Type->m_Size)
+				;
+			if (shouldCast) {
+				jx_ir_type_t* retType = jccTypeToIRType(ctx, expr->m_Type);
+				jx_ir_instruction_t* structPtr = jx_ir_instrAlloca(irctx, retType, NULL);
+				jx_ir_bbPrependInstr(irctx, ctx->m_Func->m_BasicBlockListHead, structPtr);
+
+				jx_ir_value_t* indices[] = {
+					jx_ir_constToValue(jx_ir_constGetI32(irctx, 0)),
+					jx_ir_constToValue(jx_ir_constGetI32(irctx, 0)),
+				};
+				jx_ir_instruction_t* gepInstr = jx_ir_instrGetElementPtr(ctx->m_IRCtx, jx_ir_instrToValue(structPtr), JX_COUNTOF(indices), &indices[0]);
+				jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, gepInstr);
+
+				jx_ir_instruction_t* castInstr = jx_ir_instrBitcast(ctx->m_IRCtx, jx_ir_instrToValue(gepInstr), jx_ir_typeGetPointer(ctx->m_IRCtx, val->m_Type));
+				jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, castInstr);
+
+				jirgenGenStore(ctx, jx_ir_instrToValue(castInstr), val);
+
+				jx_ir_instruction_t* gep2Instr = jx_ir_instrGetElementPtr(ctx->m_IRCtx, jx_ir_instrToValue(structPtr), 1, &indices[0]);
+				jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, gep2Instr);
+
+				val = jx_ir_instrToValue(gep2Instr);
+			}
+		} else {
+			JX_CHECK(false, "Can this happen? Debug when it happens.");
 		}
 	} break;
 	default: {

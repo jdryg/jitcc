@@ -336,6 +336,7 @@ typedef struct jmir_regalloc_instr_info_t
 	uint32_t m_Uses[JMIR_REGALLOC_MAX_INSTR_USES];
 	uint32_t m_NumDefs;
 	uint32_t m_NumUses;
+	uint32_t m_ID; // Linear instruction ID; used to estimate vreg ranges.
 } jmir_regalloc_instr_info_t;
 
 typedef struct jmir_regalloc_bb_info_t
@@ -361,6 +362,8 @@ typedef struct jmir_graph_node_t
 	uint32_t m_Degree;
 	uint32_t m_ID; // ID of the node; used as the index in all bitsets; must be unique
 	uint32_t m_Color;
+	uint32_t m_FirstDefInstrID;
+	uint32_t m_LastUseInstrID;
 } jmir_graph_node_t;
 
 typedef struct jmir_mov_instr_t
@@ -393,7 +396,8 @@ typedef struct jmir_func_pass_regalloc_t
 
 	jmir_regalloc_bb_info_t* m_BBInfo;
 	uint32_t m_NumBasicBlocks;
-	JX_PAD(4);
+	
+	uint32_t m_NextInstrID;
 } jmir_func_pass_regalloc_t;
 
 static void jmir_funcPass_regAllocDestroy(jx_mir_function_pass_o* inst, jx_allocator_i* allocator);
@@ -483,13 +487,36 @@ static bool jmir_funcPass_regAllocRun(jx_mir_function_pass_o* inst, jx_mir_conte
 {
 	jmir_func_pass_regalloc_t* pass = (jmir_func_pass_regalloc_t*)inst;
 
+#if 0
+	// Since the register allocator selects free registers based on this order,
+	// move callee saved regs to the bottom in order to avoid redundant stack movs
+	const uint32_t gpRegIDs[] = {
+		// Caller-saved regs
+		JMIR_HWREGID_A,
+		JMIR_HWREGID_C,
+		JMIR_HWREGID_D,
+		JMIR_HWREGID_R8,
+		JMIR_HWREGID_R9,
+		JMIR_HWREGID_R10,
+		JMIR_HWREGID_R11,
+
+		// Callee-saved regs
+		JMIR_HWREGID_B,
+		JMIR_HWREGID_SI,
+		JMIR_HWREGID_DI,
+		JMIR_HWREGID_R12,
+		JMIR_HWREGID_R13,
+		JMIR_HWREGID_R14,
+		JMIR_HWREGID_R15,
+	};
+#else
 	const uint32_t gpRegIDs[] = {
 		JMIR_HWREGID_A,
 		JMIR_HWREGID_C,
 		JMIR_HWREGID_D,
 		JMIR_HWREGID_B,
 		JMIR_HWREGID_SI,
-		JMIR_HWREGID_DI,  
+		JMIR_HWREGID_DI,
 		JMIR_HWREGID_R8,
 		JMIR_HWREGID_R9,
 		JMIR_HWREGID_R10,
@@ -499,6 +526,7 @@ static bool jmir_funcPass_regAllocRun(jx_mir_function_pass_o* inst, jx_mir_conte
 		JMIR_HWREGID_R14,
 		JMIR_HWREGID_R15,
 	};
+#endif
 
 	const uint32_t xmmRegIDs[] = {
 		0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
@@ -568,6 +596,8 @@ static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t
 
 	jx_memset(pass->m_NodeList, 0, sizeof(jmir_graph_node_t*) * JMIR_NODE_STATE_COUNT);
 	jx_memset(pass->m_MoveList, 0, sizeof(jmir_mov_instr_t*) * JMIR_MOV_STATE_COUNT);
+
+	pass->m_NextInstrID = 0;
 
 	pass->m_HWRegs = (jx_mir_reg_t*)JX_ALLOC(pass->m_LinearAllocator, sizeof(jx_mir_reg_t) * numHWRegs);
 	if (!pass->m_HWRegs) {
@@ -769,6 +799,8 @@ static void jmir_regAlloc_instrAddUse(jmir_func_pass_regalloc_t* pass, jmir_rega
 
 	JX_CHECK(instrInfo->m_NumUses + 1 <= JMIR_REGALLOC_MAX_INSTR_USES, "Too many instruction uses");
 	instrInfo->m_Uses[instrInfo->m_NumUses++] = id;
+
+	pass->m_Nodes[id].m_LastUseInstrID = jx_max_u32(pass->m_Nodes[id].m_LastUseInstrID, instrInfo->m_ID);
 }
 
 static void jmir_regAlloc_instrAddDef(jmir_func_pass_regalloc_t* pass, jmir_regalloc_instr_info_t* instrInfo, jx_mir_reg_t reg)
@@ -782,11 +814,14 @@ static void jmir_regAlloc_instrAddDef(jmir_func_pass_regalloc_t* pass, jmir_rega
 	JX_CHECK(id != UINT32_MAX, "Failed to map register to node index");
 	JX_CHECK(instrInfo->m_NumDefs + 1 <= JMIR_REGALLOC_MAX_INSTR_DEFS, "Too many instruction defs");
 	instrInfo->m_Defs[instrInfo->m_NumDefs++] = id;
+
+	pass->m_Nodes[id].m_FirstDefInstrID = jx_min_u32(pass->m_Nodes[id].m_FirstDefInstrID, instrInfo->m_ID);
 }
 
 static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_regalloc_instr_info_t* instrInfo, jx_mir_instruction_t* instr)
 {
 	instrInfo->m_Instr = instr;
+	instrInfo->m_ID = pass->m_NextInstrID++;
 	instrInfo->m_LiveOutSet = jx_bitsetCreate(pass->m_NumNodes, pass->m_LinearAllocator);
 	if (!instrInfo->m_LiveOutSet) {
 		return false;
@@ -1410,15 +1445,27 @@ static void jmir_regAlloc_selectSpill(jmir_func_pass_regalloc_t* pass)
 	JX_CHECK(jmir_nodeIs(spillCandidate, JMIR_NODE_STATE_SPILL), "Node in spill worklist not in spill state!");
 
 	jmir_graph_node_t* spilledNode = spillCandidate;
+#if 1
+	uint32_t spillCost = spillCandidate->m_LastUseInstrID - spillCandidate->m_FirstDefInstrID;
+#else
 	uint32_t spillCost = spillCandidate->m_Degree;
+#endif
 	spillCandidate = spillCandidate->m_Next;
 	while (spillCandidate) {
 		JX_CHECK(jmir_nodeIs(spillCandidate, JMIR_NODE_STATE_SPILL), "Node in spill worklist not in spill state!");
 
+#if 1
+		const uint32_t candidateCost = spillCandidate->m_LastUseInstrID - spillCandidate->m_FirstDefInstrID;
+		if (candidateCost > spillCost) {
+			spilledNode = spillCandidate;
+			spillCost = candidateCost;
+		}
+#else
 		if (spillCost < spillCandidate->m_Degree) {
 			spilledNode = spillCandidate;
 			spillCost = spillCandidate->m_Degree;
 		}
+#endif
 		
 		spillCandidate = spillCandidate->m_Next;
 	}
@@ -1448,7 +1495,12 @@ static void jmir_regAlloc_assignColors(jmir_func_pass_regalloc_t* pass)
 		if (availableColors == 0) {
 			jmir_regAlloc_nodeSetState(pass, node, JMIR_NODE_STATE_SPILLED);
 		} else {
+#if 0
+			uint32_t id = jx_ctntz_u64(availableColors);
+			node->m_Color = pass->m_HWRegs[id].m_ID;
+#else
 			node->m_Color = jx_ctntz_u64(availableColors);
+#endif
 			jmir_regAlloc_nodeSetState(pass, node, JMIR_NODE_STATE_COLORED);
 		}
 
@@ -1544,7 +1596,6 @@ static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass)
 		};
 
 		jx_mir_operand_t* stackSlot = NULL;
-		jx_mir_operand_t* temp = NULL;
 
 		// Walk the whole function and rewrite every definition as a store to stack
 		// and every use as a load from stack.
@@ -1599,13 +1650,14 @@ static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass)
 
 					JX_CHECK(regType != JMIR_TYPE_VOID, "Operand type not found!");
 					stackSlot = jx_mir_opStackObj(ctx, func, regType, jx_mir_typeGetSize(regType), jx_mir_typeGetAlignment(regType));
-					temp = jx_mir_opVirtualReg(ctx, func, regType);
 				} else {
 					// TODO: Check if the operand has the same size as the allocated stack slot. 
 					// Otherwise fail...
 				}
 
 				if (use && def) {
+					jx_mir_operand_t* temp = jx_mir_opVirtualReg(ctx, func, stackSlot->m_Type);
+
 					if (temp->m_Type == JMIR_TYPE_F32) {
 						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movss(ctx, temp, stackSlot));
 					} else if (temp->m_Type == JMIR_TYPE_F64) {
@@ -1629,6 +1681,7 @@ static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass)
 					}
 				} else if (use) {
 					// Load from stack into new temporary
+					jx_mir_operand_t* temp = jx_mir_opVirtualReg(ctx, func, stackSlot->m_Type);
 					if (temp->m_Type == JMIR_TYPE_F32) {
 						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movss(ctx, temp, stackSlot));
 					} else if (temp->m_Type == JMIR_TYPE_F64) {
@@ -1641,6 +1694,7 @@ static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass)
 
 					jmir_regAlloc_replaceInstrRegUse(instr, vreg, temp);
 				} else if (def) {
+					jx_mir_operand_t* temp = jx_mir_opVirtualReg(ctx, func, stackSlot->m_Type);
 					jmir_regAlloc_replaceInstrRegDef(instr, vreg, temp);
 
 					if (temp->m_Type == JMIR_TYPE_F32) {
@@ -1766,11 +1820,42 @@ static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, jx_mir
 	} break;
 	case JMIR_OP_MOV:
 	case JMIR_OP_MOVSX:
-	case JMIR_OP_MOVZX: {
+	case JMIR_OP_MOVZX: 
+	case JMIR_OP_LEA: {
+		bool regReplaced = false;
+
 		jx_mir_operand_t* src = instr->m_Operands[1];
-		JX_CHECK(src->m_Kind == JMIR_OPERAND_REGISTER, "Expected register operand");
-		JX_CHECK(jx_mir_regEqual(src->u.m_Reg, vreg), "Wrong virtual register!");
-		instr->m_Operands[1] = newReg;
+		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
+			if (jx_mir_regEqual(src->u.m_Reg, vreg)) {
+				instr->m_Operands[1] = newReg;
+				regReplaced = true;
+			}
+		} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+			jx_mir_memory_ref_t* memRef = src->u.m_MemRef;
+			if (jx_mir_regEqual(memRef->m_BaseReg, vreg)) {
+				memRef->m_BaseReg = newReg->u.m_Reg;
+				regReplaced = true;
+			} else if (jx_mir_regEqual(memRef->m_IndexReg, vreg)) {
+				memRef->m_IndexReg = newReg->u.m_Reg;
+				regReplaced = true;
+			}
+		}
+
+		if (!regReplaced) {
+			jx_mir_operand_t* dst = instr->m_Operands[0];
+			if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+				jx_mir_memory_ref_t* memRef = dst->u.m_MemRef;
+				if (jx_mir_regEqual(memRef->m_BaseReg, vreg)) {
+					memRef->m_BaseReg = newReg->u.m_Reg;
+					regReplaced = true;
+				} else if (jx_mir_regEqual(memRef->m_IndexReg, vreg)) {
+					memRef->m_IndexReg = newReg->u.m_Reg;
+					regReplaced = true;
+				}
+			}
+		}
+
+		JX_CHECK(regReplaced, "vreg use not found!");
 	} break;
 	case JMIR_OP_CMP:
 	case JMIR_OP_IMUL:
@@ -1796,9 +1881,6 @@ static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, jx_mir
 	} break;
 	case JMIR_OP_IDIV:
 	case JMIR_OP_DIV: {
-		JX_NOT_IMPLEMENTED();
-	} break;
-	case JMIR_OP_LEA: {
 		JX_NOT_IMPLEMENTED();
 	} break;
 	case JMIR_OP_XOR:
@@ -2136,7 +2218,11 @@ static bool jmir_regAlloc_nodeInit(jmir_func_pass_regalloc_t* pass, jmir_graph_n
 	if (initialState == JMIR_NODE_STATE_PRECOLORED) {
 		JX_CHECK(id < pass->m_NumHWRegs, "Trying to precolor a virtual register?");
 		node->m_AdjacentArr = NULL;
+#if 0
+		node->m_Color = pass->m_HWRegs[id].m_ID;
+#else
 		node->m_Color = id;
+#endif
 	} else {
 		node->m_AdjacentArr = (jmir_graph_node_t**)jx_array_create(pass->m_Allocator);
 		if (!node->m_AdjacentArr) {
@@ -2148,6 +2234,8 @@ static bool jmir_regAlloc_nodeInit(jmir_func_pass_regalloc_t* pass, jmir_graph_n
 
 	node->m_ID = id;
 	node->m_State = JMIR_NODE_STATE_ALLOCATED;
+	node->m_FirstDefInstrID = UINT32_MAX;
+	node->m_LastUseInstrID = 0;
 	jmir_regAlloc_nodeSetState(pass, node, initialState);
 
 	return true;
@@ -2276,7 +2364,15 @@ static bool jmir_funcPass_peepholeRun(jx_mir_function_pass_o* inst, jx_mir_conte
 
 					changed = true;
 				} else if (instr->m_OpCode == JMIR_OP_MOVSD && jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
-					JX_CHECK(false, "Implement like the movss above.");
+					// movsd xmm, 0.0
+					//  =>
+					// xorpd xmm, xmm
+					jx_mir_instruction_t* xorInstr = jx_mir_xorpd(ctx, instr->m_Operands[0], instr->m_Operands[0]);
+					jx_mir_bbInsertInstrBefore(ctx, bb, instr, xorInstr);
+					jx_mir_bbRemoveInstr(ctx, bb, instr);
+					jx_mir_instrFree(ctx, instr);
+
+					changed = true;
 				} else if ((instr->m_OpCode == JMIR_OP_UCOMISS || instr->m_OpCode == JMIR_OP_COMISS) && jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
 					// ucomiss xmm, 0.0
 					//  => 
