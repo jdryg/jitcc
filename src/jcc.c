@@ -9746,13 +9746,13 @@ static int64_t jcc_ppEvalConstExpression(jx_cc_context_t* ctx, jcc_translation_u
 				return 0;
 			}
 
+			numTok->m_Next = next;
 			if (t == expr) {
 				expr = numTok;
 			} else {
 				prev->m_Next = numTok;
-				numTok->m_Next = next;
-				t = numTok;
 			}
+			t = numTok;
 		}
 
 		prev = t;
