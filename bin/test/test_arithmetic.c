@@ -1,11 +1,4 @@
-typedef char int8_t;
-typedef unsigned char uint8_t;
-typedef short int16_t;
-typedef unsigned short uint16_t;
-typedef int int32_t;
-typedef unsigned int uint32_t;
-typedef long long int int64_t;
-typedef unsigned long long int uint64_t;
+#include <stdint.h>
 
 int8_t   test_addi8(int8_t a, int8_t b)      { return a + b; }
 int16_t  test_addi16(int16_t a, int16_t b)   { return a + b; }

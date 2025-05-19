@@ -375,20 +375,28 @@ bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
 					const jx64gen_instr_desc_t* desc = &kInstrDesc[mirInstr->m_OpCode];
 					switch (desc->m_Kind) {
 					case JX64GEN_INSTR_VOID: {
-						desc->u.m_VoidFunc(jitCtx);
+						if (!desc->u.m_VoidFunc(jitCtx)) {
+							JX_CHECK(false, "Failed to emit instruction.");
+						}
 					} break;
 					case JX64GEN_INSTR_UNARY: {
 						jx_x64_operand_t op = jx_x64gen_convertMIROperand(ctx, mirInstr->m_Operands[0]);
-						desc->u.m_UnaryFunc(jitCtx, op);
+						if (!desc->u.m_UnaryFunc(jitCtx, op)) {
+							JX_CHECK(false, "Failed to emit instruction.");
+						}
 					} break;
 					case JX64GEN_INSTR_BINARY: {
 						jx_x64_operand_t op1 = jx_x64gen_convertMIROperand(ctx, mirInstr->m_Operands[0]);
 						jx_x64_operand_t op2 = jx_x64gen_convertMIROperand(ctx, mirInstr->m_Operands[1]);
-						desc->u.m_BinaryFunc(jitCtx, op1, op2);
+						if (!desc->u.m_BinaryFunc(jitCtx, op1, op2)) {
+							JX_CHECK(false, "Failed to emit instruction.");
+						}
 					} break;
 					case JX64GEN_INSTR_COND: {
 						jx_x64_operand_t op = jx_x64gen_convertMIROperand(ctx, mirInstr->m_Operands[0]);
-						desc->u.m_Cond.m_Func(jitCtx, desc->u.m_Cond.m_Code, op);
+						if (!desc->u.m_Cond.m_Func(jitCtx, desc->u.m_Cond.m_Code, op)) {
+							JX_CHECK(false, "Failed to emit instruction.");
+						}
 					} break;
 					default:
 						JX_NOT_IMPLEMENTED();
@@ -501,6 +509,11 @@ bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
 		jx_x64_symbol_t* func8Symbol = jx64_symbolGetByName(jitCtx, "func8");
 		if (func8Symbol) {
 			jx64_symbolSetExternalAddress(jitCtx, func8Symbol, (void*)func8);
+		}
+
+		jx_x64_symbol_t* putcharSymbol = jx64_symbolGetByName(jitCtx, "putchar");
+		if (putcharSymbol) {
+			jx64_symbolSetExternalAddress(jitCtx, putcharSymbol, (void*)putchar);
 		}
 	}
 

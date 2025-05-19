@@ -275,6 +275,12 @@ typedef struct jcc_init_desg_t
 	jx_cc_object_t* m_Var;
 } jcc_init_desg_t;
 
+typedef struct jcc_s2s_map_item_t
+{
+	const char* m_Key;
+	const char* m_Value;
+} jcc_s2s_map_item_t;
+
 typedef struct jcc_translation_unit_t
 {
 	// All local variable instances created during parsing are
@@ -306,7 +312,11 @@ typedef struct jcc_translation_unit_t
 	jx_hashmap_t* m_MacroMap;
 	jcc_cond_include_t* m_CondIncludeListHead;
 
+	jx_hashmap_t* m_IncludeFileGuardMap;
+	jx_hashmap_t* m_PragmaOnceMap;
+
 	// Tokenizer
+	jx_file_base_dir m_CurFileBaseDir;
 	const char* m_CurFilename;
 	uint32_t m_CurLineNumber;
 	bool m_AtBeginOfLine;      // True if the current position is at the beginning of a line
@@ -323,7 +333,9 @@ typedef struct jx_cc_context_t
 	jx_allocator_i* m_LinearAllocator;
 	jx_string_table_t* m_StringTable;
 	jx_cc_translation_unit_t** m_TranslationUnitsArr;
+	jx_hashmap_t* m_IncludeFilePathMap;
 	jx_logger_i* m_Logger;
+	const char** m_IncludePathsArr;
 	uint32_t m_NumErrors;
 	uint32_t m_NumWarnings;
 } jx_cc_context_t;
@@ -412,6 +424,8 @@ static void jcc_logError(jx_cc_context_t* ctx, const jx_cc_source_loc_t* loc, co
 static jx_cc_token_t* jcc_preprocess(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok);
 static uint64_t jcc_macroEntryHashCallback(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
 static int32_t jcc_macroEntryCompareCallback(const void* a, const void* b, void* udata);
+static uint64_t jcc_s2sMapItemHashCallback(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
+static int32_t jcc_s2sMapItemCompareCallback(const void* a, const void* b, void* udata);
 
 jx_cc_context_t* jx_cc_createContext(jx_allocator_i* allocator, jx_logger_i* logger)
 {
@@ -442,6 +456,18 @@ jx_cc_context_t* jx_cc_createContext(jx_allocator_i* allocator, jx_logger_i* log
 		return NULL;
 	}
 
+	ctx->m_IncludePathsArr = (const char**)jx_array_create(allocator);
+	if (!ctx->m_IncludePathsArr) {
+		jx_cc_destroyContext(ctx);
+		return NULL;
+	}
+
+	ctx->m_IncludeFilePathMap = jx_hashmapCreate(allocator, sizeof(jcc_s2s_map_item_t), 64, 0, 0, jcc_s2sMapItemHashCallback, jcc_s2sMapItemCompareCallback, NULL, NULL);
+	if (!ctx->m_IncludeFilePathMap) {
+		jx_cc_destroyContext(ctx);
+		return NULL;
+	}
+
 	jx_strtable_insert(ctx->m_StringTable, "void", UINT32_MAX);
 	jx_strtable_insert(ctx->m_StringTable, "bool", UINT32_MAX);
 	jx_strtable_insert(ctx->m_StringTable, "char", UINT32_MAX);
@@ -459,6 +485,13 @@ jx_cc_context_t* jx_cc_createContext(jx_allocator_i* allocator, jx_logger_i* log
 void jx_cc_destroyContext(jx_cc_context_t* ctx)
 {
 	jx_allocator_i* allocator = ctx->m_Allocator;
+
+	if (ctx->m_IncludeFilePathMap) {
+		jx_hashmapDestroy(ctx->m_IncludeFilePathMap);
+		ctx->m_IncludeFilePathMap = NULL;
+	}
+
+	jx_array_free(ctx->m_IncludePathsArr);
 
 	const uint32_t numTranslationUnits = (uint32_t)jx_array_sizeu(ctx->m_TranslationUnitsArr);
 	for (uint32_t iTU = 0; iTU < numTranslationUnits; ++iTU) {
@@ -492,6 +525,18 @@ void jx_cc_destroyContext(jx_cc_context_t* ctx)
 	JX_FREE(allocator, ctx);
 }
 
+void jx_cc_addIncludePath(jx_cc_context_t* ctx, jx_file_base_dir baseDir, const char* relPath)
+{
+	char baseDirPath[256];
+	jx_os_fsGetBaseDir(baseDir, baseDirPath, JX_COUNTOF(baseDirPath));
+
+	char fullPath[512];
+	jx_snprintf(fullPath, JX_COUNTOF(fullPath), "%s%s", baseDirPath, relPath);
+	
+	const char* fullPathInterned = jx_strtable_insert(ctx->m_StringTable, fullPath, UINT32_MAX);
+	jx_array_push_back(ctx->m_IncludePathsArr, fullPathInterned);
+}
+
 jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_dir baseDir, const char* filename)
 {
 	jx_cc_translation_unit_t* unit = (jx_cc_translation_unit_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_cc_translation_unit_t));
@@ -509,15 +554,27 @@ jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_d
 	char* source = (char*)jx_os_fsReadFile(baseDir, filename, ctx->m_Allocator, true, &sourceLen);
 	if (!source) {
 		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Failed to open file \"%s\".", filename);
-		jx_hashmapDestroy(tu->m_MacroMap);
 		JX_FREE(ctx->m_Allocator, unit);
 		return NULL;
 	}
 
+	tu->m_CurFileBaseDir = baseDir;
 	tu->m_CurFilename = filename;
 
 	tu->m_MacroMap = jx_hashmapCreate(ctx->m_Allocator, sizeof(jcc_macro_entry_t), 64, 0, 0, jcc_macroEntryHashCallback, jcc_macroEntryCompareCallback, NULL, ctx);
 	if (!tu->m_MacroMap) {
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.", filename);
+		goto end;
+	}
+
+	tu->m_IncludeFileGuardMap = jx_hashmapCreate(ctx->m_Allocator, sizeof(jcc_s2s_map_item_t), 64, 0, 0, jcc_s2sMapItemHashCallback, jcc_s2sMapItemCompareCallback, NULL, NULL);
+	if (!tu->m_IncludeFileGuardMap) {
+		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.", filename);
+		goto end;
+	}
+
+	tu->m_PragmaOnceMap = jx_hashmapCreate(ctx->m_Allocator, sizeof(jcc_s2s_map_item_t), 64, 0, 0, jcc_s2sMapItemHashCallback, jcc_s2sMapItemCompareCallback, NULL, NULL);
+	if (!tu->m_PragmaOnceMap) {
 		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.", filename);
 		goto end;
 	}
@@ -559,6 +616,16 @@ jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_d
 	jcc_tuLeaveScope(ctx, tu);
 
 end:
+	if (tu->m_PragmaOnceMap) {
+		jx_hashmapDestroy(tu->m_PragmaOnceMap);
+		tu->m_PragmaOnceMap = NULL;
+	}
+
+	if (tu->m_IncludeFileGuardMap) {
+		jx_hashmapDestroy(tu->m_IncludeFileGuardMap);
+		tu->m_IncludeFileGuardMap = NULL;
+	}
+
 	if (tu->m_MacroMap) {
 		jx_hashmapDestroy(tu->m_MacroMap);
 		tu->m_MacroMap = NULL;
@@ -1818,6 +1885,7 @@ static jx_cc_type_t* jcc_parseDeclarationSpecifiers(jx_cc_context_t* ctx, jcc_tr
 #if JCC_CONFIG_LLP64
 		case LONG:
 		case LONG + INT:
+		case SIGNED + LONG:
 		case SIGNED + LONG + INT:
 			ty = kType_int;
 			break;
@@ -4799,6 +4867,9 @@ static double jcc_astEvalConstExpressionDouble(jx_cc_context_t* ctx, jcc_transla
 static jx_cc_ast_expr_t* jcc_astConvertToAssign(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_ast_expr_t* expr)
 {
 	jx_cc_ast_expr_t* node = NULL;
+	if (!expr) {
+		return NULL;
+	}
 
 	if (jcc_astNodeIsExprBinary(expr)) {
 		jx_cc_ast_expr_binary_t* binary = (jx_cc_ast_expr_binary_t*)expr;
@@ -6224,11 +6295,11 @@ static jx_cc_ast_expr_t* jcc_parsePrimaryExpression(jx_cc_context_t* ctx, jcc_tr
 		}
 
 		if (jx_cc_typeIsInteger(ty) || ty->m_Kind == JCC_TYPE_PTR) {
-			node = jcc_astAllocExprIConst(ctx, 0, kType_int, start);
+			node = jcc_astAllocExprIConst(ctx, 0, start);
 		} else if (jx_cc_typeIsFloat(ty)) {
-			node = jcc_astAllocExprIConst(ctx, 1, kType_int, start);
+			node = jcc_astAllocExprIConst(ctx, 1, start);
 		} else {
-			node = jcc_astAllocExprIConst(ctx, 2, kType_int, start);
+			node = jcc_astAllocExprIConst(ctx, 2, start);
 		}
 #endif
 #if 0
@@ -8734,6 +8805,10 @@ static jx_cc_token_t* jcc_ppSkipConditionalInclude(jx_cc_context_t* ctx, jcc_tra
 static jx_cc_token_t* jcc_ppSkipLine(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok);
 static int64_t jcc_ppEvalConstExpression(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr, bool* err);
 static jx_cc_token_t* jcc_ppReadConstExpression(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr);
+static const char* jcc_ppReadIncludeFilename(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr, bool* isDoubleQuote);
+static const char* jcc_ppRelIncludePath(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* filename);
+static const char* jcc_ppSearchIncludePaths(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* filename);
+static jx_cc_token_t* jcc_ppIncludeFile(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok, const char* path, jx_cc_token_t* filenameToken);
 
 static jx_cc_hideset_t* jcc_hidesetCreate(jx_cc_context_t* ctx, const char* name);
 static bool jcc_hidesetContains(jx_cc_context_t* ctx, jx_cc_hideset_t* hs, const char* name);
@@ -8761,7 +8836,34 @@ static jx_cc_token_t* jcc_preprocess(jx_cc_context_t* ctx, jcc_translation_unit_
 		tok = tok->m_Next;
 
 		if (jcc_tokIs(tok, JCC_TOKEN_INCLUDE)) {
-			JX_NOT_IMPLEMENTED();
+			tok = tok->m_Next;
+			bool isDoubleQuote = false;
+			const char* filename = jcc_ppReadIncludeFilename(ctx, tu, &tok, &isDoubleQuote);
+			if (!filename) {
+				jcc_logError(ctx, &tok->m_Loc, "Failed to read include filename.");
+				return NULL;
+			}
+
+			bool included = false;
+			if (filename[0] != '/' && isDoubleQuote) {
+				const char* path = jcc_ppRelIncludePath(ctx, tu, filename);
+				if (jx_os_fsFileExists(JX_FILE_BASE_DIR_ABSOLUTE_PATH, path)) {
+					tok = jcc_ppIncludeFile(ctx, tu, tok, path, start->m_Next->m_Next);
+					if (!tok) {
+						return NULL;
+					}
+
+					included = true;
+				}
+			}
+
+			if (!included) {
+				const char* path = jcc_ppSearchIncludePaths(ctx, tu, filename);
+				tok = jcc_ppIncludeFile(ctx, tu, tok, path ? path : filename, start->m_Next->m_Next);
+				if (!tok) {
+					return NULL;
+				}
+			}
 		} else if (jcc_tokIs(tok, JCC_TOKEN_INCLUDE_NEXT)) {
 			JX_NOT_IMPLEMENTED();
 		} else if (jcc_tokIs(tok, JCC_TOKEN_DEFINE)) {
@@ -8846,12 +8948,16 @@ static jx_cc_token_t* jcc_preprocess(jx_cc_context_t* ctx, jcc_translation_unit_
 			JX_NOT_IMPLEMENTED();
 		} else if (jcc_tokIs(tok, JCC_TOKEN_PRAGMA)) {
 			if (jcc_tokIs(tok->m_Next, JCC_TOKEN_ONCE)) {
-				JX_NOT_IMPLEMENTED();
+				jx_hashmapSet(tu->m_PragmaOnceMap, &(jcc_s2s_map_item_t){ .m_Key = tok->m_Loc.m_Filename, .m_Value = NULL });
+				tok = jcc_ppSkipLine(ctx, tu, tok->m_Next->m_Next);
 			} else {
 				JX_NOT_IMPLEMENTED();
 			}
 		} else if (jcc_tokIs(tok, JCC_TOKEN_ERROR)) {
-			JX_NOT_IMPLEMENTED();
+			jx_cc_token_t* eol = jcc_ppSkipLine(ctx, tu, tok->m_Next);
+			const char* str = jcc_ppJoinTokens(ctx, tu, tok->m_Next, eol);
+			jcc_logError(ctx, &tok->m_Loc, "Error: %s", str);
+			return NULL;
 		} else if ((tok->m_Flags & JCC_TOKEN_FLAGS_AT_BEGIN_OF_LINE_Msk) != 0) {
 			// `#`-only line is legal. It's called a null directive.
 		} else {
@@ -9628,6 +9734,7 @@ static int64_t jcc_ppEvalConstExpression(jx_cc_context_t* ctx, jcc_translation_u
 	// evaluating a constant expression. For example, `#if foo` is
 	// equivalent to `#if 0` if foo is not defined.
 	jx_cc_token_t* t = expr;
+	jx_cc_token_t* prev = NULL;
 	while (!jcc_tokIs(t, JCC_TOKEN_EOF)) {
 		if (jcc_tokIs(t, JCC_TOKEN_IDENTIFIER)) {
 			jx_cc_token_t* next = t->m_Next;
@@ -9639,13 +9746,16 @@ static int64_t jcc_ppEvalConstExpression(jx_cc_context_t* ctx, jcc_translation_u
 				return 0;
 			}
 
+			numTok->m_Next = next;
 			if (t == expr) {
 				expr = numTok;
+			} else {
+				prev->m_Next = numTok;
 			}
-			numTok->m_Next = next;
 			t = numTok;
 		}
 
+		prev = t;
 		t = t->m_Next;
 	}
 
@@ -9712,6 +9822,210 @@ static jx_cc_token_t* jcc_ppReadConstExpression(jx_cc_context_t* ctx, jcc_transl
 	cur->m_Next = tok;
 
 	return head.m_Next;
+}
+
+static const char* jcc_ppReadIncludeFilename(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t** tokenListPtr, bool* isDoubleQuote)
+{
+	jx_cc_token_t* tok = *tokenListPtr;
+
+	// Pattern 1: #include "foo.h"
+	if (jcc_tokIs(tok, JCC_TOKEN_STRING_LITERAL)) {
+		// A double-quoted filename for #include is a special kind of
+		// token, and we don't want to interpret any escape sequences in it.
+		// For example, "\f" in "C:\foo" is not a formfeed character but
+		// just two non-control characters, backslash and f.
+		// So we don't want to use token->str.
+		*isDoubleQuote = true;
+		*tokenListPtr = jcc_ppSkipLine(ctx, tu, tok->m_Next);
+		return jx_strtable_insert(ctx->m_StringTable, tok->m_String + 1, tok->m_Length - 2);
+	}
+
+	// Pattern 2: #include <foo.h>
+	if (jcc_tokIs(tok, JCC_TOKEN_LESS)) {
+		// Reconstruct a filename from a sequence of tokens between
+		// "<" and ">".
+		jx_cc_token_t* start = tok;
+
+		// Find closing ">".
+		for (; !jcc_tokIs(tok, JCC_TOKEN_GREATER); tok = tok->m_Next) {
+			if ((tok->m_Flags & JCC_TOKEN_FLAGS_AT_BEGIN_OF_LINE_Msk) != 0 || jcc_tokIs(tok, JCC_TOKEN_EOF)) {
+				jcc_logError(ctx, &tok->m_Loc, "Expected '>'");
+				return NULL;
+			}
+		}
+
+		*isDoubleQuote = false;
+		*tokenListPtr = jcc_ppSkipLine(ctx, tu, tok->m_Next);
+		return jcc_ppJoinTokens(ctx, tu, start->m_Next, tok);
+	}
+
+	// Pattern 3: #include FOO
+	// In this case FOO must be macro-expanded to either
+	// a single string token or a sequence of "<" ... ">".
+	if (jcc_tokIs(tok, JCC_TOKEN_IDENTIFIER)) {
+		JX_NOT_IMPLEMENTED();
+	}
+
+	jcc_logError(ctx, &tok->m_Loc, "Expected a filename.");
+
+	return NULL;
+}
+
+static const char* jcc_ppRelIncludePath(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* filename)
+{
+	jx_file_base_dir tuBaseDir = tu->m_CurFileBaseDir;
+	const char* tuFilename = tu->m_CurFilename;
+
+	char folder[256];
+	const char* lastSlash = jx_strrchr(tuFilename, '\\');
+	if (!lastSlash) {
+		lastSlash = jx_strrchr(tuFilename, '/');
+	}
+
+	if (!lastSlash) {
+		folder[0] = '\0';
+	} else {
+		const uint32_t len = (uint32_t)(lastSlash - tuFilename);
+		jx_memcpy(folder, tuFilename, len);
+		folder[len] = '/';
+		folder[len + 1] = '\0';
+	}
+
+	char baseDirPath[256];
+	jx_os_fsGetBaseDir(tu->m_CurFileBaseDir, baseDirPath, JX_COUNTOF(baseDirPath));
+
+	char absPath[512];
+	jx_snprintf(absPath, JX_COUNTOF(absPath), "%s%s%s", baseDirPath, folder, filename);
+
+	return jx_strtable_insert(ctx->m_StringTable, absPath, UINT32_MAX);
+}
+
+static const char* jcc_ppSearchIncludePaths(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* filename)
+{
+	if (filename[0] == '/') {
+		return filename;
+	}
+
+	jcc_s2s_map_item_t* item = (jcc_s2s_map_item_t*)jx_hashmapGet(ctx->m_IncludeFilePathMap, &(jcc_s2s_map_item_t){.m_Key = filename});
+	if (item) {
+		return item->m_Value;
+	}
+
+	// Search a file from the include paths.
+	const uint32_t numIncludePaths = (uint32_t)jx_array_sizeu(ctx->m_IncludePathsArr);
+	for (uint32_t i = 0; i < numIncludePaths; ++i) {
+		char path[512];
+		jx_snprintf(path, JX_COUNTOF(path), "%s/%s", ctx->m_IncludePathsArr[i], filename);
+		if (!jx_os_fsFileExists(JX_FILE_BASE_DIR_ABSOLUTE_PATH, path)) {
+			continue;
+		}
+
+		const char* fullPath = jx_strtable_insert(ctx->m_StringTable, path, UINT32_MAX);
+		jx_hashmapSet(ctx->m_IncludeFilePathMap, &(jcc_s2s_map_item_t){.m_Key = filename, .m_Value = fullPath});
+
+#if 0
+		include_next_idx = i + 1;
+#endif
+
+		return fullPath;
+	}
+
+	return NULL;
+}
+
+// Detect the following "include guard" pattern.
+//
+//   #ifndef FOO_H
+//   #define FOO_H
+//   ...
+//   #endif
+static const char* jcc_ppDetectIncludeGuard(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok)
+{
+	// Detect the first two lines.
+	if (!jcc_tokIsHash(tok) || !jcc_tokIs(tok->m_Next, JCC_TOKEN_IFNDEF)) {
+		return NULL;
+	}
+
+	tok = tok->m_Next->m_Next;
+	if (!jcc_tokIs(tok, JCC_TOKEN_IDENTIFIER)) {
+		return NULL;
+	}
+
+	const char* macro = jx_strtable_insert(ctx->m_StringTable, tok->m_String, tok->m_Length);
+	tok = tok->m_Next;
+
+	if (!jcc_tokIsHash(tok) || !jcc_tokIs(tok->m_Next, JCC_TOKEN_DEFINE) || jx_strncmp(tok->m_Next->m_Next->m_String, macro, tok->m_Next->m_Next->m_Length)) {
+		return NULL;
+	}
+
+	// Read until the end of the file.
+	while (!jcc_tokIs(tok, JCC_TOKEN_EOF)) {
+		if (!jcc_tokIsHash(tok)) {
+			tok = tok->m_Next;
+		} else {
+			if (jcc_tokIs(tok->m_Next, JCC_TOKEN_ENDIF) && jcc_tokIs(tok->m_Next->m_Next, JCC_TOKEN_EOF)) {
+				return macro;
+			} else if (jcc_tokIs(tok->m_Next, JCC_TOKEN_IF) || jcc_tokIs(tok->m_Next, JCC_TOKEN_IFDEF) || jcc_tokIs(tok->m_Next, JCC_TOKEN_IFNDEF)) {
+				tok = jcc_ppSkipConditionalInclude(ctx, tu, tok->m_Next);
+			} else {
+				tok = tok->m_Next;
+			}
+		}
+	}
+
+	return NULL;
+}
+
+static jx_cc_token_t* jcc_ppIncludeFile(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok, const char* path, jx_cc_token_t* filenameToken)
+{
+	// Check for "#pragma once"
+	jcc_s2s_map_item_t* pragmaOnceItem = (jcc_s2s_map_item_t*)jx_hashmapGet(tu->m_PragmaOnceMap, &(jcc_s2s_map_item_t){ .m_Key = path });
+	if (pragmaOnceItem) {
+		return tok;
+	}
+
+	// If we read the same file before, and if the file was guarded
+	// by the usual #ifndef ... #endif pattern, we may be able to
+	// skip the file without opening it.
+	jcc_s2s_map_item_t* guardItem = (jcc_s2s_map_item_t*)jx_hashmapGet(tu->m_IncludeFileGuardMap, &(jcc_s2s_map_item_t){ .m_Key = path });
+	if (guardItem) {
+		if (jx_hashmapGet(tu->m_MacroMap, &(jcc_macro_entry_t){.m_Name = guardItem->m_Value })) {
+			return tok;
+		}
+	}
+
+	uint64_t sourceLen = 0ull;
+	char* source = (char*)jx_os_fsReadFile(JX_FILE_BASE_DIR_ABSOLUTE_PATH, path, ctx->m_Allocator, true, &sourceLen);
+	if (!source) {
+		jcc_logError(ctx, &filenameToken->m_Loc, "%s: cannot open file", path);
+		return NULL;
+	}
+
+	jx_file_base_dir prevBaseDir = tu->m_CurFileBaseDir;
+	const char* prevFilename = tu->m_CurFilename;
+	const uint32_t prevLineNumber = tu->m_CurLineNumber;
+
+	tu->m_CurFileBaseDir = JX_FILE_BASE_DIR_ABSOLUTE_PATH;
+	tu->m_CurFilename = path;
+	tu->m_CurLineNumber = 1;
+	jx_cc_token_t* tok2 = jcc_tokenizeString(ctx, tu, source, sourceLen);
+	tu->m_CurFileBaseDir = prevBaseDir;
+	tu->m_CurFilename = prevFilename;
+	tu->m_CurLineNumber = prevLineNumber;
+
+	JX_FREE(ctx->m_Allocator, source);
+
+	if (!tok2) {
+		jcc_logError(ctx, &filenameToken->m_Loc, "%s: failed to tokenize file.", path);
+		return NULL;
+	}
+
+	const char* guardName = jcc_ppDetectIncludeGuard(ctx, tu, tok2);
+	if (guardName) {
+		jx_hashmapSet(tu->m_IncludeFileGuardMap, &(jcc_s2s_map_item_t){ .m_Key = path, .m_Value = guardName });
+	}
+
+	return jcc_ppAppend(ctx, tu, tok2, tok);
 }
 
 static jx_cc_hideset_t* jcc_hidesetCreate(jx_cc_context_t* ctx, const char* name)
@@ -9787,4 +10101,19 @@ static int32_t jcc_macroEntryCompareCallback(const void* a, const void* b, void*
 	const jcc_macro_entry_t* nodeA = (const jcc_macro_entry_t*)a;
 	const jcc_macro_entry_t* nodeB = (const jcc_macro_entry_t*)b;
 	return jx_strcmp(nodeA->m_Name, nodeB->m_Name);
+}
+
+static uint64_t jcc_s2sMapItemHashCallback(const void* item, uint64_t seed0, uint64_t seed1, void* udata)
+{
+	JX_UNUSED(udata);
+	const jcc_s2s_map_item_t* node = (const jcc_s2s_map_item_t*)item;
+	return jx_hashFNV1a_cstr(node->m_Key, UINT32_MAX, seed0, seed1);
+}
+
+static int32_t jcc_s2sMapItemCompareCallback(const void* a, const void* b, void* udata)
+{
+	JX_UNUSED(udata);
+	const jcc_s2s_map_item_t* nodeA = (const jcc_s2s_map_item_t*)a;
+	const jcc_s2s_map_item_t* nodeB = (const jcc_s2s_map_item_t*)b;
+	return jx_strcmp(nodeA->m_Key, nodeB->m_Key);
 }

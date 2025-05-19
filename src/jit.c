@@ -597,6 +597,7 @@ bool jx64_movsx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 		|| dst.m_Size <= src.m_Size
 		;
 	if (invalidOperands) {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -670,6 +671,7 @@ bool jx64_movzx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 		|| dst.m_Size < src.m_Size
 		;
 	if (invalidOperands) {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -793,6 +795,7 @@ bool jx64_push(jx_x64_context_t* ctx, jx_x64_operand_t op)
 			|| op.m_Size == JX64_SIZE_64 // Cannot push 64-bit immediate
 			;
 		if (invalidOperand) {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -808,6 +811,9 @@ bool jx64_push(jx_x64_context_t* ctx, jx_x64_operand_t op)
 		if (!jx64_stack_op_mem(enc, 0xFF, 0b110, &op.u.m_Mem, op.m_Size)) {
 			return false;
 		}
+	} else {
+		JX_CHECK(false, "Invalid operands.");
+		return false;
 	}
 
 #if 0
@@ -956,6 +962,7 @@ bool jx64_imul(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src
 		|| dst.m_Type != JX64_OPERAND_REG // Destination operand should always be a register
 		;
 	if (invalidOperands) {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -982,6 +989,7 @@ bool jx64_imul(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src
 	} else if (src.m_Type == JX64_OPERAND_IMM) {
 		return jx64_imul3(ctx, dst, dst, src);
 	} else {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -1002,6 +1010,7 @@ bool jx64_imul3(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 		|| src2.m_Type != JX64_OPERAND_IMM // Second source operand should always be an immediate value.
 		;
 	if (invalidOperands) {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -1044,6 +1053,7 @@ bool jx64_imul3(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 			JX_NOT_IMPLEMENTED();
 		}
 	} else {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -1064,6 +1074,7 @@ bool jx64_lea(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src)
 		|| (src.m_Type != JX64_OPERAND_MEM && src.m_Type != JX64_OPERAND_LBL && src.m_Type != JX64_OPERAND_SYM)
 		;
 	if (invalidOperands) {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -1117,6 +1128,7 @@ bool jx64_test(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src
 		|| !(dst.m_Size == src.m_Size || (dst.m_Size == JX64_SIZE_64 && src.m_Size == JX64_SIZE_32)) // only allow reg size == imm size or 64-bit with 32-bit imm
 		;
 	if (invalidOperands) {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -1219,6 +1231,7 @@ bool jx64_setcc(jx_x64_context_t* ctx, jx_x64_condition_code cc, jx_x64_operand_
 		|| dst.m_Size != JX64_SIZE_8
 		;
 	if (invalidOperands) {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -1906,6 +1919,7 @@ static void jx64_symbolFree(jx_x64_context_t* ctx, jx_x64_symbol_t* sym)
 static bool jx64_stack_op_mem(jx_x64_instr_encoding_t* enc, uint8_t opcode, uint8_t modrm_reg, const jx_x64_mem_t* mem, jx_x64_size sz)
 {
 	if (sz == JX64_SIZE_8 || sz == JX64_SIZE_32) {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -1923,6 +1937,7 @@ static bool jx64_stack_op_mem(jx_x64_instr_encoding_t* enc, uint8_t opcode, uint
 			|| JX64_REG_IS_RIP(index_r)                                // Cannot use RIP as index register
 			;
 		if (invalidOperands) {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -1972,6 +1987,7 @@ static bool jx64_stack_op_mem(jx_x64_instr_encoding_t* enc, uint8_t opcode, uint
 			|| JX64_REG_GET_SIZE(base_r) < JX64_SIZE_32 // Cannot use 16-bit or 8-bit base reg
 			;
 		if (invalidOperands) {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -2041,6 +2057,7 @@ static bool jx64_stack_op_reg(jx_x64_instr_encoding_t* enc, uint8_t baseOpcode, 
 		|| reg_sz == JX64_SIZE_32  // Cannot push 32-bit registers
 		;
 	if (invalidOperand) {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -2081,6 +2098,7 @@ static bool jx64_math_unary_op(jx_x64_context_t* ctx, uint8_t baseOpcode, uint8_
 static bool jx64_math_binary_op(jx_x64_context_t* ctx, uint8_t opcode_imm, uint8_t modrm_reg, uint8_t opcode_rm, jx_x64_operand_t dst, jx_x64_operand_t src)
 {
 	if (dst.m_Type == JX64_OPERAND_SYM && src.m_Type == JX64_OPERAND_SYM) {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -2232,6 +2250,7 @@ static bool jx64_jmp_call_op(jx_x64_context_t* ctx, uint8_t opcode_lbl, uint8_t 
 			|| JX64_REG_GET_SIZE(reg) != JX64_SIZE_64
 			;
 		if (invalidOperands) {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -2255,6 +2274,7 @@ static bool jx64_jmp_call_op(jx_x64_context_t* ctx, uint8_t opcode_lbl, uint8_t 
 				|| JX64_REG_IS_RIP(index_r)                                // Cannot use RIP as index register
 				;
 			if (invalidOperands) {
+				JX_CHECK(false, "Invalid operands.");
 				return false;
 			}
 
@@ -2281,6 +2301,7 @@ static bool jx64_jmp_call_op(jx_x64_context_t* ctx, uint8_t opcode_lbl, uint8_t 
 				|| JX64_REG_IS_RIP(index_r)                    // Cannot use RIP as index register
 				;
 			if (invalidOperands) {
+				JX_CHECK(false, "Invalid operands.");
 				return false;
 			}
 
@@ -2294,6 +2315,7 @@ static bool jx64_jmp_call_op(jx_x64_context_t* ctx, uint8_t opcode_lbl, uint8_t 
 				|| JX64_REG_GET_SIZE(base_r) < JX64_SIZE_32 // Cannot use 16-bit or 8-bit base reg
 				;
 			if (invalidOperands) {
+				JX_CHECK(false, "Invalid operands.");
 				return false;
 			}
 
@@ -2392,6 +2414,7 @@ static bool jx64_shift_rotate_op(jx_x64_context_t* ctx, uint8_t modrm_reg, jx_x6
 				return false;
 			}
 		} else {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 	} else if (op.m_Type == JX64_OPERAND_MEM) {
@@ -2412,6 +2435,7 @@ static bool jx64_shift_rotate_op(jx_x64_context_t* ctx, uint8_t modrm_reg, jx_x6
 				return false;
 			}
 		} else {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -2443,6 +2467,7 @@ static bool jx64_math_unary_op_reg(jx_x64_instr_encoding_t* enc, uint8_t baseOpc
 		|| JX64_REG_IS_RIP(reg)
 		;
 	if (invalidOperands) {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -2485,6 +2510,7 @@ static bool jx64_math_unary_op_mem(jx_x64_instr_encoding_t* enc, uint8_t baseOpc
 			|| JX64_REG_IS_RIP(index_r)                                // Cannot use RIP as index register
 			;
 		if (invalidOperands) {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -2519,6 +2545,7 @@ static bool jx64_math_unary_op_mem(jx_x64_instr_encoding_t* enc, uint8_t baseOpc
 			|| JX64_REG_IS_RIP(index_r)                    // Cannot use RIP as index register
 			;
 		if (invalidOperands) {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -2541,6 +2568,7 @@ static bool jx64_math_unary_op_mem(jx_x64_instr_encoding_t* enc, uint8_t baseOpc
 			|| JX64_REG_GET_SIZE(base_r) < JX64_SIZE_32 // Cannot use 16-bit or 8-bit base reg
 			;
 		if (invalidOperands) {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -2668,6 +2696,7 @@ static bool jx64_binary_op_reg_imm(jx_x64_instr_encoding_t* enc, const uint8_t* 
 		|| !(reg_sz == imm_sz || imm_sz == JX64_SIZE_8 || (reg_sz == JX64_SIZE_64 && imm_sz == JX64_SIZE_32)) // only allow reg size == imm size or 8-bit immediates or 64-bit with 32-bit imm
 		;
 	if (invalidOperands) {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -2703,6 +2732,7 @@ static bool jx64_binary_op_mem_imm(jx_x64_instr_encoding_t* enc, const uint8_t* 
 			|| (src_imm_sz == JX64_SIZE_64 && src_imm > 0xFFFFFFFF)    // Only 32-bit immediates are supported
 			;
 		if (invalidOperands) {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -2738,6 +2768,7 @@ static bool jx64_binary_op_mem_imm(jx_x64_instr_encoding_t* enc, const uint8_t* 
 			|| (src_imm_sz == JX64_SIZE_64 && src_imm > 0xFFFFFFFF) // Only 32-bit immediates are supported
 			;
 		if (invalidOperands) {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -2761,6 +2792,7 @@ static bool jx64_binary_op_mem_imm(jx_x64_instr_encoding_t* enc, const uint8_t* 
 			|| (src_imm_sz == JX64_SIZE_64 && src_imm > 0xFFFFFFFF) // Only 32-bit immediates are supported
 			;
 		if (invalidOperands) {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -2819,6 +2851,7 @@ static bool jx64_binary_op_mem_imm(jx_x64_instr_encoding_t* enc, const uint8_t* 
 			|| (src_imm_sz == JX64_SIZE_64 && src_imm > 0xFFFFFFFF) // Only 32-bit immediates are supported
 			;
 		if (invalidOperands) {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -2845,6 +2878,7 @@ static bool jx64_binary_op_reg_reg(jx_x64_instr_encoding_t* enc, const uint8_t* 
 		|| JX64_REG_GET_SIZE(dst) != JX64_REG_GET_SIZE(src)
 		;
 	if (invalidOperands) {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -2882,6 +2916,7 @@ static bool jx64_binary_op_reg_mem(jx_x64_instr_encoding_t* enc, const uint8_t* 
 			|| JX64_REG_IS_RIP(index_r)                                // Cannot use RIP as index register
 			;
 		if (invalidOperands) {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -2918,6 +2953,7 @@ static bool jx64_binary_op_reg_mem(jx_x64_instr_encoding_t* enc, const uint8_t* 
 			|| JX64_REG_IS_RIP(index_r)                    // Cannot use RIP as index register
 			;
 		if (invalidOperands) {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -2942,6 +2978,7 @@ static bool jx64_binary_op_reg_mem(jx_x64_instr_encoding_t* enc, const uint8_t* 
 			|| JX64_REG_GET_SIZE(base_r) < JX64_SIZE_32 // Cannot use 16-bit or 8-bit base reg
 			;
 		if (invalidOperands) {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -3036,6 +3073,7 @@ static bool jx64_mov_reg_imm(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, int
 		|| (dst_r_sz != src_imm_sz && !(dst_r_sz == JX64_SIZE_64 && true_src_imm_sz <= JX64_SIZE_32))
 		;
 	if (invalidOperands) {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -3080,6 +3118,7 @@ static bool jx64_mov_mem_imm(jx_x64_instr_encoding_t* enc, const jx_x64_mem_t* d
 			|| (src_imm_sz == JX64_SIZE_64 && (src_imm < INT32_MIN || src_imm > INT32_MAX)) // Only 32-bit immediates are supported
 			;
 		if (invalidOperands) {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -3116,6 +3155,7 @@ static bool jx64_mov_mem_imm(jx_x64_instr_encoding_t* enc, const jx_x64_mem_t* d
 			|| (src_imm_sz == JX64_SIZE_64 && (src_imm < INT32_MIN || src_imm > INT32_MAX)) // Only 32-bit immediates are supported
 			;
 		if (invalidOperands) {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -3139,6 +3179,7 @@ static bool jx64_mov_mem_imm(jx_x64_instr_encoding_t* enc, const jx_x64_mem_t* d
 			|| (src_imm_sz == JX64_SIZE_64 && (src_imm < INT32_MIN || src_imm > INT32_MAX)) // Only 32-bit immediates are supported
 			;
 		if (invalidOperands) {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -3187,6 +3228,7 @@ static bool jx64_mov_mem_imm(jx_x64_instr_encoding_t* enc, const jx_x64_mem_t* d
 			|| (src_imm_sz == JX64_SIZE_64 && (src_imm < INT32_MIN || src_imm > INT32_MAX)) // Only 32-bit immediates are supported
 			;
 		if (invalidOperands) {
+			JX_CHECK(false, "Invalid operands.");
 			return false;
 		}
 
@@ -3215,6 +3257,7 @@ static bool jx64_movsx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, j
 		|| src_r_sz == JX64_SIZE_64
 		;
 	if (invalidOperands) {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -3252,6 +3295,7 @@ static bool jx64_movzx_reg_reg(jx_x64_instr_encoding_t* enc, jx_x64_reg dst_r, j
 		|| src_r_sz == JX64_SIZE_64 
 		;
 	if (invalidOperands) {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -3283,6 +3327,7 @@ static bool jx64_sse_binary_op(jx_x64_context_t* ctx, jx_x64_sse_mandatory_prefi
 //		|| dst.m_Size != JX64_SIZE_128
 		;
 	if (invalidOperands) {
+		JX_CHECK(false, "Invalid operands.");
 		return false;
 	}
 
@@ -3345,6 +3390,7 @@ static bool jx64_sse_binary_op(jx_x64_context_t* ctx, jx_x64_sse_mandatory_prefi
 				|| JX64_REG_IS_RIP(index_r)                                // Cannot use RIP as index register
 				;
 			if (invalidOperands) {
+				JX_CHECK(false, "Invalid operands.");
 				return false;
 			}
 
@@ -3377,6 +3423,7 @@ static bool jx64_sse_binary_op(jx_x64_context_t* ctx, jx_x64_sse_mandatory_prefi
 				|| JX64_REG_IS_RIP(index_r)                    // Cannot use RIP as index register
 				;
 			if (invalidOperands) {
+				JX_CHECK(false, "Invalid operands.");
 				return false;
 			}
 
@@ -3397,6 +3444,7 @@ static bool jx64_sse_binary_op(jx_x64_context_t* ctx, jx_x64_sse_mandatory_prefi
 				|| JX64_REG_GET_SIZE(base_r) < JX64_SIZE_32 // Cannot use 16-bit or 8-bit base reg
 				;
 			if (invalidOperands) {
+				JX_CHECK(false, "Invalid operands.");
 				return false;
 			}
 

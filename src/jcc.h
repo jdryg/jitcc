@@ -567,6 +567,7 @@ typedef struct jx_cc_context_t jx_cc_context_t;
 
 jx_cc_context_t* jx_cc_createContext(jx_allocator_i* allocator, jx_logger_i* logger);
 void jx_cc_destroyContext(jx_cc_context_t* ctx);
+void jx_cc_addIncludePath(jx_cc_context_t* ctx, jx_file_base_dir baseDir, const char* relPath);
 jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_dir baseDir, const char* filename);
 
 static inline bool jx_cc_typeIsFloat(const jx_cc_type_t* ty)

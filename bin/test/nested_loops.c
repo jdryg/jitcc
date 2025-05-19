@@ -1,5 +1,4 @@
-typedef unsigned char uint8_t;
-typedef unsigned int uint32_t;
+#include <stdint.h>
 
 int printf(const char* fmt, ...);
 
@@ -22,10 +21,20 @@ int main(void)
 	checkerboard(board, 8, 8);
 
 	for (uint32_t y = 0u; y < 8u; ++y) {
+		uint8_t row = 0;
 		for (uint32_t x = 0u; x < 8u; ++x) {
-			printf("%u", board[x + y * 8]);
+			row |= board[x + y * 8] << (7 - x);
 		}
-		printf("\n");
+		
+		if (y & 1) {
+			if (row != 0x55) {
+				return 1;
+			}
+		} else {
+			if (row != 0xAA) {
+				return 2;
+			}
+		}
 	}
 	return 0;
 }

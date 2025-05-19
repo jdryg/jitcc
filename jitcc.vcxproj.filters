@@ -43,6 +43,9 @@
     <Filter Include="bin\test\c-testsuite">
       <UniqueIdentifier>{18167ddb-cac1-4742-adf4-aee1d3e5a23b}</UniqueIdentifier>
     </Filter>
+    <Filter Include="bin\include">
+      <UniqueIdentifier>{dc91eeaa-2562-49df-8e5e-84d97bc9c4f3}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\jcc.h">
@@ -143,6 +146,12 @@
     </ClInclude>
     <ClInclude Include="src\jit_gen.h">
       <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\include\stdint.h">
+      <Filter>bin\include</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\test\test.h">
+      <Filter>bin\test</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

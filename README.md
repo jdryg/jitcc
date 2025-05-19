@@ -12,11 +12,9 @@ There is no end goal other than learn how compilers work. In other words, it's j
 ### What's not included:
 
 - C Preprocessor
-    - WIP; missing include, pragma, error, etc.
+    - WIP; missing include_next, `__VA_ARGS__`, etc.
 - Optional C99 features (VLAs, atomic ops, etc.)
 - GNU C extensions
-- Floating point IR/codegen
-    - WIP
 - Many other major or minor things I cannot recall at the moment. Don't expect your random C code to be compilable!
 
 ### What's included:

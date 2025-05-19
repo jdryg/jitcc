@@ -1,5 +1,4 @@
-typedef int int32_t;
-typedef unsigned int uint32_t;
+#include <stdint.h>
 
 static float _jx_floorf(float x)
 {
