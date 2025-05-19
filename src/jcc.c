@@ -1885,6 +1885,7 @@ static jx_cc_type_t* jcc_parseDeclarationSpecifiers(jx_cc_context_t* ctx, jcc_tr
 #if JCC_CONFIG_LLP64
 		case LONG:
 		case LONG + INT:
+		case SIGNED + LONG:
 		case SIGNED + LONG + INT:
 			ty = kType_int;
 			break;
@@ -9733,6 +9734,7 @@ static int64_t jcc_ppEvalConstExpression(jx_cc_context_t* ctx, jcc_translation_u
 	// evaluating a constant expression. For example, `#if foo` is
 	// equivalent to `#if 0` if foo is not defined.
 	jx_cc_token_t* t = expr;
+	jx_cc_token_t* prev = NULL;
 	while (!jcc_tokIs(t, JCC_TOKEN_EOF)) {
 		if (jcc_tokIs(t, JCC_TOKEN_IDENTIFIER)) {
 			jx_cc_token_t* next = t->m_Next;
@@ -9746,11 +9748,14 @@ static int64_t jcc_ppEvalConstExpression(jx_cc_context_t* ctx, jcc_translation_u
 
 			if (t == expr) {
 				expr = numTok;
+			} else {
+				prev->m_Next = numTok;
+				numTok->m_Next = next;
+				t = numTok;
 			}
-			numTok->m_Next = next;
-			t = numTok;
 		}
 
+		prev = t;
 		t = t->m_Next;
 	}
 
