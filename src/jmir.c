@@ -2124,7 +2124,15 @@ static jx_mir_operand_t* jmir_funcCreateArgument(jx_mir_context_t* ctx, jx_mir_f
 			: jx_mir_opMemoryRef(ctx, func, argType, kMIRRegGP_BP, kMIRRegGPNone, 1, 16 + argID * 8) // TODO: Is this correct?
 			;
 
-		jx_mir_bbAppendInstr(ctx, bb, jx_mir_movss(ctx, vReg, src));
+		if (argType == JMIR_TYPE_F32) {
+			jx_mir_bbAppendInstr(ctx, bb, jx_mir_movss(ctx, vReg, src));
+		} else if (argType == JMIR_TYPE_F64) {
+			jx_mir_bbAppendInstr(ctx, bb, jx_mir_movsd(ctx, vReg, src));
+		} else if (argType == JMIR_TYPE_F128) {
+			jx_mir_bbAppendInstr(ctx, bb, jx_mir_movaps(ctx, vReg, src));
+		} else {
+			JX_CHECK(false, "Unknown floating point type");
+		}
 	} else {
 		jx_mir_operand_t* src = (argID < JX_COUNTOF(kMIRFuncArgIReg))
 			? jx_mir_opHWReg(ctx, func, argType, kMIRFuncArgIReg[argID])

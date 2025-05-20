@@ -16,6 +16,27 @@
 
 static int32_t jir_comparePtrs(void* a, void* b);
 
+typedef struct jir_value_map_item_t
+{
+	jx_ir_value_t* m_Key;
+	jx_ir_value_t* m_Value;
+} jir_value_map_item_t;
+
+static uint64_t jir_valueMapItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata)
+{
+	const jir_value_map_item_t* var = (const jir_value_map_item_t*)item;
+	uint64_t hash = jx_hashFNV1a(&var->m_Key, sizeof(jx_ir_value_t*), seed0, seed1);
+	return hash;
+}
+
+static int32_t jir_valueMapItemCompare(const void* a, const void* b, void* udata)
+{
+	const jir_value_map_item_t* varA = (const jir_value_map_item_t*)a;
+	const jir_value_map_item_t* varB = (const jir_value_map_item_t*)b;
+	int32_t res = jir_comparePtrs(varA->m_Key, varB->m_Key);
+	return res;
+}
+
 //////////////////////////////////////////////////////////////////////////
 // Single Return Block pass
 //
@@ -374,9 +395,10 @@ typedef struct jir_bb_var_map_item_t
 
 typedef struct jir_func_pass_simple_ssa_t
 {
+	jx_allocator_i* m_Allocator;
 	jx_ir_context_t* m_Ctx;
 	jx_hashmap_t* m_DefMap;
-	jx_ir_value_t** m_PhiUsersArr;             // Temporary array to hold all phi instruction users while trying to remove trivial phi.
+	jx_hashmap_t* m_ReplacementMap;
 	jir_bb_var_map_item_t* m_IncompletePhis;
 	jx_ir_instruction_t** m_PromotableAllocas; // Array to hold all promotable allocas 
 } jir_func_pass_simple_ssa_t;
@@ -397,6 +419,7 @@ static void jir_simpleSSA_fillBlock(jir_func_pass_simple_ssa_t* pass, jx_ir_basi
 static bool jir_simpleSSA_bbIsSealed(jir_func_pass_simple_ssa_t* pass, jx_ir_basic_block_t* bb);
 static bool jir_simpleSSA_trySealBlock(jir_func_pass_simple_ssa_t* pass, jx_ir_basic_block_t* bb);
 static void jir_simpleSSA_addIncompletePhi(jir_func_pass_simple_ssa_t* pass, jx_ir_basic_block_t* bb, jx_ir_value_t* addr, jx_ir_value_t* val);
+static jx_ir_value_t* jir_simpleSSA_getReplacementValue(jir_func_pass_simple_ssa_t* pass, jx_ir_value_t* val);
 static uint64_t jir_bbVarMapItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
 static int32_t jir_bbVarMapItemCompare(const void* a, const void* b, void* udata);
 
@@ -408,11 +431,7 @@ bool jx_ir_funcPassCreate_simpleSSA(jx_ir_function_pass_t* pass, jx_allocator_i*
 	}
 
 	jx_memset(inst, 0, sizeof(jir_func_pass_simple_ssa_t));
-	inst->m_PhiUsersArr = (jx_ir_value_t**)jx_array_create(allocator);
-	if (!inst->m_PhiUsersArr) {
-		jir_funcPass_simpleSSADestroy((jx_ir_function_pass_o*)inst, allocator);
-		return false;
-	}
+	inst->m_Allocator = allocator;
 
 	inst->m_PromotableAllocas = (jx_ir_instruction_t**)jx_array_create(allocator);
 	if (!inst->m_PromotableAllocas) {
@@ -432,6 +451,12 @@ bool jx_ir_funcPassCreate_simpleSSA(jx_ir_function_pass_t* pass, jx_allocator_i*
 		return false;
 	}
 
+	inst->m_ReplacementMap = jx_hashmapCreate(allocator, sizeof(jir_value_map_item_t), 64, 0, 0, jir_valueMapItemHash, jir_valueMapItemCompare, NULL, NULL);
+	if (!inst->m_ReplacementMap) {
+		jir_funcPass_simpleSSADestroy((jx_ir_function_pass_o*)inst, allocator);
+		return false;
+	}
+
 	pass->m_Inst = (jx_ir_function_pass_o*)inst;
 	pass->run = jir_funcPass_simpleSSARun;
 	pass->destroy = jir_funcPass_simpleSSADestroy;
@@ -444,7 +469,7 @@ static void jir_funcPass_simpleSSADestroy(jx_ir_function_pass_o* inst, jx_alloca
 	jir_func_pass_simple_ssa_t* pass = (jir_func_pass_simple_ssa_t*)inst;
 	jx_array_free(pass->m_PromotableAllocas);
 	jx_array_free(pass->m_IncompletePhis);
-	jx_array_free(pass->m_PhiUsersArr);
+	jx_hashmapDestroy(pass->m_ReplacementMap);
 	jx_hashmapDestroy(pass->m_DefMap);
 	JX_FREE(allocator, pass);
 }
@@ -493,6 +518,7 @@ static bool jir_funcPass_simpleSSARun(jx_ir_function_pass_o* inst, jx_ir_context
 
 		jx_array_resize(pass->m_IncompletePhis, 0);
 		jx_hashmapClear(pass->m_DefMap, false);
+		jx_hashmapClear(pass->m_ReplacementMap, false);
 
 		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
 		while (bb) {
@@ -616,10 +642,11 @@ static void jir_simpleSSA_writeVariable(jir_func_pass_simple_ssa_t* pass, jx_ir_
 static jx_ir_value_t* jir_simpleSSA_readVariable(jir_func_pass_simple_ssa_t* pass, jx_ir_basic_block_t* bb, jx_ir_value_t* addr)
 {
 	jir_bb_var_map_item_t* hashItem = (jir_bb_var_map_item_t*)jx_hashmapGet(pass->m_DefMap, &(jir_bb_var_map_item_t){ .m_BasicBlock = bb, .m_Addr = addr });
-	return hashItem
-		? hashItem->m_Value
-		: jir_simpleSSA_readVariable_r(pass, bb, addr)
-		;
+	if (hashItem) {
+		return jir_simpleSSA_getReplacementValue(pass, hashItem->m_Value);
+	}
+
+	return jir_simpleSSA_readVariable_r(pass, bb, addr);
 }
 
 static jx_ir_value_t* jir_simpleSSA_readVariable_r(jir_func_pass_simple_ssa_t* pass, jx_ir_basic_block_t* bb, jx_ir_value_t* addr)
@@ -660,15 +687,9 @@ static jx_ir_value_t* jir_simpleSSA_readVariable_r(jir_func_pass_simple_ssa_t* p
 
 static void jir_simpleSSA_replaceVariable(jir_func_pass_simple_ssa_t* pass, jx_ir_value_t* var, jx_ir_value_t* newVal)
 {
+	newVal = jir_simpleSSA_getReplacementValue(pass, newVal);
 	jx_ir_valueReplaceAllUsesWith(pass->m_Ctx, var, newVal);
-
-	uint32_t iter = 0;
-	jir_bb_var_map_item_t* hashItem = NULL;
-	while (jx_hashmapIter(pass->m_DefMap, &iter, &hashItem)) {
-		if (hashItem->m_Value == var) {
-			hashItem->m_Value = newVal;
-		}
-	}
+	jx_hashmapSet(pass->m_ReplacementMap, &(jir_value_map_item_t){.m_Key = var, .m_Value = newVal});
 }
 
 static jx_ir_value_t* jir_simpleSSA_addPhiOperands(jir_func_pass_simple_ssa_t* pass, jx_ir_instruction_t* phiInstr, jx_ir_value_t* addr)
@@ -725,15 +746,37 @@ static jx_ir_value_t* jir_simpleSSA_tryRemoveTrivialPhi(jir_func_pass_simple_ssa
 			jx_ir_basic_block_t* bb = jx_ir_valueToBasicBlock(phiInstr->super.m_OperandArr[iOperand + 1]->m_Value);
 			JX_CHECK(bb, "Expected basic block!");
 			jx_ir_instrPhiRemoveValue(pass->m_Ctx, phiInstr, bb);
+			JX_CHECK(!jx_ir_instrPhiHasValue(pass->m_Ctx, phiInstr, bb), "Multiple uses of the same operand?");
 			break;
 		}
 	}
 
 	// Keep all phi users
-	jx_array_resize(pass->m_PhiUsersArr, 0);
+	// NOTE: The code below needs only phi instructions. So don't keep all 
+	// users, just phi instructions.
+	jx_ir_instruction_t** phiUsersArr = (jx_ir_instruction_t**)jx_array_create(pass->m_Allocator);
+	if (!phiUsersArr) {
+		return NULL;
+	}
+
 	jx_ir_use_t* phiUse = phiInstrVal->m_UsesListHead;
 	while (phiUse) {
-		jx_array_push_back(pass->m_PhiUsersArr, jx_ir_userToValue(phiUse->m_User));
+		jx_ir_instruction_t* userInstr = jx_ir_valueToInstr(jx_ir_userToValue(phiUse->m_User));
+		if (userInstr && userInstr->m_OpCode == JIR_OP_PHI) {
+			// Make sure each user/instruction is added only once into the array.
+			bool found = false;
+			const uint32_t numUsers = (uint32_t)jx_array_sizeu(phiUsersArr);
+			for (uint32_t iUser = 0; iUser < numUsers; ++iUser) {
+				if (phiUsersArr[iUser] == userInstr) {
+					found = true;
+					break;
+				}
+			}
+
+			if (!found) {
+				jx_array_push_back(phiUsersArr, userInstr);
+			}
+		}
 		phiUse = phiUse->m_Next;
 	}
 
@@ -744,26 +787,22 @@ static jx_ir_value_t* jir_simpleSSA_tryRemoveTrivialPhi(jir_func_pass_simple_ssa
 	jx_ir_instrFree(pass->m_Ctx, phiInstr);
 
 	// Try to recursively remove all phi users which might have become trivial
-	const uint32_t numUsers = (uint32_t)jx_array_sizeu(pass->m_PhiUsersArr);
+	const uint32_t numUsers = (uint32_t)jx_array_sizeu(phiUsersArr);
 	for (uint32_t iUser = 0; iUser < numUsers; ++iUser) {
-		jx_ir_value_t* user = pass->m_PhiUsersArr[iUser];
-		jx_ir_instruction_t* userInstr = jx_ir_valueToInstr(user);
-		if (userInstr && userInstr->m_OpCode == JIR_OP_PHI) {
-			// NOTE: This is not shown in the original paper.
-			// When removing trivial phis recursively, the returned value of this function (same) must
-			// change if it was the value that was removed. E.g. c-testsuite/00181.c
-			// Otherwise, the value that was just replaced ends up referencing values which are not
-			// part of the current function (they are already replaced by the recursive call to 
-			// tryRemoveTrivialPhi())
-			jx_ir_value_t* replacement = jir_simpleSSA_tryRemoveTrivialPhi(pass, userInstr);
-			same = (user == same)
-				? replacement
-				: same
-				;
-		}
+		jx_ir_instruction_t* userInstr = phiUsersArr[iUser];
+		JX_CHECK(userInstr && userInstr->m_OpCode == JIR_OP_PHI, "Expected phi instruction");
+		jir_simpleSSA_tryRemoveTrivialPhi(pass, userInstr);
 	}
 
-	return same;
+	jx_array_free(phiUsersArr);
+
+	// NOTE: This is not shown in the original paper.
+	// When removing trivial phis recursively, the returned value of this function (same) must
+	// change if it was the value that was removed. E.g. c-testsuite/00181.c
+	// Otherwise, the value that was just replaced ends up referencing values which are not
+	// part of the current function (they are already replaced by the recursive call to 
+	// tryRemoveTrivialPhi())
+	return jir_simpleSSA_getReplacementValue(pass, same);
 }
 
 static void jir_simpleSSA_tryRemoveDeadAlloca(jir_func_pass_simple_ssa_t* pass, jx_ir_instruction_t* allocaInstr)
@@ -864,6 +903,17 @@ static bool jir_simpleSSA_trySealBlock(jir_func_pass_simple_ssa_t* pass, jx_ir_b
 static void jir_simpleSSA_addIncompletePhi(jir_func_pass_simple_ssa_t* pass, jx_ir_basic_block_t* bb, jx_ir_value_t* addr, jx_ir_value_t* val)
 {
 	jx_array_push_back(pass->m_IncompletePhis, (jir_bb_var_map_item_t) { .m_BasicBlock = bb, .m_Addr = addr, .m_Value = val });
+}
+
+static jx_ir_value_t* jir_simpleSSA_getReplacementValue(jir_func_pass_simple_ssa_t* pass, jx_ir_value_t* val)
+{
+	jir_value_map_item_t* replacementValItem = jx_hashmapGet(pass->m_ReplacementMap, &(jir_value_map_item_t){ .m_Key = val });
+	while (replacementValItem) {
+		val = replacementValItem->m_Value;
+		replacementValItem = jx_hashmapGet(pass->m_ReplacementMap, &(jir_value_map_item_t){ .m_Key = val });
+	}
+
+	return val;
 }
 
 static uint64_t jir_bbVarMapItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata)
@@ -2155,6 +2205,7 @@ static void jir_reorderBB_walkSCCTree(jir_func_pass_reorder_bb_t* pass, jir_cfg_
 				jir_reorderBB_walkSCCTree(pass, &scc->m_SubSCCList);
 			} else {
 				// Cycle with many entry points.
+				// TODO: This hits with c-testsuite/00143.c with SSA disabled and it seems to work.
 				JX_CHECK(false, "This is untested. If it comes up it might fail down the line. Debug if necessary and remove this assert if everything is fine.");
 				for (uint32_t iNode = numNodes; iNode > 0; --iNode) {
 					jx_array_push_back(pass->m_BBArr, scc->m_NodesArr[iNode - 1]->m_BasicBlock);
@@ -2756,12 +2807,6 @@ static bool jir_funcPass_removeRedundantPhisRun(jx_ir_function_pass_o* inst, jx_
 typedef struct jir_call_graph_node_t jir_call_graph_node_t;
 typedef struct jir_call_graph_scc_t jir_call_graph_scc_t;
 
-typedef struct jir_value_map_item_t
-{
-	jx_ir_value_t* m_Key;
-	jx_ir_value_t* m_Value;
-} jir_value_map_item_t;
-
 typedef struct jir_func_cgnode_item_t
 {
 	jx_ir_function_t* m_Func;
@@ -2842,7 +2887,7 @@ bool jx_ir_modulePassCreate_inlineFuncs(jx_ir_module_pass_t* pass, jx_allocator_
 
 	inst->m_ValueMap = jx_hashmapCreate(allocator, sizeof(jir_value_map_item_t), 64, 0, 0, jir_valueMapItemHash, jir_valueMapItemCompare, NULL, NULL);
 	if (!inst->m_ValueMap) {
-		jir_funcPass_simpleSSADestroy((jx_ir_function_pass_o*)inst, allocator);
+		jir_funcPass_inlineFuncsDestroy((jx_ir_module_pass_o*)inst, allocator);
 		return false;
 	}
 
@@ -3351,20 +3396,5 @@ static int32_t jir_funcCGNodeItemCompare(const void* a, const void* b, void* uda
 	const jir_func_cgnode_item_t* varA = (const jir_func_cgnode_item_t*)a;
 	const jir_func_cgnode_item_t* varB = (const jir_func_cgnode_item_t*)b;
 	int32_t res = jir_comparePtrs(varA->m_Func, varB->m_Func);
-	return res;
-}
-
-static uint64_t jir_valueMapItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata)
-{
-	const jir_value_map_item_t* var = (const jir_value_map_item_t*)item;
-	uint64_t hash = jx_hashFNV1a(&var->m_Key, sizeof(jx_ir_value_t*), seed0, seed1);
-	return hash;
-}
-
-static int32_t jir_valueMapItemCompare(const void* a, const void* b, void* udata)
-{
-	const jir_value_map_item_t* varA = (const jir_value_map_item_t*)a;
-	const jir_value_map_item_t* varB = (const jir_value_map_item_t*)b;
-	int32_t res = jir_comparePtrs(varA->m_Key, varB->m_Key);
 	return res;
 }

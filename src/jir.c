@@ -663,6 +663,7 @@ bool jx_ir_funcBegin(jx_ir_context_t* ctx, jx_ir_function_t* func, uint32_t flag
 
 void jx_ir_funcEnd(jx_ir_context_t* ctx, jx_ir_function_t* func)
 {
+	JX_CHECK(jx_ir_funcCheck(ctx, func), "Function's IR and/or CFG is invalid!");
 }
 
 jx_ir_argument_t* jx_ir_funcGetArgument(jx_ir_context_t* ctx, jx_ir_function_t* func, uint32_t argID)
@@ -1964,6 +1965,7 @@ static jx_ir_type_t* jir_getIndexedType(jx_ir_type_t* ptr, uint32_t numIndices, 
 				|| index->m_Type->m_Kind == JIR_TYPE_U64
 				;
 			if (!isValidIndexType) {
+				JX_CHECK(false, "Invalid GEP index type");
 				return NULL;
 			}
 
@@ -1971,11 +1973,13 @@ static jx_ir_type_t* jir_getIndexedType(jx_ir_type_t* ptr, uint32_t numIndices, 
 		} else if (ptr->m_Kind == JIR_TYPE_STRUCT) {
 			jx_ir_constant_t* constIndex = jx_ir_valueToConst(index);
 			if (!constIndex || index->m_Type->m_Kind != JIR_TYPE_I32) {
+				JX_CHECK(false, "Expected const integer index");
 				return NULL;
 			}
 
 			jx_ir_type_struct_t* structType = jx_ir_typeToStruct(ptr);
 			if (constIndex->u.m_I64 >= (int64_t)structType->m_NumMembers) {
+				JX_CHECK(false, "Invalid struct GEP index");
 				return NULL;
 			}
 
@@ -1983,6 +1987,7 @@ static jx_ir_type_t* jir_getIndexedType(jx_ir_type_t* ptr, uint32_t numIndices, 
 		} else if (ptr->m_Kind == JIR_TYPE_POINTER) {
 			// Can only index into pointer types at the first index!
 			if (curIndex != 1) {
+				JX_CHECK(false, "Invalid pointer GEP index");
 				return NULL;
 			}
 
@@ -1993,6 +1998,7 @@ static jx_ir_type_t* jir_getIndexedType(jx_ir_type_t* ptr, uint32_t numIndices, 
 				|| index->m_Type->m_Kind == JIR_TYPE_U64
 				;
 			if (!isValidIndexType) {
+				JX_CHECK(false, "Invalid GEP index type");
 				return NULL;
 			}
 
@@ -4558,6 +4564,17 @@ static void jir_funcApplyPasses(jx_ir_context_t* ctx, jx_ir_function_t* func, jx
 #endif
 
 		bool funcModified = pass->run(pass->m_Inst, ctx, func);
+
+#if 0
+		{
+			jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
+			jx_ir_funcPrint(ctx, func, sb);
+			jx_strbuf_nullTerminate(sb);
+			JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
+			jx_strbuf_destroy(sb);
+		}
+#endif
+
 		JX_UNUSED(funcModified);
 		JX_CHECK(jx_ir_funcCheck(ctx, func), "Function's IR and/or CFG is invalid!");
 		pass = pass->m_Next;
