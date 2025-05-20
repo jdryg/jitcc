@@ -1894,7 +1894,14 @@ static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, jx_mir
 		JX_NOT_IMPLEMENTED();
 	} break;
 	case JMIR_OP_CALL: {
-		JX_NOT_IMPLEMENTED();
+		bool regReplaced = false;
+		jx_mir_operand_t* funcOp = instr->m_Operands[0];
+		if (funcOp->m_Kind == JMIR_OPERAND_REGISTER) {
+			if (jx_mir_regEqual(funcOp->u.m_Reg, vreg)) {
+				instr->m_Operands[0] = newReg;
+				regReplaced = true;
+			}
+		}
 	} break;
 	case JMIR_OP_PUSH: {
 		JX_NOT_IMPLEMENTED();
@@ -2117,10 +2124,17 @@ static void jmir_regAlloc_nodeFreezeMoves(jmir_func_pass_regalloc_t* pass, jmir_
 				}
 			}
 
+#if 1
+			if (!jmir_nodeIs(v, JMIR_NODE_STATE_PRECOLORED) && numNodeMoves == 0 && v->m_Degree < pass->m_NumHWRegs) {
+				JX_CHECK(jmir_nodeIs(v, JMIR_NODE_STATE_FREEZE), "Node expected to be in freeze worklist");
+				jmir_regAlloc_nodeSetState(pass, v, JMIR_NODE_STATE_SIMPLIFY);
+			}
+#else
 			if (numNodeMoves == 0 && v->m_Degree < pass->m_NumHWRegs) {
 				JX_CHECK(jmir_nodeIs(v, JMIR_NODE_STATE_FREEZE), "Node expected to be in freeze worklist");
 				jmir_regAlloc_nodeSetState(pass, v, JMIR_NODE_STATE_SIMPLIFY);
 			}
+#endif
 		}
 	}
 }
