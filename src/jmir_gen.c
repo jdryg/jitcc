@@ -840,7 +840,10 @@ static jx_mir_operand_t* jmirgen_instrBuild_setcc(jx_mirgen_context_t* ctx, jx_i
 		const bool lhsConst = lhs->m_Kind == JMIR_OPERAND_CONST;
 		const bool rhsConst = rhs->m_Kind == JMIR_OPERAND_CONST;
 		if (lhsConst && rhsConst) {
-			JX_CHECK(false, "I think I need an optimization pass!");
+			rhs = jmirgen_ensureOperandReg(ctx, rhs);
+			lhs = jmirgen_ensureOperandReg(ctx, lhs);
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cmp(ctx->m_MIRCtx, lhs, rhs));
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_setcc(ctx->m_MIRCtx, mirCC, dstReg));
 		} else if (lhsConst && !rhsConst) {
 			// Swap operands and condition code.
 			lhs = jmirgen_ensureOperandNotConstI64(ctx, lhs);

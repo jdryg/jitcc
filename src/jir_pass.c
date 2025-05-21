@@ -1,6 +1,5 @@
 // TODO:
 // - Dead store elimination
-// - Constant folding
 // - Constant propagation
 // - 
 #include "jir_pass.h"
@@ -530,7 +529,7 @@ static bool jir_funcPass_simpleSSARun(jx_ir_function_pass_o* inst, jx_ir_context
 
 				if (instr->m_OpCode == JIR_OP_STORE) {
 					jx_ir_value_t* addr = instr->super.m_OperandArr[0]->m_Value;
-					jx_ir_value_t* val = instr->super.m_OperandArr[1]->m_Value;
+					jx_ir_value_t* val = jx_ir_instrGetOperandVal(instr, 1);
 
 					// Only process stores to alloca'd pointers.
 					if (jir_simpleSSA_canPromoteAlloca(pass, jx_ir_valueToInstr(addr))) {
@@ -577,7 +576,7 @@ static bool jir_funcPass_simpleSSARun(jx_ir_function_pass_o* inst, jx_ir_context
 
 	pass->m_Ctx = NULL;
 
-	return false;
+	return true;
 }
 
 static bool jir_simpleSSA_isAllocaPromotable(jx_ir_instruction_t* instr)
@@ -1002,10 +1001,13 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 {
 	jir_func_pass_const_folding_t* pass = (jir_func_pass_const_folding_t*)inst;
 
+	uint32_t numFolds = 0;
+
 	bool changed = true;
 	while (changed) {
 		changed = false;
 		
+		uint32_t prevIterNumFolds = numFolds;
 		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
 		while (bb) {
 			jx_ir_instruction_t* instr = bb->m_InstrListHead;
@@ -1024,6 +1026,8 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						if (cond) {
 							JX_CHECK(jx_ir_constToValue(cond)->m_Type->m_Kind == JIR_TYPE_BOOL, "Expected boolean conditional as 1st branch operand.");
 							jx_ir_bbConvertCondBranch(ctx, bb, cond->u.m_Bool);
+
+							++numFolds;
 						}
 					} else {
 						JX_CHECK(false, "Unknown branch instruction");
@@ -1038,6 +1042,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_SUB: {
@@ -1049,6 +1054,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_MUL: {
@@ -1060,6 +1066,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_DIV: {
@@ -1071,6 +1078,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_REM: {
@@ -1082,6 +1090,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_AND: {
@@ -1093,6 +1102,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_OR: {
@@ -1104,6 +1114,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_XOR: {
@@ -1115,6 +1126,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_SET_LE:
@@ -1131,6 +1143,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_GET_ELEMENT_PTR: {
@@ -1152,6 +1165,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_SHR: {
@@ -1163,6 +1177,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_TRUNC: {
@@ -1173,6 +1188,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_ZEXT: {
@@ -1183,6 +1199,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_SEXT: {
@@ -1193,6 +1210,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_FP2SI: {
@@ -1203,6 +1221,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_SI2FP: {
@@ -1213,6 +1232,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_FPTRUNC: {
@@ -1223,6 +1243,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_FPEXT: {
@@ -1233,6 +1254,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_BITCAST: {
@@ -1243,6 +1265,7 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(resConst));
 						jx_ir_bbRemoveInstr(ctx, bb, instr);
 						jx_ir_instrFree(ctx, instr);
+						++numFolds;
 					}
 				} break;
 				case JIR_OP_RET:
@@ -1265,9 +1288,11 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 
 			bb = bb->m_Next;
 		}
+
+		changed = prevIterNumFolds != numFolds;
 	}
 
-	return false;
+	return numFolds != 0;
 }
 
 static jx_ir_constant_t* jir_constFold_cmpConst(jx_ir_context_t* ctx, jx_ir_constant_t* lhs, jx_ir_constant_t* rhs, jx_ir_condition_code cc)
@@ -1844,9 +1869,12 @@ static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_
 {
 	jir_func_pass_peephole_t* pass = (jir_func_pass_peephole_t*)inst;
 
+	uint32_t numOpts = 0;
 	bool changed = true;
 	while (changed) {
 		changed = false;
+
+		const uint32_t prevIterNumOpts = numOpts;
 
 		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
 		while (bb) {
@@ -1854,50 +1882,60 @@ static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_
 			while (instr) {
 				jx_ir_instruction_t* instrNext = instr->m_Next;
 
-				jx_ir_user_t* instrUser = jx_ir_instrToUser(instr);
-
 				if (instr->m_OpCode == JIR_OP_SET_EQ || instr->m_OpCode == JIR_OP_SET_NE) {
-					jx_ir_instruction_t* instrOp0 = jx_ir_valueToInstr(instrUser->m_OperandArr[0]->m_Value);
-					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(instrUser->m_OperandArr[1]->m_Value);
-					if (instrOp0 && constOp1 && jir_peephole_isSetcc(instrOp0->m_OpCode)) {
-						// %res = setcc bool, %a, %b
-						// %cmp = seteq/setne bool, %res, true/false
-						//   =>
-						// %cmp = setcc bool, %a, %b // cc might be different than original cc
-						if (instr->m_OpCode == JIR_OP_SET_EQ) {
-							if (constOp1->u.m_Bool) {
-								JX_CHECK(false, "Should be the same as SetNE/false. Implement when assert is hit.");
-							} else {
-								JX_CHECK(false, "Should probably invert cc. Implement when assert is hit.");
+					jx_ir_instruction_t* instrOp0 = jx_ir_valueToInstr(jx_ir_instrGetOperandVal(instr, 0));
+					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(jx_ir_instrGetOperandVal(instr, 1));
+					if (instrOp0 && constOp1) {
+						if (jir_peephole_isSetcc(instrOp0->m_OpCode)) {
+							// %res = setcc bool, %a, %b
+							// %cmp = seteq/setne bool, %res, true/false
+							//   =>
+							// %cmp = setcc bool, %a, %b // cc might be different than original cc
+							if (instr->m_OpCode == JIR_OP_SET_EQ) {
+								if (constOp1->u.m_Bool) {
+									JX_CHECK(false, "Should be the same as SetNE/false. Implement when assert is hit.");
+								} else {
+									JX_CHECK(false, "Should probably invert cc. Implement when assert is hit.");
+								}
+							} else if (instr->m_OpCode == JIR_OP_SET_NE) {
+								if (constOp1->u.m_Bool) {
+									JX_CHECK(false, "Should probably invert cc. Implement when assert is hit.");
+								} else {
+									// %res = setcc bool, %a, %b
+									// %cmp = setne bool %res, false
+									//  =>
+									// %cmp = setcc bool, %a, %b
+									// 
+									// Create new setcc instruction with the same opcode as the 
+									// original instruction.
+									jx_ir_condition_code cc = instrOp0->m_OpCode - JIR_OP_SET_CC_BASE;
+									jx_ir_instruction_t* newSetcc = jx_ir_instrSetCC(ctx, cc, jx_ir_instrGetOperandVal(instrOp0, 0), jx_ir_instrGetOperandVal(instrOp0, 1));
+									jx_ir_bbInsertInstrBefore(ctx, bb, instr, newSetcc);
+
+									// Replace existing value with new instruction
+									jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(newSetcc));
+
+									// Remove old instruction
+									jx_ir_bbRemoveInstr(ctx, bb, instr);
+									jx_ir_instrFree(ctx, instr);
+
+									++numOpts;
+								}
 							}
-						} else if (instr->m_OpCode == JIR_OP_SET_NE) {
-							if (constOp1->u.m_Bool) {
-								JX_CHECK(false, "Should probably invert cc. Implement when assert is hit.");
-							} else {
-								// %res = setcc bool, %a, %b
-								// %cmp = setne bool %res, false
-								//  =>
-								// %cmp = setcc bool, %a, %b
-								// 
-								// Create new setcc instruction with the same opcode as the 
-								// original instruction.
-								jx_ir_condition_code cc = instrOp0->m_OpCode - JIR_OP_SET_CC_BASE;
-								jx_ir_instruction_t* newSetcc = jx_ir_instrSetCC(ctx, cc, instrOp0->super.m_OperandArr[0]->m_Value, instrOp0->super.m_OperandArr[1]->m_Value);
-								jx_ir_bbInsertInstrBefore(ctx, bb, instr, newSetcc);
+						} else if ((instrOp0->m_OpCode == JIR_OP_SEXT || instrOp0->m_OpCode == JIR_OP_ZEXT) && jx_ir_instrGetOperandVal(instrOp0, 0)->m_Type->m_Kind == JIR_TYPE_BOOL && jx_ir_constIsZero(constOp1)) {
+							// %extVal = zext i32, bool %val
+							// %res = setne bool, i32 %extVal, i32 0
+							//  =>
+							// replace %res with %val and remove instruction
+							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instrOp0, 0));
+							jx_ir_bbRemoveInstr(ctx, bb, instr);
+							jx_ir_instrFree(ctx, instr);
 
-								// Replace existing value with new instruction
-								jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(newSetcc));
-
-								// Remove old instruction
-								jx_ir_bbRemoveInstr(ctx, bb, instr);
-								jx_ir_instrFree(ctx, instr);
-
-								changed = true;
-							}
+							++numOpts;
 						}
 					}
 				} else if (instr->m_OpCode == JIR_OP_DIV) {
-					jx_ir_value_t* valOp1 = instr->super.m_OperandArr[1]->m_Value;
+					jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
 					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
 					const bool isInteger = jx_ir_typeIsInteger(valOp1->m_Type);
 					if (constOp1) {
@@ -1905,27 +1943,27 @@ static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_
 							// %res = div %val, 1 
 							//  => 
 							// replace %res with %val and remove instruction
-							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), instr->super.m_OperandArr[0]->m_Value);
+							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
 							jx_ir_bbRemoveInstr(ctx, bb, instr);
 							jx_ir_instrFree(ctx, instr);
 
-							changed = true;
+							++numOpts;
 						} else if (isInteger && constOp1->u.m_I64 > 0 && constOp1->u.m_I64 < 256 && jx_isPow2_u32((uint32_t)constOp1->u.m_I64)) {
 							// %res = div %val, imm8_pow2
 							//  =>
 							// %res = shr %val, log2(imm8_pow2)
 							jx_ir_constant_t* constI8 = jx_ir_constGetI8(ctx, jx_log2_u32((uint32_t)constOp1->u.m_I64));
-							jx_ir_instruction_t* shrInstr = jx_ir_instrShr(ctx, instr->super.m_OperandArr[0]->m_Value, jx_ir_constToValue(constI8));
+							jx_ir_instruction_t* shrInstr = jx_ir_instrShr(ctx, jx_ir_instrGetOperandVal(instr, 0), jx_ir_constToValue(constI8));
 							jx_ir_bbInsertInstrBefore(ctx, bb, instr, shrInstr);
 							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(shrInstr));
 							jx_ir_bbRemoveInstr(ctx, bb, instr);
 							jx_ir_instrFree(ctx, instr);
 
-							changed = true;
+							++numOpts;
 						}
 					}
 				} else if (instr->m_OpCode == JIR_OP_MUL) {
-					jx_ir_value_t* valOp1 = instr->super.m_OperandArr[1]->m_Value;
+					jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
 					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
 					const bool isInteger = jx_ir_typeIsInteger(valOp1->m_Type);
 					if (constOp1) {
@@ -1933,27 +1971,27 @@ static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_
 							// %res = mul %val, 1 
 							//  => 
 							// replace %res with %val and remove instruction
-							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), instr->super.m_OperandArr[0]->m_Value);
+							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
 							jx_ir_bbRemoveInstr(ctx, bb, instr);
 							jx_ir_instrFree(ctx, instr);
 
-							changed = true;
+							++numOpts;
 						} else if (isInteger && constOp1->u.m_I64 > 0 && constOp1->u.m_I64 < 256 && jx_isPow2_u32((uint32_t)constOp1->u.m_I64)) {
 							// %res = mul %val, imm8_pow2
 							//  =>
 							// %res = shl %val, log2(imm8_pow2)
 							jx_ir_constant_t* constI8 = jx_ir_constGetI8(ctx, jx_log2_u32((uint32_t)constOp1->u.m_I64));
-							jx_ir_instruction_t* shlInstr = jx_ir_instrShl(ctx, instr->super.m_OperandArr[0]->m_Value, jx_ir_constToValue(constI8));
+							jx_ir_instruction_t* shlInstr = jx_ir_instrShl(ctx, jx_ir_instrGetOperandVal(instr, 0), jx_ir_constToValue(constI8));
 							jx_ir_bbInsertInstrBefore(ctx, bb, instr, shlInstr);
 							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(shlInstr));
 							jx_ir_bbRemoveInstr(ctx, bb, instr);
 							jx_ir_instrFree(ctx, instr);
 
-							changed = true;
+							++numOpts;
 						}
 					}
 				} else if (instr->m_OpCode == JIR_OP_ADD) {
-					jx_ir_value_t* valOp1 = instr->super.m_OperandArr[1]->m_Value;
+					jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
 					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
 					const bool isInteger = jx_ir_typeIsInteger(valOp1->m_Type);
 					if (constOp1) {
@@ -1961,15 +1999,15 @@ static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_
 							// %res = add %val, 0
 							//  => 
 							// replace %res with %val and remove instruction
-							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), instr->super.m_OperandArr[0]->m_Value);
+							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
 							jx_ir_bbRemoveInstr(ctx, bb, instr);
 							jx_ir_instrFree(ctx, instr);
 
-							changed = true;
+							++numOpts;
 						}
 					}
 				} else if (instr->m_OpCode == JIR_OP_SUB) {
-					jx_ir_value_t* valOp1 = instr->super.m_OperandArr[1]->m_Value;
+					jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
 					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
 					const bool isInteger = jx_ir_typeIsInteger(valOp1->m_Type);
 					if (constOp1) {
@@ -1977,11 +2015,103 @@ static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_
 							// %res = sub %val, 0
 							//  => 
 							// replace %res with %val and remove instruction
-							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), instr->super.m_OperandArr[0]->m_Value);
+							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
 							jx_ir_bbRemoveInstr(ctx, bb, instr);
 							jx_ir_instrFree(ctx, instr);
 
-							changed = true;
+							++numOpts;
+						}
+					}
+				} else if (instr->m_OpCode == JIR_OP_AND) {
+					jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
+					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
+					JX_CHECK(jx_ir_typeIsIntegral(valOp1->m_Type), "Expected integer type");
+					if (constOp1) {
+						if (jx_ir_constIsZero(constOp1)) {
+							// %res = and %val, 0
+							//  =>
+							// replace %res with 0 and remove instruction
+							jx_ir_constant_t* zero = jx_ir_constGetZero(ctx, instr->super.super.m_Type);
+							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(zero));
+							jx_ir_bbRemoveInstr(ctx, bb, instr);
+							jx_ir_instrFree(ctx, instr);
+
+							++numOpts;
+						} else if (jx_ir_constIsOnes(constOp1)) {
+							// %res = and %val, all_ones 
+							//  => 
+							// replace %res with %val and remove instruction
+							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
+							jx_ir_bbRemoveInstr(ctx, bb, instr);
+							jx_ir_instrFree(ctx, instr);
+						}
+					} else if (jx_ir_instrGetOperandVal(instr, 0) == jx_ir_instrGetOperandVal(instr, 1)) {
+						// %res = and %x, %x => %res = %x
+						JX_NOT_IMPLEMENTED();
+					}
+				} else if (instr->m_OpCode == JIR_OP_OR) {
+					jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
+					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
+					JX_CHECK(jx_ir_typeIsIntegral(valOp1->m_Type), "Expected integer type");
+					if (constOp1) {
+						if (jx_ir_constIsZero(constOp1)) {
+							// %res = or %val, 0
+							//  =>
+							// replace %res with %val and remove instruction
+							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
+							jx_ir_bbRemoveInstr(ctx, bb, instr);
+							jx_ir_instrFree(ctx, instr);
+
+							++numOpts;
+						} else if (jx_ir_constIsOnes(constOp1)) {
+							// %res = or %val, all_ones 
+							//  => 
+							// replace %res with all ones and remove instruction
+							jx_ir_constant_t* ones = jx_ir_constGetOnes(ctx, instr->super.super.m_Type);
+							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(ones));
+							jx_ir_bbRemoveInstr(ctx, bb, instr);
+							jx_ir_instrFree(ctx, instr);
+						}
+					} else if (jx_ir_instrGetOperandVal(instr, 0) == jx_ir_instrGetOperandVal(instr, 1)) {
+						// %res = or %x, %x => %res = %x
+						JX_NOT_IMPLEMENTED();
+					}
+				} else if (instr->m_OpCode == JIR_OP_XOR) {
+					jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
+					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
+					JX_CHECK(jx_ir_typeIsIntegral(valOp1->m_Type), "Expected integer type");
+					if (constOp1) {
+						if (jx_ir_constIsZero(constOp1)) {
+							// %res = xor %val, 0
+							//  =>
+							// replace %res with %val and remove instruction
+							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
+							jx_ir_bbRemoveInstr(ctx, bb, instr);
+							jx_ir_instrFree(ctx, instr);
+
+							++numOpts;
+						} else if (jx_ir_constIsOnes(constOp1)) {
+							// If it's a boolean check if the conditional that generated the boolean can be inverted.
+							if (jx_ir_instrToValue(instr)->m_Type->m_Kind == JIR_TYPE_BOOL) {
+								jx_ir_value_t* valOp0 = jx_ir_instrGetOperandVal(instr, 0);
+								jx_ir_instruction_t* instrOp0 = jx_ir_valueToInstr(valOp0);
+								if (jir_peephole_isSetcc(instrOp0->m_OpCode)) {
+									// Insert a new setcc instruction before the xor with inverted cc and remove the xor.
+									// Dead Instruction Elimination below will remove the original setcc if it's unused.
+									jx_ir_condition_code cc = instrOp0->m_OpCode - JIR_OP_SET_CC_BASE;
+									jx_ir_instruction_t* newSetcc = jx_ir_instrSetCC(ctx, jx_ir_ccInvert(cc), jx_ir_instrGetOperandVal(instrOp0, 0), jx_ir_instrGetOperandVal(instrOp0, 1));
+									jx_ir_bbInsertInstrBefore(ctx, bb, instr, newSetcc);
+
+									// Replace existing value with new instruction
+									jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(newSetcc));
+
+									// Remove old instruction
+									jx_ir_bbRemoveInstr(ctx, bb, instr);
+									jx_ir_instrFree(ctx, instr);
+
+									++numOpts;
+								}
+							}
 						}
 					}
 				}
@@ -1991,6 +2121,8 @@ static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_
 
 			bb = bb->m_Next;
 		}
+
+		changed = prevIterNumOpts != numOpts;
 	}
 
 #if 1
@@ -2006,6 +2138,7 @@ static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_
 				if (jir_peephole_isUnusedInstr(instr)) {
 					jx_ir_bbRemoveInstr(ctx, bb, instr);
 					jx_ir_instrFree(ctx, instr);
+					++numOpts;
 				}
 
 				instr = instrNext;
@@ -2016,7 +2149,7 @@ static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_
 	}
 #endif
 
-	return false;
+	return numOpts != 0;
 }
 
 static bool jir_peephole_isSetcc(jx_ir_opcode opcode)
@@ -2113,7 +2246,6 @@ static bool jir_funcPass_canonicalizeOperandsRun(jx_ir_function_pass_o* inst, jx
 //////////////////////////////////////////////////////////////////////////
 // Reorder Basic Blocks
 //
-#if 1
 typedef struct jir_cfg_node_t jir_cfg_node_t;
 typedef struct jir_cfg_scc_t jir_cfg_scc_t;
 
@@ -2238,23 +2370,6 @@ static bool jir_funcPass_reorderBasicBlocksRun(jx_ir_function_pass_o* inst, jx_i
 
 	jir_cfgBuild(cfg, ctx);
 
-#if 0
-	{
-		jx_string_buffer_t* sb = jx_strbuf_create(cfg->m_Allocator);
-
-		jir_cfg_scc_t* scc = cfg->m_SCCList.m_Head;
-		while (scc) {
-			jir_cfgSCCPrint(scc, sb);
-			scc = scc->m_Next;
-		}
-
-		jx_strbuf_nullTerminate(sb);
-		JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
-		jx_strbuf_destroy(sb);
-	}
-#endif
-
-#if 1
 	// Rebuild basic block order by walking the SCC tree backwards
 	jx_array_resize(pass->m_BBArr, 0);
 	jir_reorderBB_walkSCCTree(pass, &cfg->m_SCCList);
@@ -2269,7 +2384,6 @@ static bool jir_funcPass_reorderBasicBlocksRun(jx_ir_function_pass_o* inst, jx_i
 		prevBlock = bb;
 	}
 	prevBlock->m_Next = NULL;
-#endif
 
 	jir_cfgDestroy(cfg);
 
@@ -2623,210 +2737,6 @@ static void jir_cfgSCCPrint(jir_cfg_scc_t* scc, jx_string_buffer_t* sb)
 		}
 	}
 }
-#else
-#define JIR_REORDER_BB_FLAGS_IS_VISITED_Pos 31
-#define JIR_REORDER_BB_FLAGS_IS_VISITED_Msk (1u << JIR_REORDER_BB_FLAGS_IS_VISITED_Pos)
-
-typedef struct jir_func_pass_reorder_bb_t
-{
-	jx_allocator_i* m_Allocator;
-	jx_ir_basic_block_t** m_OrderedBBArr;
-	jx_ir_basic_block_t** m_Stack;
-} jir_func_pass_reorder_bb_t;
-
-static void jir_funcPass_reorderBasicBlocksDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator);
-static bool jir_funcPass_reorderBasicBlocksRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func);
-
-bool jx_ir_funcPassCreate_reorderBasicBlocks(jx_ir_function_pass_t* pass, jx_allocator_i* allocator)
-{
-	jir_func_pass_reorder_bb_t* inst = (jir_func_pass_reorder_bb_t*)JX_ALLOC(allocator, sizeof(jir_func_pass_reorder_bb_t));
-	if (!inst) {
-		return false;
-	}
-
-	jx_memset(inst, 0, sizeof(jir_func_pass_reorder_bb_t));
-	inst->m_Allocator = allocator;
-
-	inst->m_OrderedBBArr = (jx_ir_basic_block_t**)jx_array_create(allocator);
-	if (!inst->m_OrderedBBArr) {
-		jir_funcPass_reorderBasicBlocksDestroy((jx_ir_function_pass_o*)inst, allocator);
-		return false;
-	}
-
-	inst->m_Stack = (jx_ir_basic_block_t**)jx_array_create(allocator);
-	if (!inst->m_Stack) {
-		jir_funcPass_reorderBasicBlocksDestroy((jx_ir_function_pass_o*)inst, allocator);
-		return false;
-	}
-
-	pass->m_Inst = (jx_ir_function_pass_o*)inst;
-	pass->run = jir_funcPass_reorderBasicBlocksRun;
-	pass->destroy = jir_funcPass_reorderBasicBlocksDestroy;
-
-	return true;
-}
-
-static void jir_funcPass_reorderBasicBlocksDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator)
-{
-	jir_func_pass_reorder_bb_t* pass = (jir_func_pass_reorder_bb_t*)inst;
-	jx_array_free(pass->m_OrderedBBArr);
-	jx_array_free(pass->m_Stack);
-	JX_FREE(allocator, pass);
-}
-
-static bool jir_funcPass_reorderBasicBlocksRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
-{
-	jir_func_pass_reorder_bb_t* pass = (jir_func_pass_reorder_bb_t*)inst;
-
-	// Reset all basic block visited flags
-	{
-		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
-		while (bb) {
-			bb->super.m_Flags &= ~JIR_REORDER_BB_FLAGS_IS_VISITED_Msk;
-			bb = bb->m_Next;
-		}
-	}
-
-	jx_array_resize(pass->m_OrderedBBArr, 0);
-	jx_array_resize(pass->m_Stack, 0);
-
-	jx_array_push_back(pass->m_Stack, func->m_BasicBlockListHead);
-	while (jx_array_sizeu(pass->m_Stack) != 0) {
-		jx_ir_basic_block_t* bb = jx_array_pop_back(pass->m_Stack);
-
-		if ((bb->super.m_Flags & JIR_REORDER_BB_FLAGS_IS_VISITED_Msk) != 0) {
-#if 0
-			// Remove it from the ordered list and push it to the end.
-			// TODO: Convert ordered list into linked list for faster reordering.
-			bool found = false;
-			const uint32_t orderedListSize = (uint32_t)jx_array_sizeu(pass->m_OrderedBBArr);
-			for (uint32_t iBB = 0; iBB < orderedListSize; ++iBB) {
-				if (pass->m_OrderedBBArr[iBB] == bb) {
-					jx_array_del(pass->m_OrderedBBArr, iBB);
-					found = true;
-					break;
-				}
-			}
-			JX_CHECK(found, "Basic block not found");
-
-			jx_array_push_back(pass->m_OrderedBBArr, bb);
-#endif
-
-			continue;
-		}
-
-		bb->super.m_Flags |= JIR_REORDER_BB_FLAGS_IS_VISITED_Msk;
-
-		jx_ir_instruction_t* lastInstr = jx_ir_bbGetLastInstr(ctx, bb);
-		if (lastInstr->m_OpCode == JIR_OP_BRANCH) {
-			const uint32_t numOperands = (uint32_t)jx_array_sizeu(lastInstr->super.m_OperandArr);
-			if (numOperands == 1) {
-				// Unconditional branch
-				jx_ir_basic_block_t* target = jx_ir_valueToBasicBlock(lastInstr->super.m_OperandArr[0]->m_Value);
-				JX_CHECK(target, "Expected basic block as branch target.");
-				jx_array_push_back(pass->m_Stack, target);
-			} else if (numOperands == 3) {
-				// Conditional branch
-				jx_ir_basic_block_t* trueTarget = jx_ir_valueToBasicBlock(lastInstr->super.m_OperandArr[1]->m_Value);
-				JX_CHECK(trueTarget, "Expected basic block as branch target.");
-
-				jx_ir_basic_block_t* falseTarget = jx_ir_valueToBasicBlock(lastInstr->super.m_OperandArr[2]->m_Value);
-				JX_CHECK(falseTarget, "Expected basic block as branch target.");
-
-				// Push in such order so that the false path is the fallthrough path.
-				// NOTE: The target pushed last on the stack will be processed first (LIFO)
-				// so it will be added to the ordered list first.
-				jx_array_push_back(pass->m_Stack, trueTarget);
-				jx_array_push_back(pass->m_Stack, falseTarget);
-			} else {
-				JX_CHECK(false, "Unknown branch instruction.");
-			}
-		} else {
-			JX_CHECK(lastInstr->m_OpCode == JIR_OP_RET, "Unknown terminator instruction");
-		}
-
-		jx_array_push_back(pass->m_OrderedBBArr, bb);
-	}
-
-	// Remove all basic blocks which haven't been visited
-	{
-		jx_ir_basic_block_t head = { 0 };
-		jx_ir_basic_block_t* cur = &head;
-
-		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
-		while (bb) {
-			jx_ir_basic_block_t* bbNext = bb->m_Next;
-			if ((bb->super.m_Flags & JIR_REORDER_BB_FLAGS_IS_VISITED_Msk) != 0) {
-				// Block has been visited. Reset the flag and keep it.
-				bb->super.m_Flags &= ~JIR_REORDER_BB_FLAGS_IS_VISITED_Msk;
-			} else {
-				// Block hasn't been visited. Remove any uses of it (they should 
-				// all be phi instructions) and then remove it from the function.
-
-				// Remove the terminator instruction which will force update the CFG
-				// NOTE: If I don't it at this point and free all basic blocks in the order
-				// they appear here, the bbDtor function complains about not finding predecessors.
-				jx_ir_instruction_t* lastInstr = jx_ir_bbGetLastInstr(ctx, bb);
-				JX_CHECK(jx_ir_opcodeIsTerminator(lastInstr->m_OpCode), "Expected terminator instruction!");
-				jx_ir_bbRemoveInstr(ctx, bb, lastInstr);
-				jx_ir_instrFree(ctx, lastInstr);
-
-				// Remove all uses of this basic block. Should only be phi instructions or branches
-				// from other unvisited basic blocks.
-				jx_ir_use_t* bbUse = bb->super.m_UsesListHead;
-				while (bbUse) {
-					jx_ir_use_t* bbUseNext = bbUse->m_Next;
-
-					jx_ir_instruction_t* instr = jx_ir_valueToInstr(jx_ir_userToValue(bbUse->m_User));
-					JX_CHECK(instr, "Basic block use expected to be an instruction!");
-					if (instr->m_OpCode == JIR_OP_PHI) {
-						jx_ir_instrPhiRemoveValue(ctx, instr, bb);
-					} else if (instr->m_OpCode == JIR_OP_BRANCH) {
-						// Might happen if another unvisited/dead block references this 
-						// one in a branch instruction. Make sure this is true and then 
-						// remove it. The other block will be removed later so there is no
-						// need to patch the branch.
-						jx_ir_basic_block_t* predBB = instr->m_ParentBB;
-						JX_CHECK((predBB->super.m_Flags & JIR_REORDER_BB_FLAGS_IS_VISITED_Msk) == 0, "Something has gone really wrong. An unvisited block is the branch target of a visited block?");
-					} else {
-						JX_CHECK(false, "Unknown user of basic block!");
-					}
-
-					bbUse = bbUseNext;
-				}
-
-				// Remove the basic block from the function and add it to the list of blocks
-				// to free.
-				jx_ir_funcRemoveBasicBlock(ctx, func, bb);
-				cur->m_Next = bb;
-				cur = cur->m_Next;
-			}
-			
-			bb = bbNext;
-		}
-
-		// Free all unvisited blocks.
-		bb = head.m_Next;
-		while (bb) {
-			jx_ir_basic_block_t* bbNext = bb->m_Next;
-			jx_ir_bbFree(ctx, bb);
-			bb = bbNext;
-		}
-	}
-
-	// Relink all basic blocks
-	JX_CHECK(func->m_BasicBlockListHead == pass->m_OrderedBBArr[0], "Entry block has been changed?");
-
-	const uint32_t numBasicBlocks = (uint32_t)jx_array_sizeu(pass->m_OrderedBBArr);
-	for (uint32_t iBB = 0; iBB < numBasicBlocks; ++iBB) {
-		jx_ir_basic_block_t* bb = pass->m_OrderedBBArr[iBB];
-		bb->m_Next = iBB != (numBasicBlocks - 1) ? pass->m_OrderedBBArr[iBB + 1] : NULL;
-		bb->m_Prev = iBB != 0 ? pass->m_OrderedBBArr[iBB - 1] : NULL;
-	}
-
-	return true;
-}
-#endif
 
 //////////////////////////////////////////////////////////////////////////
 // Remove Redundant Phis
@@ -2866,18 +2776,22 @@ static bool jir_funcPass_removeRedundantPhisRun(jx_ir_function_pass_o* inst, jx_
 {
 	jir_func_pass_remove_redundant_phis_t* pass = (jir_func_pass_remove_redundant_phis_t*)inst;
 
+	uint32_t numRemovals = 0;
+
 	jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
 	while (bb) {
 		if (jx_array_sizeu(bb->m_PredArr) == 1) {
 			jx_ir_instruction_t* instr = bb->m_InstrListHead;
 			while (instr && instr->m_OpCode == JIR_OP_PHI) {
 				jx_ir_instruction_t* instrNext = instr->m_Next;
-				JX_CHECK(jx_ir_valueToBasicBlock(instr->super.m_OperandArr[1]->m_Value) == bb->m_PredArr[0], "Invalid CFG state");
+				JX_CHECK(jx_ir_valueToBasicBlock(jx_ir_instrGetOperandVal(instr, 1)) == bb->m_PredArr[0], "Invalid CFG state");
 
 				jx_ir_value_t* val = instr->super.m_OperandArr[0]->m_Value;
 				jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), val);
 				jx_ir_bbRemoveInstr(ctx, bb, instr);
 				jx_ir_instrFree(ctx, instr);
+
+				++numRemovals;
 
 				instr = instrNext;
 			}
@@ -2886,7 +2800,7 @@ static bool jir_funcPass_removeRedundantPhisRun(jx_ir_function_pass_o* inst, jx_
 		bb = bb->m_Next;
 	}
 
-	return false;
+	return numRemovals != 0;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -3017,14 +2931,14 @@ static bool jir_funcPass_inlineFuncsRun(jx_ir_module_pass_o* inst, jx_ir_context
 
 	jir_callGraphBuild(callGraph);
 
+	uint32_t numCallsInlined = 0;
+
 	jir_call_graph_scc_t* scc = callGraph->m_SCCListHead;
 	while (scc) {
 		// Inline any function which is it's own SCC (i.e. it's not part of a cycle).
 		const uint32_t numSCCNodes = (uint32_t)jx_array_sizeu(scc->m_NodesArr);
 		if (numSCCNodes == 1) {
 			jir_call_graph_node_t* node = scc->m_NodesArr[0];
-
-			uint32_t numCallsInlined = 0;
 
 			const uint32_t numCalls = (uint32_t)jx_array_sizeu(node->m_CallInstrArr);
 			for (uint32_t iCall = 0; iCall < numCalls; ++iCall) {
@@ -3053,7 +2967,7 @@ static bool jir_funcPass_inlineFuncsRun(jx_ir_module_pass_o* inst, jx_ir_context
 
 	jir_callGraphDestroy(callGraph);
 
-	return false;
+	return numCallsInlined != 0;
 }
 
 static bool jir_inliner_inlineCall(jir_module_pass_inliner_t* pass, jx_ir_instruction_t* callInstr)

@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include <jlib/array.h> // jx_array_sizeu
+#include <jlib/dbg.h>   // JX_CHECK
 #include <jlib/macros.h>
 
 typedef struct jx_allocator_i jx_allocator_i;
@@ -553,6 +555,91 @@ static inline jx_ir_condition_code jx_ir_ccSwapOperands(jx_ir_condition_code cc)
 	};
 
 	return kSwappedCC[cc];
+}
+
+static inline jx_ir_condition_code jx_ir_ccInvert(jx_ir_condition_code cc)
+{
+	static jx_ir_condition_code kInvertedCC[] = {
+		[JIR_CC_LE] = JIR_CC_GT,
+		[JIR_CC_GE] = JIR_CC_LT,
+		[JIR_CC_LT] = JIR_CC_GE,
+		[JIR_CC_GT] = JIR_CC_LE,
+		[JIR_CC_EQ] = JIR_CC_NE,
+		[JIR_CC_NE] = JIR_CC_EQ,
+	};
+
+	return kInvertedCC[cc];
+}
+
+static inline bool jx_ir_constIsZero(jx_ir_constant_t* c)
+{
+	jx_ir_type_t* type = jx_ir_constToValue(c)->m_Type;
+	switch (type->m_Kind) {
+	case JIR_TYPE_BOOL: {
+		return !c->u.m_Bool;
+	} break;
+	case JIR_TYPE_U8:
+	case JIR_TYPE_I8:
+	case JIR_TYPE_U16:
+	case JIR_TYPE_I16:
+	case JIR_TYPE_U32:
+	case JIR_TYPE_I32:
+	case JIR_TYPE_U64:
+	case JIR_TYPE_I64: {
+		return c->u.m_I64 == 0;
+	} break;
+	case JIR_TYPE_F32:
+	case JIR_TYPE_F64: {
+		return c->u.m_F64 == 0.0;
+	} break;
+	case JIR_TYPE_POINTER: {
+		return c->u.m_Ptr == 0;
+	} break;
+	default:
+		break;
+	}
+
+	return false;
+}
+
+static inline bool jx_ir_constIsOnes(jx_ir_constant_t* c)
+{
+	jx_ir_type_t* type = jx_ir_constToValue(c)->m_Type;
+	switch (type->m_Kind) {
+	case JIR_TYPE_BOOL: {
+		return c->u.m_Bool;
+	} break;
+	case JIR_TYPE_U8:
+	case JIR_TYPE_I8: {
+		return (c->u.m_U64 & 0x00000000000000FFull) == 0x00000000000000FFull;
+	} break;
+	case JIR_TYPE_U16:
+	case JIR_TYPE_I16: {
+		return (c->u.m_U64 & 0x000000000000FFFFull) == 0x000000000000FFFFull;
+	} break;
+	case JIR_TYPE_U32:
+	case JIR_TYPE_I32: {
+		return (c->u.m_U64 & 0x00000000FFFFFFFFull) == 0x00000000FFFFFFFFull;
+	} break;
+	case JIR_TYPE_U64:
+	case JIR_TYPE_I64: {
+		return c->u.m_U64 == 0xFFFFFFFFFFFFFFFFull;
+	} break;
+	case JIR_TYPE_POINTER: {
+		return c->u.m_Ptr == 0xFFFFFFFFFFFFFFFFull;
+	} break;
+	default:
+		break;
+	}
+
+	return false;
+}
+
+static inline jx_ir_value_t* jx_ir_instrGetOperandVal(jx_ir_instruction_t* instr, uint32_t operandID)
+{
+	jx_ir_user_t* user = jx_ir_instrToUser(instr);
+	JX_CHECK(operandID < jx_array_sizeu(user->m_OperandArr), "Invalid operand ID");
+	return user->m_OperandArr[operandID]->m_Value;
 }
 
 #endif // JX_IR_H
