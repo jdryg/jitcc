@@ -1896,6 +1896,94 @@ static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_
 							}
 						}
 					}
+				} else if (instr->m_OpCode == JIR_OP_DIV) {
+					jx_ir_value_t* valOp1 = instr->super.m_OperandArr[1]->m_Value;
+					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
+					const bool isInteger = jx_ir_typeIsInteger(valOp1->m_Type);
+					if (constOp1) {
+						if ((isInteger && constOp1->u.m_I64 == 1) || (!isInteger && constOp1->u.m_F64 == 1.0)) {
+							// %res = div %val, 1 
+							//  => 
+							// replace %res with %val and remove instruction
+							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), instr->super.m_OperandArr[0]->m_Value);
+							jx_ir_bbRemoveInstr(ctx, bb, instr);
+							jx_ir_instrFree(ctx, instr);
+
+							changed = true;
+						} else if (isInteger && constOp1->u.m_I64 > 0 && constOp1->u.m_I64 < 256 && jx_isPow2_u32((uint32_t)constOp1->u.m_I64)) {
+							// %res = div %val, imm8_pow2
+							//  =>
+							// %res = shr %val, log2(imm8_pow2)
+							jx_ir_constant_t* constI8 = jx_ir_constGetI8(ctx, jx_log2_u32((uint32_t)constOp1->u.m_I64));
+							jx_ir_instruction_t* shrInstr = jx_ir_instrShr(ctx, instr->super.m_OperandArr[0]->m_Value, jx_ir_constToValue(constI8));
+							jx_ir_bbInsertInstrBefore(ctx, bb, instr, shrInstr);
+							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(shrInstr));
+							jx_ir_bbRemoveInstr(ctx, bb, instr);
+							jx_ir_instrFree(ctx, instr);
+
+							changed = true;
+						}
+					}
+				} else if (instr->m_OpCode == JIR_OP_MUL) {
+					jx_ir_value_t* valOp1 = instr->super.m_OperandArr[1]->m_Value;
+					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
+					const bool isInteger = jx_ir_typeIsInteger(valOp1->m_Type);
+					if (constOp1) {
+						if ((isInteger && constOp1->u.m_I64 == 1) || (!isInteger && constOp1->u.m_F64 == 1.0)) {
+							// %res = mul %val, 1 
+							//  => 
+							// replace %res with %val and remove instruction
+							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), instr->super.m_OperandArr[0]->m_Value);
+							jx_ir_bbRemoveInstr(ctx, bb, instr);
+							jx_ir_instrFree(ctx, instr);
+
+							changed = true;
+						} else if (isInteger && constOp1->u.m_I64 > 0 && constOp1->u.m_I64 < 256 && jx_isPow2_u32((uint32_t)constOp1->u.m_I64)) {
+							// %res = mul %val, imm8_pow2
+							//  =>
+							// %res = shl %val, log2(imm8_pow2)
+							jx_ir_constant_t* constI8 = jx_ir_constGetI8(ctx, jx_log2_u32((uint32_t)constOp1->u.m_I64));
+							jx_ir_instruction_t* shlInstr = jx_ir_instrShl(ctx, instr->super.m_OperandArr[0]->m_Value, jx_ir_constToValue(constI8));
+							jx_ir_bbInsertInstrBefore(ctx, bb, instr, shlInstr);
+							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(shlInstr));
+							jx_ir_bbRemoveInstr(ctx, bb, instr);
+							jx_ir_instrFree(ctx, instr);
+
+							changed = true;
+						}
+					}
+				} else if (instr->m_OpCode == JIR_OP_ADD) {
+					jx_ir_value_t* valOp1 = instr->super.m_OperandArr[1]->m_Value;
+					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
+					const bool isInteger = jx_ir_typeIsInteger(valOp1->m_Type);
+					if (constOp1) {
+						if ((isInteger && constOp1->u.m_I64 == 0) || (!isInteger && constOp1->u.m_F64 == 0.0)) {
+							// %res = add %val, 0
+							//  => 
+							// replace %res with %val and remove instruction
+							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), instr->super.m_OperandArr[0]->m_Value);
+							jx_ir_bbRemoveInstr(ctx, bb, instr);
+							jx_ir_instrFree(ctx, instr);
+
+							changed = true;
+						}
+					}
+				} else if (instr->m_OpCode == JIR_OP_SUB) {
+					jx_ir_value_t* valOp1 = instr->super.m_OperandArr[1]->m_Value;
+					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
+					const bool isInteger = jx_ir_typeIsInteger(valOp1->m_Type);
+					if (constOp1) {
+						if ((isInteger && constOp1->u.m_I64 == 0) || (!isInteger && constOp1->u.m_F64 == 0.0)) {
+							// %res = sub %val, 0
+							//  => 
+							// replace %res with %val and remove instruction
+							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), instr->super.m_OperandArr[0]->m_Value);
+							jx_ir_bbRemoveInstr(ctx, bb, instr);
+							jx_ir_instrFree(ctx, instr);
+
+							changed = true;
+						}
+					}
 				}
 
 				instr = instrNext;

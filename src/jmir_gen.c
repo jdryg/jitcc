@@ -1350,13 +1350,23 @@ static jx_mir_operand_t* jmirgen_instrBuild_intToPtr(jx_mirgen_context_t* ctx, j
 	jx_ir_type_t* operandType = operandVal->m_Type;
 
 	if (operandType->m_Kind != JIR_TYPE_POINTER && operandType->m_Kind != JIR_TYPE_I64 && operandType->m_Kind != JIR_TYPE_U64) {
-		// Inline zext because zext expects integer types.
-		jx_mir_operand_t* operand = jmirgen_getOperand(ctx, operandVal);
-		operand = jmirgen_ensureOperandRegOrMem(ctx, operand);
+		JX_CHECK(jx_ir_typeIsInteger(operandType), "Expected integer type");
 
 		jx_mir_type_kind targetType = jmirgen_convertType(instrType);
+		JX_CHECK(targetType == JMIR_TYPE_PTR, "inttoptr without ptr type?");
 		jx_mir_operand_t* resReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, targetType);
-		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movzx(ctx->m_MIRCtx, resReg, operand));
+
+		jx_ir_constant_t* constOp = jx_ir_valueToConst(operandVal);
+		if (constOp) {
+			// Common case for generating NULL pointers.
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, resReg, jx_mir_opIConst(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64, constOp->u.m_I64)));
+		} else {
+			// Inline zext because zext expects integer types.
+			jx_mir_operand_t* operand = jmirgen_getOperand(ctx, operandVal);
+			operand = jmirgen_ensureOperandRegOrMem(ctx, operand);
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movzx(ctx->m_MIRCtx, resReg, operand));
+		}
+
 		return resReg;
 	}
 
