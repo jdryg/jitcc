@@ -427,6 +427,8 @@ static int32_t jcc_macroEntryCompareCallback(const void* a, const void* b, void*
 static uint64_t jcc_s2sMapItemHashCallback(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
 static int32_t jcc_s2sMapItemCompareCallback(const void* a, const void* b, void* udata);
 
+static void jcc_ppDefineMacro(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* name, const char* str);
+
 jx_cc_context_t* jx_cc_createContext(jx_allocator_i* allocator, jx_logger_i* logger)
 {
 	jx_cc_context_t* ctx = (jx_cc_context_t*)JX_ALLOC(allocator, sizeof(jx_cc_context_t));
@@ -582,6 +584,21 @@ jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_d
 	if (!jcc_tuEnterScope(ctx, tu)) {
 		jcc_logError(ctx, JCC_SOURCE_LOCATION_CUR(), "Internal Error: Memory allocation failed.");
 		goto end;
+	}
+
+	{
+		jcc_ppDefineMacro(ctx, tu, "__STDC__", "1");
+		jcc_ppDefineMacro(ctx, tu, "__STDC_HOSTED__", "1"); // TODO: Is this true in my case?
+		jcc_ppDefineMacro(ctx, tu, "__STDC_VERSION__", "201112L");
+		jcc_ppDefineMacro(ctx, tu, "__STDC_NO_ATOMICS__", "1");
+		jcc_ppDefineMacro(ctx, tu, "__STDC_NO_COMPLEX__", "1");
+		jcc_ppDefineMacro(ctx, tu, "__STDC_NO_THREADS__", "1");
+		jcc_ppDefineMacro(ctx, tu, "__STDC_NO_VLA__", "1");
+		jcc_ppDefineMacro(ctx, tu, "__C99_MACRO_WITH_VA_ARGS", "1");
+		jcc_ppDefineMacro(ctx, tu, "__amd64", "1");
+		jcc_ppDefineMacro(ctx, tu, "__amd64__", "1");
+		jcc_ppDefineMacro(ctx, tu, "__x86_64", "1");
+		jcc_ppDefineMacro(ctx, tu, "__x86_64__", "1");
 	}
 
 	jx_cc_token_t* tok = jcc_tokenizeString(ctx, tu, source, sourceLen);
@@ -10026,6 +10043,14 @@ static jx_cc_token_t* jcc_ppIncludeFile(jx_cc_context_t* ctx, jcc_translation_un
 	}
 
 	return jcc_ppAppend(ctx, tu, tok2, tok);
+}
+
+static void jcc_ppDefineMacro(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* name, const char* definition)
+{
+	char* str = jx_strdup(definition, ctx->m_Allocator);
+	jx_cc_token_t* tok = jcc_tokenizeString(ctx, tu, str, jx_strlen(str));
+	jcc_ppAddMacro(ctx, tu, name, true, tok);
+	JX_FREE(ctx->m_Allocator, str);
 }
 
 static jx_cc_hideset_t* jcc_hidesetCreate(jx_cc_context_t* ctx, const char* name)
