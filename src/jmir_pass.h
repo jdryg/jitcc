@@ -7,6 +7,8 @@
 typedef struct jx_allocator_i jx_allocator_i;
 typedef struct jx_mir_function_pass_t jx_mir_function_pass_t;
 
+typedef bool (*jmirFuncPassCtorFunc)(jx_mir_function_pass_t* pass, jx_allocator_i* allocator);
+
 bool jx_mir_funcPassCreate_removeFallthroughJmp(jx_mir_function_pass_t* pass, jx_allocator_i* allocator);
 bool jx_mir_funcPassCreate_removeRedundantMoves(jx_mir_function_pass_t* pass, jx_allocator_i* allocator);
 bool jx_mir_funcPassCreate_simplifyCondJmp(jx_mir_function_pass_t* pass, jx_allocator_i* allocator);

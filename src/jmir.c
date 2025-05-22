@@ -4,6 +4,7 @@
 #include <jlib/array.h>
 #include <jlib/dbg.h>
 #include <jlib/hashmap.h>
+#include <jlib/logger.h>
 #include <jlib/math.h>
 #include <jlib/memory.h>
 #include <jlib/string.h>
@@ -17,6 +18,7 @@ static const char* kMIROpcodeMnemonic[] = {
 	[JMIR_OP_MOVSX] = "movsx",
 	[JMIR_OP_MOVZX] = "movzx",
 	[JMIR_OP_IMUL] = "imul",
+	[JMIR_OP_IMUL3] = "imul",
 	[JMIR_OP_IDIV] = "idiv",
 	[JMIR_OP_DIV] = "div",
 	[JMIR_OP_ADD] = "add",
@@ -150,7 +152,19 @@ typedef struct jx_mir_context_t
 	jx_allocator_i* m_LinearAllocator;
 	jx_mir_function_t** m_FuncArr;
 	jx_mir_global_variable_t** m_GlobalVarArr;
+#if 1
+	jx_mir_function_pass_t* m_FuncPass_removeFallthroughJmp;
+	jx_mir_function_pass_t* m_FuncPass_simplifyCondJmp;
+	jx_mir_function_pass_t* m_FuncPass_fixMemMemOps;
+	jx_mir_function_pass_t* m_FuncPass_combineLEAs;
+	jx_mir_function_pass_t* m_FuncPass_deadCodeElimination;
+	jx_mir_function_pass_t* m_FuncPass_peephole;
+	jx_mir_function_pass_t* m_FuncPass_regAlloc;
+	jx_mir_function_pass_t* m_FuncPass_removeRedundantMoves;
+	jx_mir_function_pass_t* m_FuncPass_redundantConstElimination;
+#else
 	jx_mir_function_pass_t* m_OnFuncEndPasses;
+#endif
 	jx_hashmap_t* m_FuncProtoMap;
 } jx_mir_context_t;
 
@@ -162,6 +176,9 @@ static jx_mir_instruction_t* jmir_instrAlloc2(jx_mir_context_t* ctx, uint32_t op
 static jx_mir_instruction_t* jmir_instrAlloc3(jx_mir_context_t* ctx, uint32_t opcode, jx_mir_operand_t* op1, jx_mir_operand_t* op2, jx_mir_operand_t* op3);
 static jx_mir_operand_t* jmir_funcCreateArgument(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb, uint32_t argID, jx_mir_type_kind argType);
 static void jmir_funcFree(jx_mir_context_t* ctx, jx_mir_function_t* func);
+static jx_mir_function_pass_t* jmir_funcPassCreate(jx_mir_context_t* ctx, jmirFuncPassCtorFunc ctorFunc, void* passConfig);
+static void jmir_funcPassDestroy(jx_mir_context_t* ctx, jx_mir_function_pass_t* pass);
+static bool jmir_funcPassApply(jx_mir_context_t* ctx, jx_mir_function_pass_t* pass, jx_mir_function_t* func);
 static void jmir_globalVarFree(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv);
 static jx_mir_memory_ref_t* jmir_memRefAlloc(jx_mir_context_t* ctx, jx_mir_reg_t baseReg, jx_mir_reg_t indexReg, uint32_t scale, int32_t displacement);
 static jx_mir_frame_info_t* jmir_frameCreate(jx_mir_context_t* ctx);
@@ -210,197 +227,77 @@ jx_mir_context_t* jx_mir_createContext(jx_allocator_i* allocator)
 	}
 
 	// Initialize function passes to be executed when funcEnd is called
+#if 1
+	{
+		ctx->m_FuncPass_removeFallthroughJmp = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_removeFallthroughJmp, NULL);
+		ctx->m_FuncPass_simplifyCondJmp = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_simplifyCondJmp, NULL);
+		ctx->m_FuncPass_fixMemMemOps = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_fixMemMemOps, NULL);
+		ctx->m_FuncPass_combineLEAs = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_combineLEAs, NULL);
+		ctx->m_FuncPass_deadCodeElimination = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_deadCodeElimination, NULL);
+		ctx->m_FuncPass_peephole = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_peephole, NULL);
+		ctx->m_FuncPass_regAlloc = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_regAlloc, NULL);
+		ctx->m_FuncPass_removeRedundantMoves = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_removeRedundantMoves, NULL);
+		ctx->m_FuncPass_redundantConstElimination = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_redundantConstElimination, NULL);
+		ctx->m_FuncPass_simplifyCondJmp = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_simplifyCondJmp, NULL);
+		ctx->m_FuncPass_peephole = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_peephole, NULL);
+	}
+#else
 	{
 		jx_mir_function_pass_t head = { 0 };
 		jx_mir_function_pass_t* cur = &head;
 
 		// Remove fallthrough jumps
-		{
-			jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_pass_t));
-			if (!pass) {
-				jx_mir_destroyContext(ctx);
-				return NULL;
-			}
-
-			jx_memset(pass, 0, sizeof(jx_mir_function_pass_t));
-			if (!jx_mir_funcPassCreate_removeFallthroughJmp(pass, ctx->m_Allocator)) {
-				JX_CHECK(false, "Failed to initialize function pass!");
-				JX_FREE(ctx->m_Allocator, pass);
-			} else {
-				cur->m_Next = pass;
-				cur = cur->m_Next;
-			}
-		}
+		cur->m_Next = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_removeFallthroughJmp, NULL);
+		cur = cur->m_Next;
 
 		// Simplify condition jumps
-		{
-			jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_pass_t));
-			if (!pass) {
-				jx_mir_destroyContext(ctx);
-				return NULL;
-			}
-
-			jx_memset(pass, 0, sizeof(jx_mir_function_pass_t));
-			if (!jx_mir_funcPassCreate_simplifyCondJmp(pass, ctx->m_Allocator)) {
-				JX_CHECK(false, "Failed to initialize function pass!");
-				JX_FREE(ctx->m_Allocator, pass);
-			} else {
-				cur->m_Next = pass;
-				cur = cur->m_Next;
-			}
-		}
+		cur->m_Next = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_simplifyCondJmp, NULL);
+		cur = cur->m_Next;
 
 		// Fix mem/mem operations
-		{
-			jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_pass_t));
-			if (!pass) {
-				jx_mir_destroyContext(ctx);
-				return NULL;
-			}
-
-			jx_memset(pass, 0, sizeof(jx_mir_function_pass_t));
-			if (!jx_mir_funcPassCreate_fixMemMemOps(pass, ctx->m_Allocator)) {
-				JX_CHECK(false, "Failed to initialize function pass!");
-				JX_FREE(ctx->m_Allocator, pass);
-			} else {
-				cur->m_Next = pass;
-				cur = cur->m_Next;
-			}
-		}
+		cur->m_Next = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_fixMemMemOps, NULL);
+		cur = cur->m_Next;
 
 		// Combine LEAs
-		{
-			jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_pass_t));
-			if (!pass) {
-				jx_mir_destroyContext(ctx);
-				return NULL;
-			}
-
-			jx_memset(pass, 0, sizeof(jx_mir_function_pass_t));
-			if (!jx_mir_funcPassCreate_combineLEAs(pass, ctx->m_Allocator)) {
-				JX_CHECK(false, "Failed to initialize function pass!");
-				JX_FREE(ctx->m_Allocator, pass);
-			} else {
-				cur->m_Next = pass;
-				cur = cur->m_Next;
-			}
-		}
+		cur->m_Next = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_combineLEAs, NULL);
+		cur = cur->m_Next;
 
 		// Dead Code Elimination
-		{
-			jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_pass_t));
-			if (!pass) {
-				jx_mir_destroyContext(ctx);
-				return NULL;
-			}
-
-			jx_memset(pass, 0, sizeof(jx_mir_function_pass_t));
-			if (!jx_mir_funcPassCreate_deadCodeElimination(pass, ctx->m_Allocator)) {
-				JX_CHECK(false, "Failed to initialize function pass!");
-				JX_FREE(ctx->m_Allocator, pass);
-			} else {
-				cur->m_Next = pass;
-				cur = cur->m_Next;
-			}
-		}
+		cur->m_Next = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_deadCodeElimination, NULL);
+		cur = cur->m_Next;
 
 		// Peephole optimizations
-		{
-			jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_pass_t));
-			if (!pass) {
-				jx_mir_destroyContext(ctx);
-				return NULL;
-			}
-
-			jx_memset(pass, 0, sizeof(jx_mir_function_pass_t));
-			if (!jx_mir_funcPassCreate_peephole(pass, ctx->m_Allocator)) {
-				JX_CHECK(false, "Failed to initialize function pass!");
-				JX_FREE(ctx->m_Allocator, pass);
-			} else {
-				cur->m_Next = pass;
-				cur = cur->m_Next;
-			}
-		}
+		cur->m_Next = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_peephole, NULL);
+		cur = cur->m_Next;
 
 #if 1
 		// Register allocator
-		{
-			jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_pass_t));
-			if (!pass) {
-				jx_mir_destroyContext(ctx);
-				return NULL;
-			}
-
-			jx_memset(pass, 0, sizeof(jx_mir_function_pass_t));
-			if (!jx_mir_funcPassCreate_regAlloc(pass, ctx->m_Allocator)) {
-				JX_CHECK(false, "Failed to initialize function pass!");
-				JX_FREE(ctx->m_Allocator, pass);
-			} else {
-				cur->m_Next = pass;
-				cur = cur->m_Next;
-			}
-		}
+		cur->m_Next = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_regAlloc, NULL);
+		cur = cur->m_Next;
 #endif
 
 		// Remove redundant moves
-		{
-			jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_pass_t));
-			if (!pass) {
-				jx_mir_destroyContext(ctx);
-				return NULL;
-			}
-
-			jx_memset(pass, 0, sizeof(jx_mir_function_pass_t));
-			if (!jx_mir_funcPassCreate_removeRedundantMoves(pass, ctx->m_Allocator)) {
-				JX_CHECK(false, "Failed to initialize function pass!");
-				JX_FREE(ctx->m_Allocator, pass);
-			} else {
-				cur->m_Next = pass;
-				cur = cur->m_Next;
-			}
-		}
+		cur->m_Next = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_removeRedundantMoves, NULL);
+		cur = cur->m_Next;
 
 		// Remove redundant consts
-		{
-			jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_pass_t));
-			if (!pass) {
-				jx_mir_destroyContext(ctx);
-				return NULL;
-			}
-
-			jx_memset(pass, 0, sizeof(jx_mir_function_pass_t));
-			if (!jx_mir_funcPassCreate_redundantConstElimination(pass, ctx->m_Allocator)) {
-				JX_CHECK(false, "Failed to initialize function pass!");
-				JX_FREE(ctx->m_Allocator, pass);
-			} else {
-				cur->m_Next = pass;
-				cur = cur->m_Next;
-			}
-		}
+		cur->m_Next = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_redundantConstElimination, NULL);
+		cur = cur->m_Next;
 
 		// Simplify conditional jumps
 		// NOTE: Rerun this pass because the register allocator + the removal of redundant moves might have
 		// created more opportunities for conditional jump simplifications.
 		// E.g. c-testsuite/00008.c
-		{
-			jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_pass_t));
-			if (!pass) {
-				jx_mir_destroyContext(ctx);
-				return NULL;
-			}
+		cur->m_Next = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_simplifyCondJmp, NULL);
+		cur = cur->m_Next;
 
-			jx_memset(pass, 0, sizeof(jx_mir_function_pass_t));
-			if (!jx_mir_funcPassCreate_simplifyCondJmp(pass, ctx->m_Allocator)) {
-				JX_CHECK(false, "Failed to initialize function pass!");
-				JX_FREE(ctx->m_Allocator, pass);
-			} else {
-				cur->m_Next = pass;
-				cur = cur->m_Next;
-			}
-		}
+		// Peephole optimizations
+		cur->m_Next = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_peephole, NULL);
+		cur = cur->m_Next;
 
 		ctx->m_OnFuncEndPasses = head.m_Next;
 	}
+#endif
 
 	return ctx;
 }
@@ -411,14 +308,59 @@ void jx_mir_destroyContext(jx_mir_context_t* ctx)
 
 	// Free function passes
 	{
+#if 1
+		if (ctx->m_FuncPass_removeFallthroughJmp) {
+			jmir_funcPassDestroy(ctx, ctx->m_FuncPass_removeFallthroughJmp);
+			ctx->m_FuncPass_removeFallthroughJmp = NULL;
+		}
+
+		if (ctx->m_FuncPass_simplifyCondJmp) {
+			jmir_funcPassDestroy(ctx, ctx->m_FuncPass_simplifyCondJmp);
+			ctx->m_FuncPass_simplifyCondJmp = NULL;
+		}
+
+		if (ctx->m_FuncPass_fixMemMemOps) {
+			jmir_funcPassDestroy(ctx, ctx->m_FuncPass_fixMemMemOps);
+			ctx->m_FuncPass_fixMemMemOps = NULL;
+		}
+
+		if (ctx->m_FuncPass_combineLEAs) {
+			jmir_funcPassDestroy(ctx, ctx->m_FuncPass_combineLEAs);
+			ctx->m_FuncPass_combineLEAs = NULL;
+		}
+		
+		if (ctx->m_FuncPass_deadCodeElimination) {
+			jmir_funcPassDestroy(ctx, ctx->m_FuncPass_deadCodeElimination);
+			ctx->m_FuncPass_deadCodeElimination = NULL;
+		}
+
+		if (ctx->m_FuncPass_peephole) {
+			jmir_funcPassDestroy(ctx, ctx->m_FuncPass_peephole);
+			ctx->m_FuncPass_peephole = NULL;
+		}
+
+		if (ctx->m_FuncPass_regAlloc) {
+			jmir_funcPassDestroy(ctx, ctx->m_FuncPass_regAlloc);
+			ctx->m_FuncPass_regAlloc = NULL;
+		}
+
+		if (ctx->m_FuncPass_removeRedundantMoves) {
+			jmir_funcPassDestroy(ctx, ctx->m_FuncPass_removeRedundantMoves);
+			ctx->m_FuncPass_removeRedundantMoves = NULL;
+		}
+
+		if (ctx->m_FuncPass_redundantConstElimination) {
+			jmir_funcPassDestroy(ctx, ctx->m_FuncPass_redundantConstElimination);
+			ctx->m_FuncPass_redundantConstElimination = NULL;
+		}
+#else
 		jx_mir_function_pass_t* pass = ctx->m_OnFuncEndPasses;
 		while (pass) {
 			jx_mir_function_pass_t* next = pass->m_Next;
-			pass->destroy(pass->m_Inst, allocator);
-			JX_FREE(allocator, pass);
-
+			jmir_funcPassDestroy(ctx, pass);
 			pass = next;
 		}
+#endif
 	}
 
 	const uint32_t numGlobalVars = (uint32_t)jx_array_sizeu(ctx->m_GlobalVarArr);
@@ -682,13 +624,39 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 		JX_CHECK((func->m_Prototype->m_Flags & JMIR_FUNC_FLAGS_EXTERNAL_Msk) != 0, "Internal function without body?");
 		return;
 	}
+
+#if 0
+	{
+		jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
+		jx_mir_print(ctx, sb);
+		jx_strbuf_nullTerminate(sb);
+		JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
+		jx_strbuf_destroy(sb);
+	}
+#endif
 	
+#if 1
+	{
+		jmir_funcPassApply(ctx, ctx->m_FuncPass_removeFallthroughJmp, func);
+		jmir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCondJmp, func);
+		jmir_funcPassApply(ctx, ctx->m_FuncPass_fixMemMemOps, func);
+		jmir_funcPassApply(ctx, ctx->m_FuncPass_combineLEAs, func);
+		jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func);
+		jmir_funcPassApply(ctx, ctx->m_FuncPass_peephole, func);
+		jmir_funcPassApply(ctx, ctx->m_FuncPass_regAlloc, func);
+		jmir_funcPassApply(ctx, ctx->m_FuncPass_removeRedundantMoves, func);
+		jmir_funcPassApply(ctx, ctx->m_FuncPass_redundantConstElimination, func);
+		jmir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCondJmp, func);
+		jmir_funcPassApply(ctx, ctx->m_FuncPass_peephole, func);
+	}
+#else
 	jx_mir_function_pass_t* pass = ctx->m_OnFuncEndPasses;
 	while (pass) {
-		bool funcModified = pass->run(pass->m_Inst, ctx, func);
+		const bool funcModified = jmir_funcPassApply(ctx, pass, func);
 		JX_UNUSED(funcModified);
 		pass = pass->m_Next;
 	}
+#endif
 
 	// Store all callee-saved registers used by the function on the stack.
 	jx_mir_operand_t* gpRegStackSlot[JX_COUNTOF(kMIRFuncCalleeSavedIReg)] = { 0 };
@@ -1554,6 +1522,12 @@ jx_mir_instruction_t* jx_mir_imul(jx_mir_context_t* ctx, jx_mir_operand_t* dst, 
 	return jmir_instrAlloc2(ctx, JMIR_OP_IMUL, dst, src);
 }
 
+jx_mir_instruction_t* jx_mir_imul3(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src, jx_mir_operand_t* imm)
+{
+	JX_CHECK(imm->m_Kind == JMIR_OPERAND_CONST, "imul with 3 operands expected 2nd source operand to be an immediate.");
+	return jmir_instrAlloc3(ctx, JMIR_OP_IMUL3, dst, src, imm);
+}
+
 jx_mir_instruction_t* jx_mir_lea(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_LEA, dst, src);;
@@ -2166,6 +2140,33 @@ static void jmir_funcFree(jx_mir_context_t* ctx, jx_mir_function_t* func)
 	JX_FREE(allocator, func->m_Args);
 	JX_FREE(allocator, func->m_Name);
 	JX_FREE(allocator, func);
+}
+
+static jx_mir_function_pass_t* jmir_funcPassCreate(jx_mir_context_t* ctx, jmirFuncPassCtorFunc ctorFunc, void* passConfig)
+{
+	jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_pass_t));
+	if (!pass) {
+		return NULL;
+	}
+
+	jx_memset(pass, 0, sizeof(jx_mir_function_pass_t));
+	if (!ctorFunc(pass, ctx->m_Allocator)) {
+		JX_FREE(ctx->m_Allocator, pass);
+		return NULL;
+	}
+
+	return pass;
+}
+
+static void jmir_funcPassDestroy(jx_mir_context_t* ctx, jx_mir_function_pass_t* pass)
+{
+	pass->destroy(pass->m_Inst, ctx->m_Allocator);
+	JX_FREE(ctx->m_Allocator, pass);
+}
+
+static bool jmir_funcPassApply(jx_mir_context_t* ctx, jx_mir_function_pass_t* pass, jx_mir_function_t* func)
+{
+	return pass->run(pass->m_Inst, ctx, func);
 }
 
 static void jmir_globalVarFree(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv)

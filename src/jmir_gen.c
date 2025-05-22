@@ -851,8 +851,6 @@ static jx_mir_operand_t* jmirgen_instrBuild_setcc(jx_mirgen_context_t* ctx, jx_i
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_setcc(ctx->m_MIRCtx, jx_mir_ccSwapOperands(mirCC), dstReg));
 		} else {
 			rhs = jmirgen_ensureOperandNotConstI64(ctx, rhs);
-			rhs = jmirgen_ensureOperandRegOrMem(ctx, rhs);
-
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cmp(ctx->m_MIRCtx, lhs, rhs));
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_setcc(ctx->m_MIRCtx, mirCC, dstReg));
 		}
@@ -2094,7 +2092,21 @@ static bool jmirgen_processPhis(jx_mirgen_context_t* ctx)
 			if (!firstTerminator) {
 				jx_mir_bbAppendInstr(ctx->m_MIRCtx, bb, movInstr);
 			} else {
-				jx_mir_bbInsertInstrBefore(ctx->m_MIRCtx, bb, firstTerminator, movInstr);
+				// If terminator is a conditional jump find the cmp instruction 
+				// and insert all movs before the cmp. This helps simplifying conditionals.
+				if (jx_mir_opcodeIsJcc(firstTerminator->m_OpCode)) {
+					jx_mir_instruction_t* cmpInstr = firstTerminator->m_Prev;
+					while (cmpInstr && !jx_mir_opcodeIsComparison(cmpInstr->m_OpCode)) {
+						cmpInstr = cmpInstr->m_Prev;
+					}
+					cmpInstr = cmpInstr != NULL
+						? cmpInstr
+						: firstTerminator
+						;
+					jx_mir_bbInsertInstrBefore(ctx->m_MIRCtx, bb, cmpInstr, movInstr);
+				} else {
+					jx_mir_bbInsertInstrBefore(ctx->m_MIRCtx, bb, firstTerminator, movInstr);
+				}
 			}
 		}
 	}

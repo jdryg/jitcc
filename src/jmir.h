@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <jlib/dbg.h>
 #include <jlib/macros.h> // JX_PAD
+#include <jlib/string.h> // jx_strcmp
 
 typedef struct jx_allocator_i jx_allocator_i;
 typedef struct jx_string_buffer_t jx_string_buffer_t;
@@ -42,6 +43,7 @@ typedef enum jx_mir_opcode
 	JMIR_OP_MOVSX,
 	JMIR_OP_MOVZX,
 	JMIR_OP_IMUL,
+	JMIR_OP_IMUL3,
 	JMIR_OP_IDIV,
 	JMIR_OP_DIV,
 	JMIR_OP_ADD,
@@ -547,6 +549,7 @@ jx_mir_instruction_t* jx_mir_idiv(jx_mir_context_t* ctx, jx_mir_operand_t* op);
 jx_mir_instruction_t* jx_mir_inc(jx_mir_context_t* ctx, jx_mir_operand_t* op);
 jx_mir_instruction_t* jx_mir_dec(jx_mir_context_t* ctx, jx_mir_operand_t* op);
 jx_mir_instruction_t* jx_mir_imul(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
+jx_mir_instruction_t* jx_mir_imul3(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src, jx_mir_operand_t* imm);
 jx_mir_instruction_t* jx_mir_lea(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_test(jx_mir_context_t* ctx, jx_mir_operand_t* op1, jx_mir_operand_t* op2);
 jx_mir_instruction_t* jx_mir_setcc(jx_mir_context_t* ctx, jx_mir_condition_code cc, jx_mir_operand_t* dst);
@@ -809,6 +812,45 @@ static inline jx_mir_reg_class jx_mir_typeGetClass(jx_mir_type_kind type)
 		;
 }
 
+static inline bool jx_mir_opEqual(jx_mir_operand_t* op1, jx_mir_operand_t* op2)
+{
+	if (op1->m_Kind != op2->m_Kind) {
+		return false;
+	}
+	if (op1->m_Type != op2->m_Type) {
+		return false;
+	}
+	switch (op1->m_Kind) {
+	case JMIR_OPERAND_REGISTER: {
+		return jx_mir_regEqual(op1->u.m_Reg, op2->u.m_Reg);
+	} break;
+	case JMIR_OPERAND_CONST: {
+		return op1->u.m_ConstI64 == op2->u.m_ConstI64;
+	} break;
+	case JMIR_OPERAND_BASIC_BLOCK: {
+		return op1->u.m_BB == op2->u.m_BB;
+	} break;
+	case JMIR_OPERAND_EXTERNAL_SYMBOL: {
+		return true
+			&& op1->u.m_ExternalSymbol.m_Offset == op2->u.m_ExternalSymbol.m_Offset
+			&& !jx_strcmp(op1->u.m_ExternalSymbol.m_Name, op2->u.m_ExternalSymbol.m_Name)
+			;
+	} break;
+	case JMIR_OPERAND_MEMORY_REF: {
+		return true
+			&& jx_mir_regEqual(op1->u.m_MemRef->m_BaseReg, op2->u.m_MemRef->m_BaseReg)
+			&& jx_mir_regEqual(op1->u.m_MemRef->m_IndexReg, op2->u.m_MemRef->m_IndexReg)
+			&& (!jx_mir_regIsValid(op1->u.m_MemRef->m_IndexReg) || op1->u.m_MemRef->m_Scale == op2->u.m_MemRef->m_Scale)
+			&& op1->u.m_MemRef->m_Displacement == op2->u.m_MemRef->m_Displacement
+			;
+	} break;
+	default:
+		break;
+	}
+
+	return false;
+}
+
 static inline bool jx_mir_opcodeIsJcc(uint32_t opcode)
 {
 	return true
@@ -822,6 +864,17 @@ static inline bool jx_mir_opcodeIsSetcc(uint32_t opcode)
 	return true
 		&& (opcode >= JMIR_OP_SETCC_BASE)
 		&& (opcode < JMIR_OP_SETCC_BASE + JMIR_CC_COUNT)
+		;
+}
+
+static inline bool jx_mir_opcodeIsComparison(uint32_t opcode)
+{
+	return false
+		|| opcode == JMIR_OP_CMP
+		|| opcode == JMIR_OP_UCOMISS
+		|| opcode == JMIR_OP_UCOMISD
+		|| opcode == JMIR_OP_COMISS
+		|| opcode == JMIR_OP_COMISD
 		;
 }
 

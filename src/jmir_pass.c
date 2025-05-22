@@ -2356,10 +2356,13 @@ static void jmir_funcPass_peepholeDestroy(jx_mir_function_pass_o* inst, jx_alloc
 
 static bool jmir_funcPass_peepholeRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
-	bool changed = true;
+	uint32_t numOpts = 0;
 
+	bool changed = true;
 	while (changed) {
 		changed = false;
+
+		const uint32_t prevIterNumOpts = numOpts;
 
 		jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
 		while (bb) {
@@ -2376,7 +2379,7 @@ static bool jmir_funcPass_peepholeRun(jx_mir_function_pass_o* inst, jx_mir_conte
 					jx_mir_bbRemoveInstr(ctx, bb, instr);
 					jx_mir_instrFree(ctx, instr);
 
-					changed = true;
+					++numOpts;
 				} else if (instr->m_OpCode == JMIR_OP_MOVSD && jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
 					// movsd xmm, 0.0
 					//  =>
@@ -2386,7 +2389,7 @@ static bool jmir_funcPass_peepholeRun(jx_mir_function_pass_o* inst, jx_mir_conte
 					jx_mir_bbRemoveInstr(ctx, bb, instr);
 					jx_mir_instrFree(ctx, instr);
 
-					changed = true;
+					++numOpts;
 				} else if ((instr->m_OpCode == JMIR_OP_UCOMISS || instr->m_OpCode == JMIR_OP_COMISS) && jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
 					// ucomiss xmm, 0.0
 					//  => 
@@ -2397,9 +2400,42 @@ static bool jmir_funcPass_peepholeRun(jx_mir_function_pass_o* inst, jx_mir_conte
 					jx_mir_bbInsertInstrBefore(ctx, bb, instr, xorInstr);
 					instr->m_Operands[1] = tmp;
 
-					changed = true;
+					++numOpts;
 				} else if ((instr->m_OpCode == JMIR_OP_UCOMISD || instr->m_OpCode == JMIR_OP_COMISD) && jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
 					JX_CHECK(false, "Implement like the ucomiss/comiss above.");
+				} else if (instr->m_OpCode == JMIR_OP_JMP || jx_mir_opcodeIsJcc(instr->m_OpCode)) {
+					// Redirect jmp to jmp to the final jmp directly.
+					jx_mir_operand_t* targetOp = instr->m_Operands[0];
+					JX_CHECK(targetOp->m_Kind == JMIR_OPERAND_BASIC_BLOCK, "Expected basic block as jmp target");
+					jx_mir_basic_block_t* targetBB = targetOp->u.m_BB;
+					if (targetBB->m_InstrListHead && targetBB->m_InstrListHead->m_OpCode == JMIR_OP_JMP) {
+						JX_CHECK(!targetBB->m_InstrListHead->m_Next, "Unconditional jump should be the last instruction in a basic block!");
+						jx_mir_operand_t* newTargetOp = targetBB->m_InstrListHead->m_Operands[0];
+						JX_CHECK(newTargetOp->m_Kind == JMIR_OPERAND_BASIC_BLOCK, "Expected basic block as jmp target");
+						targetOp->u.m_BB = newTargetOp->u.m_BB;
+
+						++numOpts;
+					}
+				} else if (instr->m_OpCode == JMIR_OP_IMUL && instr->m_NumOperands == 2) {
+					// mov reg1, const
+					// imul reg2, reg1
+					//  => 
+					// imul reg2, reg2, const
+					jx_mir_operand_t* imul_dstOp = instr->m_Operands[0];
+					jx_mir_operand_t* imul_srcOp = instr->m_Operands[1];
+					if (imul_dstOp->m_Kind == JMIR_OPERAND_REGISTER && imul_srcOp->m_Kind == JMIR_OPERAND_REGISTER) {
+						jx_mir_instruction_t* prevInstr = instr->m_Prev;
+						if (prevInstr && prevInstr->m_OpCode == JMIR_OP_MOV && jx_mir_opEqual(imul_srcOp, prevInstr->m_Operands[0])) {
+							jx_mir_operand_t* mov_srcOp = prevInstr->m_Operands[1];
+							if (mov_srcOp->m_Kind == JMIR_OPERAND_CONST && mov_srcOp->u.m_ConstI64 >= INT32_MIN && mov_srcOp->u.m_ConstI64 <= INT32_MAX) {
+								jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_imul3(ctx, imul_dstOp, imul_dstOp, mov_srcOp));
+								jx_mir_bbRemoveInstr(ctx, bb, prevInstr);
+								jx_mir_bbRemoveInstr(ctx, bb, instr);
+								jx_mir_instrFree(ctx, prevInstr);
+								jx_mir_instrFree(ctx, instr);
+							}
+						}
+					}
 				}
 
 				instr = instrNext;
@@ -2407,9 +2443,11 @@ static bool jmir_funcPass_peepholeRun(jx_mir_function_pass_o* inst, jx_mir_conte
 
 			bb = bb->m_Next;
 		}
+
+		changed = prevIterNumOpts != numOpts;
 	}
 
-	return false;
+	return numOpts != 0;
 }
 
 static bool jmir_peephole_isFloatConst(jx_mir_operand_t* op, double val)
