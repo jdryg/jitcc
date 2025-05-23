@@ -193,6 +193,7 @@ static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64gen_context_t* ctx, co
 static jx_x64_size jx_x64gen_convertMIRTypeToSize(jx_mir_type_kind type);
 static jx_x64_reg jx_x64gen_convertMIRReg(jx_mir_reg_t mirReg, jx_x64_size sz);
 static jx_x64_scale jx_x64gen_convertMIRScale(uint32_t mirScale);
+static void jx_x64gen_setExternalSymbol(jx_x64_context_t* ctx, const char* name, void* addr);
 
 // TEST/DEBUG
 static int func1(int a, int b, int c, int d, int e, int f)
@@ -448,85 +449,33 @@ bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
 
 	// DEBUG/TEST
 	{
-		jx_x64_symbol_t* strlenSymbol = jx64_symbolGetByName(jitCtx, "strlen");
-		if (strlenSymbol) {
-			jx64_symbolSetExternalAddress(jitCtx, strlenSymbol, (void*)jx_strlen);
-		}
+		jx_x64gen_setExternalSymbol(jitCtx, "strlen", (void*)jx_strlen);
+		jx_x64gen_setExternalSymbol(jitCtx, "calloc", (void*)calloc);
+		jx_x64gen_setExternalSymbol(jitCtx, "printf", (void*)printf);
+		jx_x64gen_setExternalSymbol(jitCtx, "memset", (void*)memset);
+		jx_x64gen_setExternalSymbol(jitCtx, "memcpy", (void*)memcpy);
+		jx_x64gen_setExternalSymbol(jitCtx, "memmove", (void*)memmove);
+		jx_x64gen_setExternalSymbol(jitCtx, "memcmp", (void*)memcmp);
+		jx_x64gen_setExternalSymbol(jitCtx, "sprintf", (void*)sprintf);
+		jx_x64gen_setExternalSymbol(jitCtx, "cosf", (void*)cosf);
+		jx_x64gen_setExternalSymbol(jitCtx, "sinf", (void*)sinf);
+		jx_x64gen_setExternalSymbol(jitCtx, "sin", (void*)sin);
+		jx_x64gen_setExternalSymbol(jitCtx, "func1", (void*)func1);
+		jx_x64gen_setExternalSymbol(jitCtx, "func2", (void*)func2);
+		jx_x64gen_setExternalSymbol(jitCtx, "func3", (void*)func3);
+		jx_x64gen_setExternalSymbol(jitCtx, "func5", (void*)func5);
+		jx_x64gen_setExternalSymbol(jitCtx, "func7", (void*)func7);
+		jx_x64gen_setExternalSymbol(jitCtx, "func8", (void*)func8);
+		jx_x64gen_setExternalSymbol(jitCtx, "putchar", (void*)putchar);
 
-		jx_x64_symbol_t* callocSymbol = jx64_symbolGetByName(jitCtx, "calloc");
-		if (callocSymbol) {
-			jx64_symbolSetExternalAddress(jitCtx, callocSymbol, (void*)calloc);
-		}
-
-		jx_x64_symbol_t* printfSymbol = jx64_symbolGetByName(jitCtx, "printf");
-		if (printfSymbol) {
-			jx64_symbolSetExternalAddress(jitCtx, printfSymbol, (void*)printf);
-		}
-
-		jx_x64_symbol_t* memsetSymbol = jx64_symbolGetByName(jitCtx, "memset");
-		if (memsetSymbol) {
-			jx64_symbolSetExternalAddress(jitCtx, memsetSymbol, (void*)memset);
-		}
-
-		jx_x64_symbol_t* memcpySymbol = jx64_symbolGetByName(jitCtx, "memcpy");
-		if (memcpySymbol) {
-			jx64_symbolSetExternalAddress(jitCtx, memcpySymbol, (void*)memcpy);
-		}
-
-		jx_x64_symbol_t* sprintfSymbol = jx64_symbolGetByName(jitCtx, "sprintf");
-		if (sprintfSymbol) {
-			jx64_symbolSetExternalAddress(jitCtx, sprintfSymbol, (void*)sprintf);
-		}
-
-		jx_x64_symbol_t* cosfSymbol = jx64_symbolGetByName(jitCtx, "cosf");
-		if (cosfSymbol) {
-			jx64_symbolSetExternalAddress(jitCtx, cosfSymbol, (void*)cosf);
-		}
-
-		jx_x64_symbol_t* sinfSymbol = jx64_symbolGetByName(jitCtx, "sinf");
-		if (sinfSymbol) {
-			jx64_symbolSetExternalAddress(jitCtx, sinfSymbol, (void*)sinf);
-		}
-
-		jx_x64_symbol_t* sinSymbol = jx64_symbolGetByName(jitCtx, "sin");
-		if (sinSymbol) {
-			jx64_symbolSetExternalAddress(jitCtx, sinSymbol, (void*)sin);
-		}
-
-		jx_x64_symbol_t* func1Symbol = jx64_symbolGetByName(jitCtx, "func1");
-		if (func1Symbol) {
-			jx64_symbolSetExternalAddress(jitCtx, func1Symbol, (void*)func1);
-		}
-
-		jx_x64_symbol_t* func2Symbol = jx64_symbolGetByName(jitCtx, "func2");
-		if (func2Symbol) {
-			jx64_symbolSetExternalAddress(jitCtx, func2Symbol, (void*)func2);
-		}
-
-		jx_x64_symbol_t* func3Symbol = jx64_symbolGetByName(jitCtx, "func3");
-		if (func3Symbol) {
-			jx64_symbolSetExternalAddress(jitCtx, func3Symbol, (void*)func3);
-		}
-
-		jx_x64_symbol_t* func5Symbol = jx64_symbolGetByName(jitCtx, "func5");
-		if (func5Symbol) {
-			jx64_symbolSetExternalAddress(jitCtx, func5Symbol, (void*)func5);
-		}
-
-		jx_x64_symbol_t* func7Symbol = jx64_symbolGetByName(jitCtx, "func7");
-		if (func7Symbol) {
-			jx64_symbolSetExternalAddress(jitCtx, func7Symbol, (void*)func7);
-		}
-
-		jx_x64_symbol_t* func8Symbol = jx64_symbolGetByName(jitCtx, "func8");
-		if (func8Symbol) {
-			jx64_symbolSetExternalAddress(jitCtx, func8Symbol, (void*)func8);
-		}
-
-		jx_x64_symbol_t* putcharSymbol = jx64_symbolGetByName(jitCtx, "putchar");
-		if (putcharSymbol) {
-			jx64_symbolSetExternalAddress(jitCtx, putcharSymbol, (void*)putchar);
-		}
+		jx_x64gen_setExternalSymbol(jitCtx, "fopen", (void*)fopen);
+		jx_x64gen_setExternalSymbol(jitCtx, "fclose", (void*)fclose);
+		jx_x64gen_setExternalSymbol(jitCtx, "fwrite", (void*)fwrite);
+		jx_x64gen_setExternalSymbol(jitCtx, "frexp", (void*)frexp);
+		jx_x64gen_setExternalSymbol(jitCtx, "malloc", (void*)malloc);
+		jx_x64gen_setExternalSymbol(jitCtx, "free", (void*)free);
+		jx_x64gen_setExternalSymbol(jitCtx, "realloc", (void*)realloc);
+		jx_x64gen_setExternalSymbol(jitCtx, "abs", (void*)abs);
 	}
 
 	jx64_finalize(jitCtx);
@@ -751,4 +700,12 @@ static jx_x64_scale jx_x64gen_convertMIRScale(uint32_t mirScale)
 	}
 
 	return scale;
+}
+
+static void jx_x64gen_setExternalSymbol(jx_x64_context_t* ctx, const char* name, void* addr)
+{
+	jx_x64_symbol_t* sym = jx64_symbolGetByName(ctx, name);
+	if (sym) {
+		jx64_symbolSetExternalAddress(ctx, sym, addr);
+	}
 }

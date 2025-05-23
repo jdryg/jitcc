@@ -1503,6 +1503,11 @@ static jx_mir_operand_t* jmirgen_instrBuild_fp2ui(jx_mirgen_context_t* ctx, jx_i
 		}
 	}
 
+	if (instrValType != targetType) {
+		JX_CHECK(instrValType < targetType, "Expected truncation");
+		resReg = jx_mir_opRegAlias(ctx->m_MIRCtx, ctx->m_Func, instrValType, resReg->u.m_Reg);
+	}
+
 	return resReg;
 }
 
@@ -2067,8 +2072,8 @@ static bool jmirgen_processPhis(jx_mirgen_context_t* ctx)
 			jx_ir_value_t* irVal = phiInstr->super.m_OperandArr[iOperand + 0]->m_Value;
 			jx_ir_basic_block_t* irBB = jx_ir_valueToBasicBlock(phiInstr->super.m_OperandArr[iOperand + 1]->m_Value);
 
-			jx_mir_operand_t* srcReg = jmirgen_getOperand(ctx, irVal);
-			if (!srcReg) {
+			jx_mir_operand_t* srcOp = jmirgen_getOperand(ctx, irVal);
+			if (!srcOp) {
 				JX_CHECK(false, "Operand not found!");
 				return false;
 			}
@@ -2080,12 +2085,18 @@ static bool jmirgen_processPhis(jx_mirgen_context_t* ctx)
 			}
 
 			jx_mir_instruction_t* movInstr = NULL; 
-			if (dstReg->m_Type == JMIR_TYPE_F32) {
-				movInstr = jx_mir_movss(ctx->m_MIRCtx, dstReg, srcReg);
-			} else if (dstReg->m_Type == JMIR_TYPE_F64) {
-				movInstr = jx_mir_movsd(ctx->m_MIRCtx, dstReg, srcReg);
+			if (srcOp->m_Kind == JMIR_OPERAND_REGISTER || srcOp->m_Kind == JMIR_OPERAND_CONST) {
+				if (dstReg->m_Type == JMIR_TYPE_F32) {
+					movInstr = jx_mir_movss(ctx->m_MIRCtx, dstReg, srcOp);
+				} else if (dstReg->m_Type == JMIR_TYPE_F64) {
+					movInstr = jx_mir_movsd(ctx->m_MIRCtx, dstReg, srcOp);
+				} else {
+					movInstr = jx_mir_mov(ctx->m_MIRCtx, dstReg, srcOp);
+				}
+			} else if (srcOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+				movInstr = jx_mir_lea(ctx->m_MIRCtx, dstReg, srcOp);
 			} else {
-				movInstr = jx_mir_mov(ctx->m_MIRCtx, dstReg, srcReg);
+				JX_CHECK(false, "TODO?");
 			}
 
 			jx_mir_instruction_t* firstTerminator = jx_mir_bbGetFirstTerminatorInstr(ctx->m_MIRCtx, bb);

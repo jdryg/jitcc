@@ -238,8 +238,6 @@ jx_mir_context_t* jx_mir_createContext(jx_allocator_i* allocator)
 		ctx->m_FuncPass_regAlloc = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_regAlloc, NULL);
 		ctx->m_FuncPass_removeRedundantMoves = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_removeRedundantMoves, NULL);
 		ctx->m_FuncPass_redundantConstElimination = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_redundantConstElimination, NULL);
-		ctx->m_FuncPass_simplifyCondJmp = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_simplifyCondJmp, NULL);
-		ctx->m_FuncPass_peephole = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_peephole, NULL);
 	}
 #else
 	{
