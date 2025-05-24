@@ -42,6 +42,7 @@ typedef struct jx_ir_context_t
 	jx_ir_function_pass_t* m_FuncPass_peephole;
 	jx_ir_function_pass_t* m_FuncPass_removeRedundantPhis;
 	jx_ir_function_pass_t* m_FuncPass_reorderBasicBlocks;
+	jx_ir_function_pass_t* m_FuncPass_deadCodeElimination;
 	jx_ir_module_pass_t* m_ModulePass_inlineFuncs;
 } jx_ir_context_t;
 
@@ -210,6 +211,7 @@ jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator)
 		ctx->m_FuncPass_peephole = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_peephole, NULL);
 		ctx->m_FuncPass_removeRedundantPhis = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_removeRedundantPhis, NULL);
 		ctx->m_FuncPass_reorderBasicBlocks = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_reorderBasicBlocks, NULL);
+		ctx->m_FuncPass_deadCodeElimination = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_deadCodeElimination, NULL);
 	}
 
 	// Initialize module passes
@@ -322,6 +324,11 @@ void jx_ir_destroyContext(jx_ir_context_t* ctx)
 		if (ctx->m_FuncPass_reorderBasicBlocks) {
 			jir_funcPassDestroy(ctx, ctx->m_FuncPass_reorderBasicBlocks);
 			ctx->m_FuncPass_reorderBasicBlocks = NULL;
+		}
+
+		if (ctx->m_FuncPass_deadCodeElimination) {
+			jir_funcPassDestroy(ctx, ctx->m_FuncPass_deadCodeElimination);
+			ctx->m_FuncPass_deadCodeElimination = NULL;
 		}
 	}
 
@@ -469,7 +476,44 @@ void jx_ir_moduleEnd(jx_ir_context_t* ctx, jx_ir_module_t* mod)
 		jx_ir_function_t* func = mod->m_FunctionListHead;
 		while (func) {
 			if (!jir_funcIsExternal(ctx, func)) {
+				jir_funcPassApply(ctx, ctx->m_FuncPass_canonicalizeOperands, func);
 				jir_funcPassApply(ctx, ctx->m_FuncPass_simpleSSA, func);
+				jir_funcPassApply(ctx, ctx->m_FuncPass_constantFolding, func);
+				jir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func);
+				jir_funcPassApply(ctx, ctx->m_FuncPass_removeRedundantPhis, func);
+			}
+
+			func = func->m_Next;
+		}
+	}
+
+	// Apply whole module passes
+	{
+		jir_modulePassApply(ctx, ctx->m_ModulePass_inlineFuncs, mod);
+	}
+
+	// Apply post func passes
+	{
+		jx_ir_function_t* func = mod->m_FunctionListHead;
+		while (func) {
+			if (!jir_funcIsExternal(ctx, func)) {
+				uint32_t iter = 0;
+				bool changed = true;
+				while (changed && iter < 10) {
+					changed = false;
+
+					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_constantFolding, func);
+					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_peephole, func) || changed;
+					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_removeRedundantPhis, func) || changed;
+					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCFG, func) || changed;
+					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func) || changed;
+
+					++iter;
+				}
+
+				// NOTE: Always returns true even if no change is made!
+				// TODO: Fix?
+				jir_funcPassApply(ctx, ctx->m_FuncPass_reorderBasicBlocks, func);
 			}
 
 			func = func->m_Next;

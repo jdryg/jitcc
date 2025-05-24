@@ -642,4 +642,11 @@ static inline jx_ir_value_t* jx_ir_instrGetOperandVal(jx_ir_instruction_t* instr
 	return user->m_OperandArr[operandID]->m_Value;
 }
 
+static inline void jx_ir_instrSwapOperands(jx_ir_instruction_t* instr, uint32_t op1, uint32_t op2)
+{
+	jx_ir_use_t* tmp = instr->super.m_OperandArr[0];
+	instr->super.m_OperandArr[0] = instr->super.m_OperandArr[1];
+	instr->super.m_OperandArr[1] = tmp;
+}
+
 #endif // JX_IR_H

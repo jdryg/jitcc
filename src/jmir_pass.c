@@ -585,6 +585,8 @@ static bool jmir_funcPass_regAllocRun(jx_mir_function_pass_o* inst, jx_mir_conte
 
 			++iter;
 		}
+
+		JX_CHECK(iter != JMIR_REGALLOC_MAX_ITERATIONS, "Maximum iterations exceeded?");
 	}
 
 	return false;
