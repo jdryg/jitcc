@@ -686,6 +686,7 @@ static jx_ir_value_t* jir_simpleSSA_readVariable_r(jir_func_pass_simple_ssa_t* p
 
 static void jir_simpleSSA_replaceVariable(jir_func_pass_simple_ssa_t* pass, jx_ir_value_t* var, jx_ir_value_t* newVal)
 {
+	JX_CHECK(var->m_Type == newVal->m_Type, "Replacement values should have the same type!");
 	newVal = jir_simpleSSA_getReplacementValue(pass, newVal);
 	jx_ir_valueReplaceAllUsesWith(pass->m_Ctx, var, newVal);
 	jx_hashmapSet(pass->m_ReplacementMap, &(jir_value_map_item_t){.m_Key = var, .m_Value = newVal});

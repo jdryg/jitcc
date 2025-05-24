@@ -95,7 +95,6 @@ static bool jir_funcCtor(jx_ir_context_t* ctx, jx_ir_function_t* func, jx_ir_typ
 static void jir_funcDtor(jx_ir_context_t* ctx, jx_ir_function_t* func);
 static const char* jir_funcGenTempName(jx_ir_context_t* ctx, jx_ir_function_t* func);
 static bool jir_funcIsExternal(jx_ir_context_t* ctx, jx_ir_function_t* func);
-static void jir_funcApplyPasses(jx_ir_context_t* ctx, jx_ir_function_t* func, jx_ir_function_pass_t* passListHead);
 static jx_ir_function_pass_t* jir_funcPassCreate(jx_ir_context_t* ctx, jirFuncPassCtorFunc ctorFunc, void* passConfig);
 static void jir_funcPassDestroy(jx_ir_context_t* ctx, jx_ir_function_pass_t* pass);
 static bool jir_funcPassApply(jx_ir_context_t* ctx, jx_ir_function_pass_t* pass, jx_ir_function_t* func);
@@ -464,6 +463,19 @@ jx_ir_module_t* jx_ir_moduleBegin(jx_ir_context_t* ctx, const char* name)
 
 void jx_ir_moduleEnd(jx_ir_context_t* ctx, jx_ir_module_t* mod)
 {
+#if 1
+	// Apply pre func passes
+	{
+		jx_ir_function_t* func = mod->m_FunctionListHead;
+		while (func) {
+			if (!jir_funcIsExternal(ctx, func)) {
+				jir_funcPassApply(ctx, ctx->m_FuncPass_simpleSSA, func);
+			}
+
+			func = func->m_Next;
+		}
+	}
+#else
 	// Apply pre func passes
 	{
 		jx_ir_function_t* func = mod->m_FunctionListHead;
@@ -510,6 +522,7 @@ void jx_ir_moduleEnd(jx_ir_context_t* ctx, jx_ir_module_t* mod)
 			func = func->m_Next;
 		}
 	}
+#endif
 }
 
 jx_ir_global_value_t* jx_ir_moduleDeclareGlobalVal(jx_ir_context_t* ctx, jx_ir_module_t* mod, const char* name, jx_ir_type_t* type, jx_ir_linkage_kind linkageKind)
@@ -4246,7 +4259,7 @@ static int32_t jir_typeCompareCallback(const void* a, const void* b, void* udata
 static uint64_t jir_constHashCallback(const void* item, uint64_t seed0, uint64_t seed1, void* udata)
 {
 	const jx_ir_constant_t* c = *(const jx_ir_constant_t**)item;
-	const jx_ir_type_t* type = c->super.super.m_Type;
+	jx_ir_type_t* type = c->super.super.m_Type;
 
 	uint64_t hash = jx_hashFNV1a(&type->m_Kind, sizeof(uint32_t), seed0, seed1);
 	switch (type->m_Kind) {
@@ -4269,6 +4282,11 @@ static uint64_t jir_constHashCallback(const void* item, uint64_t seed0, uint64_t
 	} break;
 	case JIR_TYPE_STRUCT:
 	case JIR_TYPE_ARRAY: {
+		if (type->m_Kind == JIR_TYPE_ARRAY) {
+			jx_ir_type_array_t* arrType = jx_ir_typeToArray(type);
+			jir_typeHashCallback(&arrType->m_BaseType, hash, seed1, udata);
+		}
+
 		const uint32_t numElements = (uint32_t)jx_array_sizeu(c->super.m_OperandArr);
 		hash = jx_hashFNV1a(&numElements, sizeof(uint32_t), hash, seed1);
 		for (uint32_t iElem = 0; iElem < numElements; ++iElem) {
@@ -4276,6 +4294,8 @@ static uint64_t jir_constHashCallback(const void* item, uint64_t seed0, uint64_t
 		}
 	} break;
 	case JIR_TYPE_POINTER: {
+		jx_ir_type_pointer_t* ptrType = jx_ir_typeToPointer(type);
+		jir_typeHashCallback(&ptrType->m_BaseType, hash, seed1, udata);
 		hash = jx_hashFNV1a(&c->u.m_Ptr, sizeof(uintptr_t), hash, seed1);
 	} break;
 	case JIR_TYPE_FUNCTION:
@@ -4297,11 +4317,11 @@ static int32_t jir_constCompareCallback(const void* a, const void* b, void* udat
 
 	const jx_ir_type_t* typeA = cA->super.super.m_Type;
 	const jx_ir_type_t* typeB = cB->super.super.m_Type;
-	if (typeA->m_Kind != typeB->m_Kind) {
-		return typeA->m_Kind < typeB->m_Kind ? -1 : 1;
+	int32_t res = jir_typeCompareCallback(&typeA, &typeB, udata);
+	if (res != 0) {
+		return res;
 	}
 
-	int32_t res = 0;
 	switch (typeA->m_Kind) {
 	case JIR_TYPE_BOOL: {
 		res = cA->u.m_Bool < cB->u.m_Bool
@@ -4535,39 +4555,6 @@ static const char* jir_funcGenTempName(jx_ir_context_t* ctx, jx_ir_function_t* f
 static bool jir_funcIsExternal(jx_ir_context_t* ctx, jx_ir_function_t* func)
 {
 	return func->m_BasicBlockListHead == NULL;
-}
-
-static void jir_funcApplyPasses(jx_ir_context_t* ctx, jx_ir_function_t* func, jx_ir_function_pass_t* passListHead)
-{
-	JX_CHECK(jx_ir_funcCheck(ctx, func), "Function's IR and/or CFG is invalid!");
-	jx_ir_function_pass_t* pass = passListHead;
-	while (pass) {
-#if 0
-		{
-			jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
-			jx_ir_funcPrint(ctx, func, sb);
-			jx_strbuf_nullTerminate(sb);
-			JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
-			jx_strbuf_destroy(sb);
-		}
-#endif
-
-		bool funcModified = pass->run(pass->m_Inst, ctx, func);
-
-#if 0
-		{
-			jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
-			jx_ir_funcPrint(ctx, func, sb);
-			jx_strbuf_nullTerminate(sb);
-			JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
-			jx_strbuf_destroy(sb);
-		}
-#endif
-
-		JX_UNUSED(funcModified);
-		JX_CHECK(jx_ir_funcCheck(ctx, func), "Function's IR and/or CFG is invalid!");
-		pass = pass->m_Next;
-	}
 }
 
 static jx_ir_function_pass_t* jir_funcPassCreate(jx_ir_context_t* ctx, jirFuncPassCtorFunc ctorFunc, void* passConfig)
