@@ -2408,6 +2408,7 @@ static void jir_reorderBB_walkSCCTree(jir_func_pass_reorder_bb_t* pass, jir_cfg_
 			} else {
 				// Cycle with many entry points.
 				// TODO: This hits with c-testsuite/00143.c with SSA disabled and it seems to work.
+				// TODO: It does not work on stb_sprintf_test.c with loop rotation enabled during codegen.
 				JX_CHECK(false, "This is untested. If it comes up it might fail down the line. Debug if necessary and remove this assert if everything is fine.");
 				for (uint32_t iNode = numNodes; iNode > 0; --iNode) {
 					jx_array_push_back(pass->m_BBArr, scc->m_NodesArr[iNode - 1]->m_BasicBlock);
