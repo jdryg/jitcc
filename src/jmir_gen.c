@@ -821,9 +821,13 @@ static jx_mir_operand_t* jmirgen_instrBuild_setcc(jx_mirgen_context_t* ctx, jx_i
 		jx_mir_condition_code mirCC = kIRCCToMIRCCUnsigned[irCC];
 			
 		if (cmpType->m_Kind == JIR_TYPE_F32) {
+			rhs = jmirgen_ensureOperandRegOrMem(ctx, rhs);
+			lhs = jmirgen_ensureOperandReg(ctx, lhs);
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_ucomiss(ctx->m_MIRCtx, lhs, rhs));
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_setcc(ctx->m_MIRCtx, mirCC, dstReg));
 		} else if (cmpType->m_Kind == JIR_TYPE_F64) {
+			rhs = jmirgen_ensureOperandRegOrMem(ctx, rhs);
+			lhs = jmirgen_ensureOperandReg(ctx, lhs);
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_ucomisd(ctx->m_MIRCtx, lhs, rhs));
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_setcc(ctx->m_MIRCtx, mirCC, dstReg));
 		} else {
@@ -1524,10 +1528,12 @@ static jx_mir_operand_t* jmirgen_instrBuild_fp2si(jx_mirgen_context_t* ctx, jx_i
 	jx_mir_operand_t* operand = jmirgen_getOperand(ctx, operandVal);
 	operand = jmirgen_ensureOperandRegOrMem(ctx, operand);
 
-	jx_mir_type_kind targetType = jmirgen_convertType(instrVal->m_Type);
-	if (targetType != JMIR_TYPE_I32 && targetType != JMIR_TYPE_I64) {
-		targetType = JMIR_TYPE_I32;
-	}
+	jx_mir_type_kind instrValType = jmirgen_convertType(instrVal->m_Type);
+
+	jx_mir_type_kind targetType = (instrValType != JMIR_TYPE_I32 && instrValType != JMIR_TYPE_I64)
+		? JMIR_TYPE_I32
+		: instrValType
+		;
 
 	jx_mir_operand_t* resReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, targetType);
 	if (operand->m_Type == JMIR_TYPE_F32) {
@@ -1536,6 +1542,11 @@ static jx_mir_operand_t* jmirgen_instrBuild_fp2si(jx_mirgen_context_t* ctx, jx_i
 		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cvtsd2si(ctx->m_MIRCtx, resReg, operand));
 	} else {
 		JX_CHECK(false, "Unknown floating point type");
+	}
+
+	if (instrValType != targetType) {
+		JX_CHECK(instrValType < targetType, "Expected truncation");
+		resReg = jx_mir_opRegAlias(ctx->m_MIRCtx, ctx->m_Func, instrValType, resReg->u.m_Reg);
 	}
 
 	return resReg;
