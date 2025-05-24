@@ -2096,7 +2096,7 @@ static bool jmirgen_processPhis(jx_mirgen_context_t* ctx)
 			}
 
 			jx_mir_instruction_t* movInstr = NULL; 
-			if (srcOp->m_Kind == JMIR_OPERAND_REGISTER || srcOp->m_Kind == JMIR_OPERAND_CONST) {
+			if (srcOp->m_Kind == JMIR_OPERAND_REGISTER || srcOp->m_Kind == JMIR_OPERAND_CONST || (srcOp->m_Kind == JMIR_OPERAND_MEMORY_REF && !jx_mir_opIsStackObj(srcOp))) {
 				if (dstReg->m_Type == JMIR_TYPE_F32) {
 					movInstr = jx_mir_movss(ctx->m_MIRCtx, dstReg, srcOp);
 				} else if (dstReg->m_Type == JMIR_TYPE_F64) {
@@ -2104,7 +2104,7 @@ static bool jmirgen_processPhis(jx_mirgen_context_t* ctx)
 				} else {
 					movInstr = jx_mir_mov(ctx->m_MIRCtx, dstReg, srcOp);
 				}
-			} else if (srcOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+			} else if (srcOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL || jx_mir_opIsStackObj(srcOp)) {
 				movInstr = jx_mir_lea(ctx->m_MIRCtx, dstReg, srcOp);
 			} else {
 				JX_CHECK(false, "TODO?");

@@ -157,7 +157,7 @@ int main(int argc, char** argv)
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 	jx_cc_addIncludePath(ctx, JX_FILE_BASE_DIR_INSTALL, "include");
 
-//	const char* sourceFile = "test/c-testsuite/00175.c";
+//	const char* sourceFile = "test/c-testsuite/00130.c";
 //	const char* sourceFile = "test/stb_image_write_test.c";
 	const char* sourceFile = "test/stb_sprintf_test.c";
 
