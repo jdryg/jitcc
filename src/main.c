@@ -72,14 +72,10 @@ int main(int argc, char** argv)
 			|| iTest == 152 // #line+#error
 			|| iTest == 162 // const/static/volatile/restrict in array declaration
 			|| iTest == 170 // forward enum
-			|| iTest == 179 // string.h functions
-			|| iTest == 180 // string.h functions
-			|| iTest == 187 // file functions
 			|| iTest == 189 // fprintf/stdout
 			|| iTest == 206 // #pragma
 			|| iTest == 207 // VLA
 			|| iTest == 210 // __attribute__
-//			|| iTest == 212 // Predefined macros
 			|| iTest == 213 // Statement expressions
 			|| iTest == 214 // __builtin_expect
 			|| iTest == 216 // BUG? Parser: missing braces from inner union initializer
@@ -157,7 +153,7 @@ int main(int argc, char** argv)
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 	jx_cc_addIncludePath(ctx, JX_FILE_BASE_DIR_INSTALL, "include");
 
-//	const char* sourceFile = "test/c-testsuite/00130.c";
+//	const char* sourceFile = "test/c-testsuite/00189.c";
 //	const char* sourceFile = "test/stb_image_write_test.c";
 	const char* sourceFile = "test/stb_sprintf_test.c";
 

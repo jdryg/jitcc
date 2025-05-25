@@ -2959,6 +2959,10 @@ bool jx_ir_funcPassCreate_localValueNumbering(jx_ir_function_pass_t* pass, jx_al
 static void jir_funcPass_localValueNumberingDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator)
 {
 	jir_func_pass_lvn_t* pass = (jir_func_pass_lvn_t*)inst;
+	if (pass->m_ValueMap) {
+		jx_hashmapDestroy(pass->m_ValueMap);
+		pass->m_ValueMap = NULL;
+	}
 	JX_FREE(allocator, pass);
 }
 

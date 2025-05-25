@@ -12,6 +12,7 @@
 #include <stdio.h>  // printf
 #include <math.h>   // cosf/sinf
 #include <memory.h> // memset/memcpy
+#include <string.h> // strcpy
 
 typedef bool (*jx64VoidFunc)(jx_x64_context_t* ctx);
 typedef bool (*jx64UnaryFunc)(jx_x64_context_t* ctx, jx_x64_operand_t op);
@@ -471,6 +472,21 @@ bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
 		jx_x64gen_setExternalSymbol(jitCtx, "fopen", (void*)fopen);
 		jx_x64gen_setExternalSymbol(jitCtx, "fclose", (void*)fclose);
 		jx_x64gen_setExternalSymbol(jitCtx, "fwrite", (void*)fwrite);
+		jx_x64gen_setExternalSymbol(jitCtx, "fread", (void*)fread);
+		jx_x64gen_setExternalSymbol(jitCtx, "fgetc", (void*)fgetc);
+		jx_x64gen_setExternalSymbol(jitCtx, "getc", (void*)getc);
+		jx_x64gen_setExternalSymbol(jitCtx, "fgets", (void*)fgets);
+		jx_x64gen_setExternalSymbol(jitCtx, "fprintf", (void*)fprintf);
+
+		jx_x64gen_setExternalSymbol(jitCtx, "strcpy", (void*)strcpy);
+		jx_x64gen_setExternalSymbol(jitCtx, "strncpy", (void*)strncpy);
+		jx_x64gen_setExternalSymbol(jitCtx, "strcmp", (void*)strcmp);
+		jx_x64gen_setExternalSymbol(jitCtx, "strlen", (void*)strlen);
+		jx_x64gen_setExternalSymbol(jitCtx, "strcat", (void*)strcat);
+		jx_x64gen_setExternalSymbol(jitCtx, "strncmp", (void*)strncmp);
+		jx_x64gen_setExternalSymbol(jitCtx, "strchr", (void*)strchr);
+		jx_x64gen_setExternalSymbol(jitCtx, "strrchr", (void*)strrchr);
+		
 		jx_x64gen_setExternalSymbol(jitCtx, "frexp", (void*)frexp);
 		jx_x64gen_setExternalSymbol(jitCtx, "malloc", (void*)malloc);
 		jx_x64gen_setExternalSymbol(jitCtx, "free", (void*)free);
