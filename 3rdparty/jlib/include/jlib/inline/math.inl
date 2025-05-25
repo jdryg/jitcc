@@ -441,6 +441,16 @@ static inline bool jx_isMultipleOf_u64(uint64_t x, uint64_t of)
 	return (x & (of - 1)) == 0;
 }
 
+static inline uint32_t jx_log2_u32(uint32_t v)
+{
+	uint32_t r = 0; // r will be lg(v)
+	while (v >>= 1) {
+		r++;
+	}
+
+	return r;
+}
+
 static inline uint32_t jx_bisectf(const float* arr, uint32_t n, uint32_t stride, float x)
 {
 	return math_api->bisectf(arr, n, stride, x);

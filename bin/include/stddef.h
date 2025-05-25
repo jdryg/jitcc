@@ -5,7 +5,7 @@
 
 typedef unsigned long long size_t;
 typedef long long ptrdiff_t;
-//typedef unsigned int wchar_t;
+typedef unsigned short wchar_t;
 typedef long long max_align_t;
 
 #endif // _STDDEF

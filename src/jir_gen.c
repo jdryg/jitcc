@@ -589,6 +589,21 @@ static bool jirgenGenStatement(jx_irgen_context_t* ctx, jx_cc_ast_stmt_t* stmt)
 	case JCC_NODE_STMT_FOR: {
 		jx_cc_ast_stmt_for_t* forNode = (jx_cc_ast_stmt_for_t*)stmt;
 
+#if 1
+		//   ... current basic block
+		//   optional init statement
+		//   br cond
+		// cond:
+		//   %condVal = eval optional cond statement
+		//   br %condVal, body, end or br body
+		// body:
+		//   loop body
+		//   br inc
+		// inc:
+		//   optional inc statement
+		//   br cond
+		// end:
+		//   ... next program statement goes here
 		jx_ir_basic_block_t* bbCond = jx_ir_bbAlloc(irctx, NULL);
 		jx_ir_basic_block_t* bbBody = jirgenGetOrCreateLabeledBB(ctx, forNode->m_BodyLbl);
 		jx_ir_basic_block_t* bbEnd = jirgenGetOrCreateLabeledBB(ctx, forNode->m_BreakLbl);
@@ -598,8 +613,8 @@ static bool jirgenGenStatement(jx_irgen_context_t* ctx, jx_cc_ast_stmt_t* stmt)
 			jirgenGenStatement(ctx, forNode->m_InitStmt);
 		}
 		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, jx_ir_instrBranch(irctx, bbCond));
-		jirgenSwitchBasicBlock(ctx, bbCond);
 
+		jirgenSwitchBasicBlock(ctx, bbCond);
 		if (forNode->m_CondExpr) {
 			jx_ir_value_t* condVal = jirgenGenExpression(ctx, forNode->m_CondExpr);
 			condVal = jirgenConvertToBool(ctx, condVal);
@@ -607,18 +622,81 @@ static bool jirgenGenStatement(jx_irgen_context_t* ctx, jx_cc_ast_stmt_t* stmt)
 		} else {
 			jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, jx_ir_instrBranch(irctx, bbBody));
 		}
+
 		jirgenSwitchBasicBlock(ctx, bbBody);
-
 		jirgenGenStatement(ctx, forNode->m_BodyStmt);
-
 		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, jx_ir_instrBranch(irctx, bbInc));
-		jirgenSwitchBasicBlock(ctx, bbInc);
 
+		jirgenSwitchBasicBlock(ctx, bbInc);
 		if (forNode->m_IncExpr) {
 			jirgenGenExpression(ctx, forNode->m_IncExpr);
 		}
 		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, jx_ir_instrBranch(irctx, bbCond));
+
 		jirgenSwitchBasicBlock(ctx, bbEnd);
+#else
+		// TODO: Loop inversion/rotation aka move initial condition test outside loop body and 
+		// add loop condition test after loop body.
+		// 
+		//   ... current basic block
+		//   optional init statement
+		//   %condVal = eval optional cond statement
+		//   br %condVal, preheader, exit or br preheader
+		// preheader:
+		//   br body
+		// body:
+		//   ... loop body
+		//   br inc
+		// inc:
+		//   optional inc statement
+		//   %condVal = eval optional cond statement
+		//   br %condVal, body, exit or br body
+		// exit:
+		//   br end;
+		// end:
+		//   ... next program statement goes here
+		jx_ir_basic_block_t* bbPreheader = jx_ir_bbAlloc(irctx, NULL);
+		jx_ir_basic_block_t* bbExit = jx_ir_bbAlloc(irctx, NULL);
+		jx_ir_basic_block_t* bbBody = jirgenGetOrCreateLabeledBB(ctx, forNode->m_BodyLbl);
+		jx_ir_basic_block_t* bbInc = jirgenGetOrCreateLabeledBB(ctx, forNode->m_ContinueLbl);
+		jx_ir_basic_block_t* bbEnd = jirgenGetOrCreateLabeledBB(ctx, forNode->m_BreakLbl);
+
+		if (forNode->m_InitStmt) {
+			jirgenGenStatement(ctx, forNode->m_InitStmt);
+		}
+		if (forNode->m_CondExpr) {
+			jx_ir_value_t* condVal = jirgenGenExpression(ctx, forNode->m_CondExpr);
+			condVal = jirgenConvertToBool(ctx, condVal);
+			jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, jx_ir_instrBranchIf(irctx, condVal, bbPreheader, bbExit));
+		} else {
+			jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, jx_ir_instrBranch(irctx, bbPreheader));
+		}
+
+		jirgenSwitchBasicBlock(ctx, bbPreheader);
+		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, jx_ir_instrBranch(irctx, bbBody));
+
+		jirgenSwitchBasicBlock(ctx, bbBody);
+		jirgenGenStatement(ctx, forNode->m_BodyStmt);
+		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, jx_ir_instrBranch(irctx, bbInc));
+
+		jirgenSwitchBasicBlock(ctx, bbInc);
+		if (forNode->m_IncExpr) {
+			jirgenGenExpression(ctx, forNode->m_IncExpr);
+		}
+
+		if (forNode->m_CondExpr) {
+			jx_ir_value_t* condVal = jirgenGenExpression(ctx, forNode->m_CondExpr);
+			condVal = jirgenConvertToBool(ctx, condVal);
+			jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, jx_ir_instrBranchIf(irctx, condVal, bbBody, bbExit));
+		} else {
+			jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, jx_ir_instrBranch(irctx, bbBody));
+		}
+
+		jirgenSwitchBasicBlock(ctx, bbExit);
+		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, jx_ir_instrBranch(irctx, bbEnd));
+
+		jirgenSwitchBasicBlock(ctx, bbEnd);
+#endif
 	} break;
 	case JCC_NODE_STMT_DO: {
 		jx_cc_ast_stmt_do_t* doNode = (jx_cc_ast_stmt_do_t*)stmt;

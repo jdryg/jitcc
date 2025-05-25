@@ -1033,6 +1033,7 @@ bool jx64_imul3(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 				|| JX64_REG_GET_SIZE(dst_r) != JX64_REG_GET_SIZE(src_r)
 				;
 			if (invalidOperands) {
+				JX_CHECK(false, "Invalid operands.");
 				return false;
 			}
 
@@ -1050,7 +1051,35 @@ bool jx64_imul3(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 			jx64_instrEnc_modrm(enc, 0b11, JX64_REG_LO(dst_r), JX64_REG_LO(src_r));
 			jx64_instrEnc_imm(enc, true, JX64_SIZE_8, imm8);
 		} else {
-			JX_NOT_IMPLEMENTED();
+			jx_x64_reg dst_r = dst.u.m_Reg;
+			jx_x64_reg src_r = src1.u.m_Reg;
+			const int64_t src_imm = src2.u.m_ImmI64;
+
+			const bool invalidOperands = false
+				|| dst_r == JX64_REG_NONE
+				|| src_r == JX64_REG_NONE
+				|| JX64_REG_IS_RIP(dst_r)
+				|| JX64_REG_IS_RIP(src_r)
+				|| JX64_REG_GET_SIZE(dst_r) != JX64_REG_GET_SIZE(src_r)
+				;
+			if (invalidOperands) {
+				JX_CHECK(false, "Invalid operands.");
+				return false;
+			}
+
+			const jx_x64_size reg_sz = JX64_REG_GET_SIZE(dst_r);
+
+			const bool needsREX = false
+				|| reg_sz == JX64_SIZE_64
+				|| JX64_REG_IS_HI(dst_r)
+				|| JX64_REG_IS_HI(src_r)
+				;
+
+			jx64_instrEnc_operandSize(enc, reg_sz == JX64_SIZE_16);
+			jx64_instrEnc_rex(enc, needsREX, reg_sz == JX64_SIZE_64, JX64_REG_HI(dst_r), 0, JX64_REG_HI(src_r));
+			jx64_instrEnc_opcode1(enc, 0x69);
+			jx64_instrEnc_modrm(enc, 0b11, JX64_REG_LO(dst_r), JX64_REG_LO(src_r));
+			jx64_instrEnc_imm(enc, true, reg_sz, src_imm);
 		}
 	} else {
 		JX_CHECK(false, "Invalid operands.");

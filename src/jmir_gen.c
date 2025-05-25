@@ -821,9 +821,13 @@ static jx_mir_operand_t* jmirgen_instrBuild_setcc(jx_mirgen_context_t* ctx, jx_i
 		jx_mir_condition_code mirCC = kIRCCToMIRCCUnsigned[irCC];
 			
 		if (cmpType->m_Kind == JIR_TYPE_F32) {
+			rhs = jmirgen_ensureOperandRegOrMem(ctx, rhs);
+			lhs = jmirgen_ensureOperandReg(ctx, lhs);
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_ucomiss(ctx->m_MIRCtx, lhs, rhs));
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_setcc(ctx->m_MIRCtx, mirCC, dstReg));
 		} else if (cmpType->m_Kind == JIR_TYPE_F64) {
+			rhs = jmirgen_ensureOperandRegOrMem(ctx, rhs);
+			lhs = jmirgen_ensureOperandReg(ctx, lhs);
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_ucomisd(ctx->m_MIRCtx, lhs, rhs));
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_setcc(ctx->m_MIRCtx, mirCC, dstReg));
 		} else {
@@ -840,7 +844,10 @@ static jx_mir_operand_t* jmirgen_instrBuild_setcc(jx_mirgen_context_t* ctx, jx_i
 		const bool lhsConst = lhs->m_Kind == JMIR_OPERAND_CONST;
 		const bool rhsConst = rhs->m_Kind == JMIR_OPERAND_CONST;
 		if (lhsConst && rhsConst) {
-			JX_CHECK(false, "I think I need an optimization pass!");
+			rhs = jmirgen_ensureOperandReg(ctx, rhs);
+			lhs = jmirgen_ensureOperandReg(ctx, lhs);
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cmp(ctx->m_MIRCtx, lhs, rhs));
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_setcc(ctx->m_MIRCtx, mirCC, dstReg));
 		} else if (lhsConst && !rhsConst) {
 			// Swap operands and condition code.
 			lhs = jmirgen_ensureOperandNotConstI64(ctx, lhs);
@@ -848,8 +855,6 @@ static jx_mir_operand_t* jmirgen_instrBuild_setcc(jx_mirgen_context_t* ctx, jx_i
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_setcc(ctx->m_MIRCtx, jx_mir_ccSwapOperands(mirCC), dstReg));
 		} else {
 			rhs = jmirgen_ensureOperandNotConstI64(ctx, rhs);
-			rhs = jmirgen_ensureOperandRegOrMem(ctx, rhs);
-
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cmp(ctx->m_MIRCtx, lhs, rhs));
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_setcc(ctx->m_MIRCtx, mirCC, dstReg));
 		}
@@ -1350,13 +1355,23 @@ static jx_mir_operand_t* jmirgen_instrBuild_intToPtr(jx_mirgen_context_t* ctx, j
 	jx_ir_type_t* operandType = operandVal->m_Type;
 
 	if (operandType->m_Kind != JIR_TYPE_POINTER && operandType->m_Kind != JIR_TYPE_I64 && operandType->m_Kind != JIR_TYPE_U64) {
-		// Inline zext because zext expects integer types.
-		jx_mir_operand_t* operand = jmirgen_getOperand(ctx, operandVal);
-		operand = jmirgen_ensureOperandRegOrMem(ctx, operand);
+		JX_CHECK(jx_ir_typeIsInteger(operandType), "Expected integer type");
 
 		jx_mir_type_kind targetType = jmirgen_convertType(instrType);
+		JX_CHECK(targetType == JMIR_TYPE_PTR, "inttoptr without ptr type?");
 		jx_mir_operand_t* resReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, targetType);
-		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movzx(ctx->m_MIRCtx, resReg, operand));
+
+		jx_ir_constant_t* constOp = jx_ir_valueToConst(operandVal);
+		if (constOp) {
+			// Common case for generating NULL pointers.
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, resReg, jx_mir_opIConst(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64, constOp->u.m_I64)));
+		} else {
+			// Inline zext because zext expects integer types.
+			jx_mir_operand_t* operand = jmirgen_getOperand(ctx, operandVal);
+			operand = jmirgen_ensureOperandRegOrMem(ctx, operand);
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_movzx(ctx->m_MIRCtx, resReg, operand));
+		}
+
 		return resReg;
 	}
 
@@ -1492,6 +1507,11 @@ static jx_mir_operand_t* jmirgen_instrBuild_fp2ui(jx_mirgen_context_t* ctx, jx_i
 		}
 	}
 
+	if (instrValType != targetType) {
+		JX_CHECK(instrValType < targetType, "Expected truncation");
+		resReg = jx_mir_opRegAlias(ctx->m_MIRCtx, ctx->m_Func, instrValType, resReg->u.m_Reg);
+	}
+
 	return resReg;
 }
 
@@ -1508,10 +1528,12 @@ static jx_mir_operand_t* jmirgen_instrBuild_fp2si(jx_mirgen_context_t* ctx, jx_i
 	jx_mir_operand_t* operand = jmirgen_getOperand(ctx, operandVal);
 	operand = jmirgen_ensureOperandRegOrMem(ctx, operand);
 
-	jx_mir_type_kind targetType = jmirgen_convertType(instrVal->m_Type);
-	if (targetType != JMIR_TYPE_I32 && targetType != JMIR_TYPE_I64) {
-		targetType = JMIR_TYPE_I32;
-	}
+	jx_mir_type_kind instrValType = jmirgen_convertType(instrVal->m_Type);
+
+	jx_mir_type_kind targetType = (instrValType != JMIR_TYPE_I32 && instrValType != JMIR_TYPE_I64)
+		? JMIR_TYPE_I32
+		: instrValType
+		;
 
 	jx_mir_operand_t* resReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, targetType);
 	if (operand->m_Type == JMIR_TYPE_F32) {
@@ -1520,6 +1542,11 @@ static jx_mir_operand_t* jmirgen_instrBuild_fp2si(jx_mirgen_context_t* ctx, jx_i
 		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cvtsd2si(ctx->m_MIRCtx, resReg, operand));
 	} else {
 		JX_CHECK(false, "Unknown floating point type");
+	}
+
+	if (instrValType != targetType) {
+		JX_CHECK(instrValType < targetType, "Expected truncation");
+		resReg = jx_mir_opRegAlias(ctx->m_MIRCtx, ctx->m_Func, instrValType, resReg->u.m_Reg);
 	}
 
 	return resReg;
@@ -2056,8 +2083,8 @@ static bool jmirgen_processPhis(jx_mirgen_context_t* ctx)
 			jx_ir_value_t* irVal = phiInstr->super.m_OperandArr[iOperand + 0]->m_Value;
 			jx_ir_basic_block_t* irBB = jx_ir_valueToBasicBlock(phiInstr->super.m_OperandArr[iOperand + 1]->m_Value);
 
-			jx_mir_operand_t* srcReg = jmirgen_getOperand(ctx, irVal);
-			if (!srcReg) {
+			jx_mir_operand_t* srcOp = jmirgen_getOperand(ctx, irVal);
+			if (!srcOp) {
 				JX_CHECK(false, "Operand not found!");
 				return false;
 			}
@@ -2069,19 +2096,39 @@ static bool jmirgen_processPhis(jx_mirgen_context_t* ctx)
 			}
 
 			jx_mir_instruction_t* movInstr = NULL; 
-			if (dstReg->m_Type == JMIR_TYPE_F32) {
-				movInstr = jx_mir_movss(ctx->m_MIRCtx, dstReg, srcReg);
-			} else if (dstReg->m_Type == JMIR_TYPE_F64) {
-				movInstr = jx_mir_movsd(ctx->m_MIRCtx, dstReg, srcReg);
+			if (srcOp->m_Kind == JMIR_OPERAND_REGISTER || srcOp->m_Kind == JMIR_OPERAND_CONST || (srcOp->m_Kind == JMIR_OPERAND_MEMORY_REF && !jx_mir_opIsStackObj(srcOp))) {
+				if (dstReg->m_Type == JMIR_TYPE_F32) {
+					movInstr = jx_mir_movss(ctx->m_MIRCtx, dstReg, srcOp);
+				} else if (dstReg->m_Type == JMIR_TYPE_F64) {
+					movInstr = jx_mir_movsd(ctx->m_MIRCtx, dstReg, srcOp);
+				} else {
+					movInstr = jx_mir_mov(ctx->m_MIRCtx, dstReg, srcOp);
+				}
+			} else if (srcOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL || jx_mir_opIsStackObj(srcOp)) {
+				movInstr = jx_mir_lea(ctx->m_MIRCtx, dstReg, srcOp);
 			} else {
-				movInstr = jx_mir_mov(ctx->m_MIRCtx, dstReg, srcReg);
+				JX_CHECK(false, "TODO?");
 			}
 
 			jx_mir_instruction_t* firstTerminator = jx_mir_bbGetFirstTerminatorInstr(ctx->m_MIRCtx, bb);
 			if (!firstTerminator) {
 				jx_mir_bbAppendInstr(ctx->m_MIRCtx, bb, movInstr);
 			} else {
-				jx_mir_bbInsertInstrBefore(ctx->m_MIRCtx, bb, firstTerminator, movInstr);
+				// If terminator is a conditional jump find the cmp instruction 
+				// and insert all movs before the cmp. This helps simplifying conditionals.
+				if (jx_mir_opcodeIsJcc(firstTerminator->m_OpCode)) {
+					jx_mir_instruction_t* cmpInstr = firstTerminator->m_Prev;
+					while (cmpInstr && !jx_mir_opcodeIsComparison(cmpInstr->m_OpCode)) {
+						cmpInstr = cmpInstr->m_Prev;
+					}
+					cmpInstr = cmpInstr != NULL
+						? cmpInstr
+						: firstTerminator
+						;
+					jx_mir_bbInsertInstrBefore(ctx->m_MIRCtx, bb, cmpInstr, movInstr);
+				} else {
+					jx_mir_bbInsertInstrBefore(ctx->m_MIRCtx, bb, firstTerminator, movInstr);
+				}
 			}
 		}
 	}

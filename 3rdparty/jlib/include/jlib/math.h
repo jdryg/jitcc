@@ -187,6 +187,7 @@ static uint64_t jx_roundup_u64(uint64_t x, uint64_t round_to);
 
 static bool jx_isPow2_u32(uint32_t x);
 static bool jx_isMultipleOf_u64(uint64_t x, uint64_t of);
+static uint32_t jx_log2_u32(uint32_t x);
 
 static int32_t jx_bitcast_f_i32(float x);
 static float jx_bitcast_i32_f(int32_t x);

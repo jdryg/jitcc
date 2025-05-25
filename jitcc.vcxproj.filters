@@ -180,6 +180,12 @@
     <ClInclude Include="bin\include\stddef.h">
       <Filter>bin\include</Filter>
     </ClInclude>
+    <ClInclude Include="bin\include\stdbool.h">
+      <Filter>bin\include</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\include\wchar.h">
+      <Filter>bin\include</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\jcc.c">
