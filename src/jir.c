@@ -43,6 +43,7 @@ typedef struct jx_ir_context_t
 	jx_ir_function_pass_t* m_FuncPass_removeRedundantPhis;
 	jx_ir_function_pass_t* m_FuncPass_reorderBasicBlocks;
 	jx_ir_function_pass_t* m_FuncPass_deadCodeElimination;
+	jx_ir_function_pass_t* m_FuncPass_localValueNumbering;
 	jx_ir_module_pass_t* m_ModulePass_inlineFuncs;
 } jx_ir_context_t;
 
@@ -212,6 +213,7 @@ jx_ir_context_t* jx_ir_createContext(jx_allocator_i* allocator)
 		ctx->m_FuncPass_removeRedundantPhis = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_removeRedundantPhis, NULL);
 		ctx->m_FuncPass_reorderBasicBlocks = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_reorderBasicBlocks, NULL);
 		ctx->m_FuncPass_deadCodeElimination = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_deadCodeElimination, NULL);
+		ctx->m_FuncPass_localValueNumbering = jir_funcPassCreate(ctx, jx_ir_funcPassCreate_localValueNumbering, NULL);
 	}
 
 	// Initialize module passes
@@ -329,6 +331,11 @@ void jx_ir_destroyContext(jx_ir_context_t* ctx)
 		if (ctx->m_FuncPass_deadCodeElimination) {
 			jir_funcPassDestroy(ctx, ctx->m_FuncPass_deadCodeElimination);
 			ctx->m_FuncPass_deadCodeElimination = NULL;
+		}
+
+		if (ctx->m_FuncPass_localValueNumbering) {
+			jir_funcPassDestroy(ctx, ctx->m_FuncPass_localValueNumbering);
+			ctx->m_FuncPass_localValueNumbering = NULL;
 		}
 	}
 
@@ -481,6 +488,7 @@ void jx_ir_moduleEnd(jx_ir_context_t* ctx, jx_ir_module_t* mod)
 				jir_funcPassApply(ctx, ctx->m_FuncPass_constantFolding, func);
 				jir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func);
 				jir_funcPassApply(ctx, ctx->m_FuncPass_removeRedundantPhis, func);
+				jir_funcPassApply(ctx, ctx->m_FuncPass_localValueNumbering, func);
 			}
 
 			func = func->m_Next;

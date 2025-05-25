@@ -2909,6 +2909,254 @@ static bool jir_dce_instrIsDead(jx_ir_instruction_t* instr)
 }
 
 //////////////////////////////////////////////////////////////////////////
+// Local Value Numbering
+//
+typedef struct jir_hash_value_map_item_t
+{
+	uint64_t m_Hash;
+	jx_ir_value_t* m_Value;
+} jir_hash_value_map_item_t;
+
+typedef struct jir_func_pass_lvn_t
+{
+	jx_allocator_i* m_Allocator;
+	jx_ir_context_t* m_Ctx;
+	jx_ir_function_t* m_Func;
+	jx_hashmap_t* m_ValueMap;
+} jir_func_pass_lvn_t;
+
+static void jir_funcPass_localValueNumberingDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator);
+static bool jir_funcPass_localValueNumberingRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func);
+
+static bool jir_lvn_instrCalcHash(jir_func_pass_lvn_t* pass, jx_ir_instruction_t* instr, uint64_t* hash);
+static uint64_t jir_lvn_typeHash(const jx_ir_type_t* type, uint64_t seed0, uint64_t seed1);
+static uint64_t jir_hashValueMapItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
+static int32_t jir_hashValueMapItemCompare(const void* a, const void* b, void* udata);
+
+bool jx_ir_funcPassCreate_localValueNumbering(jx_ir_function_pass_t* pass, jx_allocator_i* allocator)
+{
+	jir_func_pass_lvn_t* inst = (jir_func_pass_lvn_t*)JX_ALLOC(allocator, sizeof(jir_func_pass_lvn_t));
+	if (!inst) {
+		return false;
+	}
+
+	jx_memset(inst, 0, sizeof(jir_func_pass_lvn_t));
+	inst->m_Allocator = allocator;
+
+	inst->m_ValueMap = jx_hashmapCreate(allocator, sizeof(jir_hash_value_map_item_t), 64, 0, 0, jir_hashValueMapItemHash, jir_hashValueMapItemCompare, NULL, NULL);
+	if (!inst->m_ValueMap) {
+		jir_funcPass_localValueNumberingDestroy((jx_ir_function_pass_o*)inst, allocator);
+		return false;
+	}
+
+	pass->m_Inst = (jx_ir_function_pass_o*)inst;
+	pass->run = jir_funcPass_localValueNumberingRun;
+	pass->destroy = jir_funcPass_localValueNumberingDestroy;
+
+	return true;
+}
+
+static void jir_funcPass_localValueNumberingDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator)
+{
+	jir_func_pass_lvn_t* pass = (jir_func_pass_lvn_t*)inst;
+	JX_FREE(allocator, pass);
+}
+
+static bool jir_funcPass_localValueNumberingRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
+{
+	jir_func_pass_lvn_t* pass = (jir_func_pass_lvn_t*)inst;
+
+	pass->m_Ctx = ctx;
+	pass->m_Func = func;
+
+	jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
+	while (bb) {
+		jx_hashmapClear(pass->m_ValueMap, false);
+
+		jx_ir_instruction_t* instr = bb->m_InstrListHead;
+		while (instr) {
+			jx_ir_instruction_t* instrNext = instr->m_Next;
+
+			uint64_t hash = 0ull;
+			if (jir_lvn_instrCalcHash(pass, instr, &hash)) {
+				jir_hash_value_map_item_t* hashItem = jx_hashmapGet(pass->m_ValueMap, &(jir_hash_value_map_item_t){.m_Hash = hash });
+				if (hashItem) {
+					jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), hashItem->m_Value);
+					jx_ir_bbRemoveInstr(ctx, bb, instr);
+					jx_ir_instrFree(ctx, instr);
+				} else {
+					jx_hashmapSet(pass->m_ValueMap, &(jir_hash_value_map_item_t){.m_Hash = hash, .m_Value = jx_ir_instrToValue(instr) });
+				}
+			}
+
+			instr = instrNext;
+		}
+
+		bb = bb->m_Next;
+	}
+
+	return false;
+}
+
+static bool jir_lvn_instrCalcHash(jir_func_pass_lvn_t* pass, jx_ir_instruction_t* instr, uint64_t* hashPtr)
+{
+	bool res = false;
+
+	uint64_t hash = jx_hashFNV1a(&instr->m_OpCode, sizeof(uint32_t), 0, 0);
+	hash = jir_lvn_typeHash(instr->super.super.m_Type, hash, 0);
+
+	switch (instr->m_OpCode) {
+	case JIR_OP_ADD:
+	case JIR_OP_MUL:
+	case JIR_OP_AND:
+	case JIR_OP_OR:
+	case JIR_OP_XOR: 
+	case JIR_OP_SET_EQ:
+	case JIR_OP_SET_NE: {
+		// Commutative binary operations. Sort operands in some predefined order and calculate hash based on those.
+		jx_ir_value_t* op0 = jx_ir_instrGetOperandVal(instr, 0);
+		jx_ir_value_t* op1 = jx_ir_instrGetOperandVal(instr, 1);
+		if (jir_comparePtrs(op0, op1) < 0) {
+			jx_ir_value_t* tmp = op0;
+			op0 = op1;
+			op1 = tmp;
+		}
+
+		hash = jx_hashFNV1a(&op0, sizeof(jx_ir_value_t**), hash, 0);
+		hash = jx_hashFNV1a(&op1, sizeof(jx_ir_value_t**), hash, 0);
+		res = true;
+	} break;
+	case JIR_OP_SUB:
+	case JIR_OP_DIV:
+	case JIR_OP_REM:
+	case JIR_OP_SET_LE:
+	case JIR_OP_SET_GE:
+	case JIR_OP_SET_LT:
+	case JIR_OP_SET_GT: 
+	case JIR_OP_SHL:
+	case JIR_OP_SHR: {
+		jx_ir_value_t* op0 = jx_ir_instrGetOperandVal(instr, 0);
+		jx_ir_value_t* op1 = jx_ir_instrGetOperandVal(instr, 1);
+		hash = jx_hashFNV1a(&op0, sizeof(jx_ir_value_t**), hash, 0);
+		hash = jx_hashFNV1a(&op1, sizeof(jx_ir_value_t**), hash, 0);
+		res = true;
+	} break;
+	case JIR_OP_GET_ELEMENT_PTR:
+	case JIR_OP_PHI: {
+		const uint32_t numOperands = (uint32_t)jx_array_sizeu(instr->super.m_OperandArr);
+		hash = jx_hashFNV1a(&numOperands, sizeof(uint32_t), hash, 0);
+		for (uint32_t iOperand = 0; iOperand < numOperands; ++iOperand) {
+			jx_ir_value_t* op = jx_ir_instrGetOperandVal(instr, iOperand);
+			hash = jx_hashFNV1a(&op, sizeof(jx_ir_value_t**), hash, 0);
+		}
+		res = true;
+	} break;
+	case JIR_OP_TRUNC:
+	case JIR_OP_ZEXT:
+	case JIR_OP_SEXT:
+	case JIR_OP_PTR_TO_INT:
+	case JIR_OP_INT_TO_PTR:
+	case JIR_OP_BITCAST:
+	case JIR_OP_FPEXT:
+	case JIR_OP_FPTRUNC:
+	case JIR_OP_FP2UI:
+	case JIR_OP_FP2SI:
+	case JIR_OP_UI2FP:
+	case JIR_OP_SI2FP: {
+		jx_ir_value_t* op0 = jx_ir_instrGetOperandVal(instr, 0);
+		hash = jx_hashFNV1a(&op0, sizeof(jx_ir_value_t**), hash, 0);
+		res = true;
+	} break;
+	case JIR_OP_RET:
+	case JIR_OP_BRANCH:
+	case JIR_OP_ALLOCA:
+	case JIR_OP_LOAD:
+	case JIR_OP_STORE:
+	case JIR_OP_CALL: {
+		// Don't replace those.
+	} break;
+	default: {
+		JX_CHECK(false, "Unknown opcode");
+	} break;
+	}
+
+	*hashPtr = hash;
+	
+	return res;
+}
+
+static uint64_t jir_lvn_typeHash(const jx_ir_type_t* type, uint64_t seed0, uint64_t seed1)
+{
+	uint64_t hash = jx_hashFNV1a(&type->m_Kind, sizeof(jx_ir_type_kind), seed0, seed1);
+	hash = jx_hashFNV1a(&type->m_Flags, sizeof(uint32_t), hash, seed1);
+	switch (type->m_Kind) {
+	case JIR_TYPE_VOID:
+	case JIR_TYPE_BOOL:
+	case JIR_TYPE_U8:
+	case JIR_TYPE_I8:
+	case JIR_TYPE_U16:
+	case JIR_TYPE_I16:
+	case JIR_TYPE_U32:
+	case JIR_TYPE_I32:
+	case JIR_TYPE_U64:
+	case JIR_TYPE_I64:
+	case JIR_TYPE_F32:
+	case JIR_TYPE_F64:
+	case JIR_TYPE_TYPE:
+	case JIR_TYPE_LABEL: {
+		// Nothing else to hash.
+	} break;
+	case JIR_TYPE_FUNCTION: {
+		const jx_ir_type_function_t* funcType = (const jx_ir_type_function_t*)type;
+		hash = jir_lvn_typeHash(funcType->m_RetType, hash, seed1);
+
+		const uint32_t numArgs = funcType->m_NumArgs;
+		hash = jx_hashFNV1a(&numArgs, sizeof(uint32_t), hash, seed1);
+		for (uint32_t iArg = 0; iArg < numArgs; ++iArg) {
+			hash = jir_lvn_typeHash(funcType->m_Args[iArg], hash, seed1);
+		}
+
+		hash = jx_hashFNV1a(&funcType->m_IsVarArg, sizeof(bool), hash, seed1);
+	} break;
+	case JIR_TYPE_STRUCT: {
+		const jx_ir_type_struct_t* structType = (const jx_ir_type_struct_t*)type;
+		hash = jx_hashFNV1a(&structType->m_UniqueID, sizeof(uint64_t), hash, seed1);
+	} break;
+	case JIR_TYPE_ARRAY: {
+		const jx_ir_type_array_t* arrType = (const jx_ir_type_array_t*)type;
+		hash = jir_lvn_typeHash(arrType->m_BaseType, hash, seed1);
+		hash = jx_hashFNV1a(&arrType->m_Size, sizeof(uint32_t), hash, seed1);
+	} break;
+	case JIR_TYPE_POINTER: {
+		const jx_ir_type_pointer_t* ptrType = (const jx_ir_type_pointer_t*)type;
+		hash = jir_lvn_typeHash(ptrType->m_BaseType, hash, seed1);
+	} break;
+	default:
+		JX_CHECK(false, "Unknown type kind!");
+		break;
+	}
+
+	return hash;
+}
+
+static uint64_t jir_hashValueMapItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata)
+{
+	const jir_hash_value_map_item_t* var = (const jir_hash_value_map_item_t*)item;
+	return var->m_Hash;
+}
+
+static int32_t jir_hashValueMapItemCompare(const void* a, const void* b, void* udata)
+{
+	const jir_hash_value_map_item_t* varA = (const jir_hash_value_map_item_t*)a;
+	const jir_hash_value_map_item_t* varB = (const jir_hash_value_map_item_t*)b;
+	int32_t res = varA->m_Hash < varB->m_Hash
+		? -1
+		: (varA->m_Hash > varB->m_Hash ? 1 : 0)
+		;
+	return res;
+}
+
+//////////////////////////////////////////////////////////////////////////
 // Simple Function inliner
 //
 typedef struct jir_call_graph_node_t jir_call_graph_node_t;
