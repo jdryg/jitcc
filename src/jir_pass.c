@@ -984,6 +984,7 @@ static jx_ir_constant_t* jir_constFold_si2fp(jx_ir_context_t* ctx, jx_ir_constan
 static jx_ir_constant_t* jir_constFold_fptrunc(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
 static jx_ir_constant_t* jir_constFold_fpext(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
 static jx_ir_constant_t* jir_constFold_bitcast(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
+static jx_ir_constant_t* jir_constFold_inttoptr(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
 
 bool jx_ir_funcPassCreate_constantFolding(jx_ir_function_pass_t* pass, jx_allocator_i* allocator)
 {
@@ -1175,6 +1176,12 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						resConst = jir_constFold_bitcast(ctx, op, jx_ir_instrToValue(instr)->m_Type);
 					}
 				} break;
+				case JIR_OP_INT_TO_PTR: {
+					jx_ir_constant_t* op = jx_ir_valueToConst(jx_ir_instrGetOperandVal(instr, 0));
+					if (op) {
+						resConst = jir_constFold_inttoptr(ctx, op, jx_ir_instrToValue(instr)->m_Type);
+					}
+				} break;
 				case JIR_OP_GET_ELEMENT_PTR:
 				case JIR_OP_PHI:
 				case JIR_OP_CALL:
@@ -1183,7 +1190,6 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 				case JIR_OP_LOAD:
 				case JIR_OP_STORE:
 				case JIR_OP_PTR_TO_INT:
-				case JIR_OP_INT_TO_PTR:
 				case JIR_OP_FP2UI:	 // TODO: 
 				case JIR_OP_UI2FP: { // TODO: 
 					// No op
@@ -1749,8 +1755,20 @@ static jx_ir_constant_t* jir_constFold_fpext(jx_ir_context_t* ctx, jx_ir_constan
 static jx_ir_constant_t* jir_constFold_bitcast(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type)
 {
 	jx_ir_type_t* operandType = jx_ir_constToValue(op)->m_Type;
+	if (jx_ir_typeIsInteger(operandType)) {
+		JX_CHECK(jx_ir_typeIsInteger(type), "Expected integer type");
+		return jx_ir_constGetInteger(ctx, type->m_Kind, op->u.m_I64);
+	}
+
+	JX_CHECK(operandType->m_Kind == JIR_TYPE_POINTER && type->m_Kind == JIR_TYPE_POINTER, "Expected pointer types.");
+	return jx_ir_constPointer(ctx, type, op->u.m_Ptr);
+}
+
+static jx_ir_constant_t* jir_constFold_inttoptr(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type)
+{
+	jx_ir_type_t* operandType = jx_ir_constToValue(op)->m_Type;
 	JX_CHECK(jx_ir_typeIsInteger(operandType), "Expected integer type");
-	return jx_ir_constGetInteger(ctx, type->m_Kind, op->u.m_I64);
+	return jx_ir_constPointer(ctx, type, (void*)op->u.m_Ptr);
 }
 
 //////////////////////////////////////////////////////////////////////////
