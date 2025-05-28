@@ -1380,6 +1380,11 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 			idxVal = jirgenConvertType(ctx, idxVal, jx_ir_typeGetPrimitive(irctx, JIR_TYPE_I64));
 		}
 
+		// Make sure index type is signed.
+		if (jx_ir_typeIsUnsigned(idxVal->m_Type)) {
+			idxVal = jirgenConvertType(ctx, idxVal, jx_ir_typeGetPrimitive(irctx, idxVal->m_Type->m_Kind == JIR_TYPE_U64 ? JIR_TYPE_I64 : JIR_TYPE_I32));
+		}
+
 		// If gepNode->m_ExprPtr is an array, use a 2 index GEP because the first index
 		// refers to the array itself.
 		const bool isArray = gepNode->m_ExprPtr->m_Type->m_Kind == JCC_TYPE_ARRAY;

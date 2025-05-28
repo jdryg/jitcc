@@ -2072,6 +2072,34 @@ static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_
 							}
 						}
 					}
+				} else if (instr->m_OpCode == JIR_OP_GET_ELEMENT_PTR) {
+					if (jx_array_sizeu(instr->super.m_OperandArr) == 2) {
+						jx_ir_constant_t* constOp1 = jx_ir_valueToConst(jx_ir_instrGetOperandVal(instr, 1));
+						if (constOp1) {
+							if (constOp1->u.m_I64 < 0) {
+								// %addr1 = getelementptr %ptr, const
+								// %addr2 = getelementptr %addr1, -const
+								//  =>
+								// Replace %addr2 with %ptr
+								// 
+								// Check if the first operand (the pointer) is the result of another GEP with the same
+								// positive constant.
+								jx_ir_instruction_t* instrOp0 = jx_ir_valueToInstr(jx_ir_instrGetOperandVal(instr, 0));
+								if (instrOp0 && instrOp0->m_OpCode == JIR_OP_GET_ELEMENT_PTR && jx_array_sizeu(instrOp0->super.m_OperandArr) == 2) {
+									jx_ir_constant_t* instrOp0_constOp1 = jx_ir_valueToConst(jx_ir_instrGetOperandVal(instrOp0, 1));
+									if (instrOp0_constOp1 && instrOp0_constOp1->u.m_I64 == -constOp1->u.m_I64) {
+										jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instrOp0, 0));
+									}
+								}
+							} else if (constOp1->u.m_I64 == 0) {
+								// TODO: Can I do the same if there are more than 1 indices and they are all 0?
+								// %addr = getelementptr %ptr, 0
+								//  =>
+								// Replace %addr with %ptr
+								jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
+							}
+						}
+					}
 				}
 
 				instr = instrNext;
