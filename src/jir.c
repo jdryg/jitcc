@@ -97,6 +97,7 @@ static bool jir_funcCtor(jx_ir_context_t* ctx, jx_ir_function_t* func, jx_ir_typ
 static void jir_funcDtor(jx_ir_context_t* ctx, jx_ir_function_t* func);
 static const char* jir_funcGenTempName(jx_ir_context_t* ctx, jx_ir_function_t* func);
 static bool jir_funcIsExternal(jx_ir_context_t* ctx, jx_ir_function_t* func);
+static void jir_funcInvalidateDomTree(jx_ir_context_t* ctx, jx_ir_function_t* func);
 static jx_ir_function_pass_t* jir_funcPassCreate(jx_ir_context_t* ctx, jirFuncPassCtorFunc ctorFunc, void* passConfig);
 static void jir_funcPassDestroy(jx_ir_context_t* ctx, jx_ir_function_pass_t* pass);
 static bool jir_funcPassApply(jx_ir_context_t* ctx, jx_ir_function_pass_t* pass, jx_ir_function_t* func);
@@ -477,13 +478,13 @@ jx_ir_module_t* jx_ir_moduleBegin(jx_ir_context_t* ctx, const char* name)
 
 void jx_ir_moduleEnd(jx_ir_context_t* ctx, jx_ir_module_t* mod)
 {
-#if 1
 	// Apply pre func passes
 	{
 		jx_ir_function_t* func = mod->m_FunctionListHead;
 		while (func) {
 			if (!jir_funcIsExternal(ctx, func)) {
 				jir_funcPassApply(ctx, ctx->m_FuncPass_canonicalizeOperands, func);
+				jir_funcPassApply(ctx, ctx->m_FuncPass_singleRetBlock, func);
 				jir_funcPassApply(ctx, ctx->m_FuncPass_simpleSSA, func);
 				jir_funcPassApply(ctx, ctx->m_FuncPass_constantFolding, func);
 				jir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func);
@@ -527,54 +528,6 @@ void jx_ir_moduleEnd(jx_ir_context_t* ctx, jx_ir_module_t* mod)
 			func = func->m_Next;
 		}
 	}
-#else
-	// Apply pre func passes
-	{
-		jx_ir_function_t* func = mod->m_FunctionListHead;
-		while (func) {
-			if (!jir_funcIsExternal(ctx, func)) {
-				jir_funcPassApply(ctx, ctx->m_FuncPass_canonicalizeOperands, func);
-				jir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCFG, func);
-				jir_funcPassApply(ctx, ctx->m_FuncPass_singleRetBlock, func);
-				jir_funcPassApply(ctx, ctx->m_FuncPass_simpleSSA, func);
-			}
-
-			func = func->m_Next;
-		}
-	}
-
-	// Apply whole module passes
-	{
-		jir_modulePassApply(ctx, ctx->m_ModulePass_inlineFuncs, mod);
-	}
-
-	// Apply post func passes
-	{
-		jx_ir_function_t* func = mod->m_FunctionListHead;
-		while (func) {
-			if (!jir_funcIsExternal(ctx, func)) {
-				uint32_t iter = 0;
-				bool changed = true;
-				while (changed && iter < 10) {
-					changed = false;
-
-					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_constantFolding, func);
-					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_peephole, func) || changed;
-					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_removeRedundantPhis, func) || changed;
-					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCFG, func) || changed;
-
-					// NOTE: Always returns true even if no change is made!
-					// TODO: Fix?
-					jir_funcPassApply(ctx, ctx->m_FuncPass_reorderBasicBlocks, func);
-
-					++iter;
-				}
-			}
-
-			func = func->m_Next;
-		}
-	}
-#endif
 }
 
 jx_ir_global_value_t* jx_ir_moduleDeclareGlobalVal(jx_ir_context_t* ctx, jx_ir_module_t* mod, const char* name, jx_ir_type_t* type, jx_ir_linkage_kind linkageKind)
@@ -781,6 +734,8 @@ void jx_ir_funcAppendBasicBlock(jx_ir_context_t* ctx, jx_ir_function_t* func, jx
 		instr = instr->m_Next;
 	}
 #endif
+
+	jir_funcInvalidateDomTree(ctx, func);
 }
 
 // NOTE: Does not (currently) perform any meaningful checks on whether the basic block
@@ -811,6 +766,8 @@ bool jx_ir_funcRemoveBasicBlock(jx_ir_context_t* ctx, jx_ir_function_t* func, jx
 	bb->m_Next = NULL;
 	bb->m_ParentFunc = NULL;
 
+	jir_funcInvalidateDomTree(ctx, func);
+
 	return true;
 }
 
@@ -826,6 +783,166 @@ jx_ir_type_function_t* jx_ir_funcGetType(jx_ir_context_t* ctx, jx_ir_function_t*
 	JX_CHECK(funcType, "Function's type expected to be a pointer to a function type.");
 
 	return funcType;
+}
+
+uint32_t jx_ir_funcCountBasicBlocks(jx_ir_context_t* ctx, jx_ir_function_t* func)
+{
+	uint32_t numBasicBlocks = 0;
+	jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
+	while (bb) {
+		++numBasicBlocks;
+		bb = bb->m_Next;
+	}
+
+	return numBasicBlocks;
+}
+
+// Dominator tree algorithm based on "A Simple, Fast Dominance Algorithm"
+// https://www.cs.tufts.edu/~nr/cs257/archive/keith-cooper/dom14.pdf
+#define JIR_BB_FLAGS_VISITED_Pos 31
+#define JIR_BB_FLAGS_VISITED_Msk (1u << JIR_BB_FLAGS_VISITED_Pos)
+
+static void jir_bbDFWalk(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, uint32_t* c)
+{
+	JX_CHECK((bb->super.m_Flags & JIR_BB_FLAGS_VISITED_Msk) == 0, "Basic block already visited!");
+	bb->super.m_Flags |= JIR_BB_FLAGS_VISITED_Msk;
+
+	const uint32_t numSucc = (uint32_t)jx_array_sizeu(bb->m_SuccArr);
+	for (uint32_t iSucc = 0; iSucc < numSucc; ++iSucc) {
+		jx_ir_basic_block_t* succ = bb->m_SuccArr[iSucc];
+		if ((succ->super.m_Flags & JIR_BB_FLAGS_VISITED_Msk) == 0) {
+			jir_bbDFWalk(ctx, succ, c);
+		}
+	}
+
+	bb->m_RevPostOrderID = *c;
+	*c = *c - 1;
+}
+
+static jx_ir_basic_block_t* jir_funcIDomIntersect(jx_ir_basic_block_t* b1, jx_ir_basic_block_t* b2)
+{
+	jx_ir_basic_block_t* finger1 = b1;
+	jx_ir_basic_block_t* finger2 = b2;
+	while (finger1 != finger2) {
+		while (finger1->m_RevPostOrderID > finger2->m_RevPostOrderID) {
+			finger1 = finger1->m_ImmDom;
+		}
+		while (finger2->m_RevPostOrderID > finger1->m_RevPostOrderID) {
+			finger2 = finger2->m_ImmDom;
+		}
+	}
+
+	return finger1;
+}
+
+bool jx_ir_funcUpdateDomTree(jx_ir_context_t* ctx, jx_ir_function_t* func)
+{
+	if ((func->m_Flags & JIR_FUNC_FLAGS_DOM_TREE_VALID_Msk) != 0) {
+		return true;
+	}
+
+	// Count the number of basic blocks (incl. unreachable blocks)
+	// and reset the visited flag and RPO index.
+	uint32_t numBasicBlocks = 0;
+	jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
+	while (bb) {
+		bb->super.m_Flags &= ~JIR_BB_FLAGS_VISITED_Msk;
+		bb->m_RevPostOrderID = 0;
+		++numBasicBlocks;
+		bb = bb->m_Next;
+	}
+
+	// Depth-First Search
+	uint32_t c = numBasicBlocks;
+	jir_bbDFWalk(ctx, func->m_BasicBlockListHead, &c);
+
+	// Collect all basic blocks in reverse postorder
+	jx_ir_basic_block_t** bbRPO = (jx_ir_basic_block_t**)JX_ALLOC(ctx->m_Allocator, sizeof(jx_ir_basic_block_t*) * numBasicBlocks);
+	jx_memset(bbRPO, 0, sizeof(jx_ir_basic_block_t*) * numBasicBlocks);
+
+	// Reset used flags
+	bb = func->m_BasicBlockListHead;
+	while (bb) {
+		bb->m_ImmDom = NULL;
+		if (bb->m_RevPostOrderID != 0) {
+			JX_CHECK(bb->m_RevPostOrderID <= numBasicBlocks, "Invalid reverse postorder index.");
+			bbRPO[bb->m_RevPostOrderID - 1] = bb;
+		}
+
+		// Reset visited flag
+		bb->super.m_Flags &= ~JIR_BB_FLAGS_VISITED_Msk;
+		bb = bb->m_Next;
+	}
+
+	// Build dominator tree iteratively
+	bb = func->m_BasicBlockListHead;
+	bb->m_ImmDom = bb;
+
+	bool changed = true;
+	while (changed) {
+		changed = false;
+
+		for (uint32_t iBB = 1; iBB < numBasicBlocks; ++iBB) {
+			jx_ir_basic_block_t* bb = bbRPO[iBB];
+			
+			// Find first processed predecessor of bb
+			jx_ir_basic_block_t* firstProcessedPred = NULL;
+			const uint32_t numPred = (uint32_t)jx_array_sizeu(bb->m_PredArr);
+			for (uint32_t iPred = 0; iPred < numPred; ++iPred) {
+				jx_ir_basic_block_t* pred = bb->m_PredArr[iPred];
+				if (pred->m_ImmDom) {
+					firstProcessedPred = pred;
+					break;
+				}
+			}
+
+			jx_ir_basic_block_t* newIDom = firstProcessedPred;
+			for (uint32_t iPred = 0; iPred < numPred; ++iPred) {
+				jx_ir_basic_block_t* pred = bb->m_PredArr[iPred];
+				if (pred != firstProcessedPred && pred->m_ImmDom) {
+					newIDom = jir_funcIDomIntersect(pred, newIDom);
+				}
+			}
+
+			if (bb->m_ImmDom != newIDom) {
+				bb->m_ImmDom = newIDom;
+				changed = true;
+			}
+		}
+	}
+
+#if 0
+	{
+		jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
+		jx_strbuf_pushCStr(sb, "\nstrict digraph {\n");
+		for (uint32_t iBB = 0; iBB < numBasicBlocks; ++iBB) {
+			jx_ir_basic_block_t* bb = bbRPO[iBB + 1];
+
+			jx_strbuf_printf(sb, "  %s -> {", bb->super.m_Name);
+			const uint32_t numSucc = (uint32_t)jx_array_sizeu(bb->m_SuccArr);
+			for (uint32_t iSucc = 0; iSucc < numSucc; ++iSucc) {
+				jx_strbuf_printf(sb, " %s ", bb->m_SuccArr[iSucc]->super.m_Name);
+			}
+			jx_strbuf_printf(sb, "}\n");
+		}
+
+		jx_strbuf_pushCStr(sb, "\n  edge [style=\"dashed\"]\n");
+		for (uint32_t iBB = 0; iBB < numBasicBlocks; ++iBB) {
+			jx_ir_basic_block_t* bb = bbRPO[iBB + 1];
+			jx_strbuf_printf(sb, "  %s -> %s\n", bb->super.m_Name, bb->m_ImmDom->super.m_Name);
+		}
+		jx_strbuf_pushCStr(sb, "}\n");
+		jx_strbuf_nullTerminate(sb);
+		JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
+		jx_strbuf_destroy(sb);
+	}
+#endif
+
+	JX_FREE(ctx->m_Allocator, bbRPO);
+
+	func->m_Flags |= JIR_FUNC_FLAGS_DOM_TREE_VALID_Msk;
+
+	return true;
 }
 
 void jx_ir_funcPrint(jx_ir_context_t* ctx, jx_ir_function_t* func, jx_string_buffer_t* sb)
@@ -3966,12 +4083,20 @@ static void jir_bbAddPred(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_b
 {
 	// TODO: Check if pred is already in the predecessor list
 	jx_array_push_back(bb->m_PredArr, pred);
+
+	if (bb->m_ParentFunc) {
+		jir_funcInvalidateDomTree(ctx, bb->m_ParentFunc);
+	}
 }
 
 static void jir_bbAddSucc(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_basic_block_t* succ)
 {
 	JX_CHECK(jx_array_sizeu(bb->m_SuccArr) <= 1, "Too many successors!");
 	jx_array_push_back(bb->m_SuccArr, succ);
+
+	if (bb->m_ParentFunc) {
+		jir_funcInvalidateDomTree(ctx, bb->m_ParentFunc);
+	}
 }
 
 static void jir_bbRemovePred(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_basic_block_t* pred)
@@ -4007,6 +4132,10 @@ static void jir_bbRemovePred(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_i
 
 		instr = instr->m_Next;
 	}
+
+	if (bb->m_ParentFunc) {
+		jir_funcInvalidateDomTree(ctx, bb->m_ParentFunc);
+	}
 }
 
 static void jir_bbRemoveSucc(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_basic_block_t* succ)
@@ -4022,6 +4151,10 @@ static void jir_bbRemoveSucc(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_i
 	}
 
 	JX_CHECK(found, "Successor not found in basic block's successor list.");
+
+	if (bb->m_ParentFunc) {
+		jir_funcInvalidateDomTree(ctx, bb->m_ParentFunc);
+	}
 }
 
 static bool jir_bbHasPred(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_basic_block_t* pred)
@@ -4607,6 +4740,11 @@ static const char* jir_funcGenTempName(jx_ir_context_t* ctx, jx_ir_function_t* f
 static bool jir_funcIsExternal(jx_ir_context_t* ctx, jx_ir_function_t* func)
 {
 	return func->m_BasicBlockListHead == NULL;
+}
+
+static void jir_funcInvalidateDomTree(jx_ir_context_t* ctx, jx_ir_function_t* func)
+{
+	func->m_Flags &= ~JIR_FUNC_FLAGS_DOM_TREE_VALID_Msk;
 }
 
 static jx_ir_function_pass_t* jir_funcPassCreate(jx_ir_context_t* ctx, jirFuncPassCtorFunc ctorFunc, void* passConfig)
