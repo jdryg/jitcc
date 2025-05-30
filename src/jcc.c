@@ -6030,6 +6030,7 @@ static jx_cc_ast_expr_t* jcc_parseFuncCall(jx_cc_context_t* ctx, jcc_translation
 	while (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
 		if (!first) {
 			if (!jcc_tokExpect(&tok, JCC_TOKEN_COMMA)) {
+				jcc_logError(ctx, &tok->m_Loc, "Expected ','");
 				jx_array_free(argsArr);
 				return NULL;
 			}
@@ -6038,6 +6039,7 @@ static jx_cc_ast_expr_t* jcc_parseFuncCall(jx_cc_context_t* ctx, jcc_translation
 		
 		jx_cc_ast_expr_t* arg = jcc_parseAssignment(ctx, tu, &tok);
 		if (!arg) {
+			jcc_logError(ctx, &tok->m_Loc, "Failed to parse function call argument.");
 			jx_array_free(argsArr);
 			return NULL;
 		}
@@ -6048,8 +6050,9 @@ static jx_cc_ast_expr_t* jcc_parseFuncCall(jx_cc_context_t* ctx, jcc_translation
 		}
 		
 		if (!param_ty && (ty->m_Flags & JCC_TYPE_FLAGS_IS_VARIADIC_Msk) == 0) {
+			jcc_logError(ctx, &tok->m_Loc, "Too many arguments");
 			jx_array_free(argsArr);
-			return NULL; // ERROR: too many arguments
+			return NULL;
 		}
 		
 		if (param_ty) {
@@ -6057,6 +6060,7 @@ static jx_cc_ast_expr_t* jcc_parseFuncCall(jx_cc_context_t* ctx, jcc_translation
 				// TODO: Check if cast can be performed? E.g. passing a float to a const char* argument should fail!
 				arg = jcc_astAllocExprCast(ctx, arg, param_ty);
 				if (!arg) {
+					jcc_logError(ctx, &tok->m_Loc, "Failed to cast function argument.");
 					jx_array_free(argsArr);
 					return NULL;
 				}
@@ -6068,6 +6072,7 @@ static jx_cc_ast_expr_t* jcc_parseFuncCall(jx_cc_context_t* ctx, jcc_translation
 			// arguments are promoted to double.
 			arg = jcc_astAllocExprCast(ctx, arg, kType_double);
 			if (!arg) {
+				jcc_logError(ctx, &tok->m_Loc, "Failed to cast function argument.");
 				jx_array_free(argsArr);
 				return NULL;
 			}
@@ -6077,12 +6082,14 @@ static jx_cc_ast_expr_t* jcc_parseFuncCall(jx_cc_context_t* ctx, jcc_translation
 	}
 	
 	if (param_ty) {
+		jcc_logError(ctx, &tok->m_Loc, "Too few arguments");
 		jx_array_free(argsArr);
-		return NULL; // ERROR: too few arguments
+		return NULL;
 	}
 
 	jx_cc_ast_expr_t* node = jcc_astAllocExprFuncCall(ctx, tu, fn, argsArr, jx_array_sizeu(argsArr), ty, tok);
 	if (!node) {
+		jcc_logError(ctx, &tok->m_Loc, "Failed to allocate function call.");
 		jx_array_free(argsArr);
 		return NULL;
 	}
