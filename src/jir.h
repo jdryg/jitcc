@@ -228,6 +228,7 @@ typedef struct jx_ir_value_t
 	jx_ir_type_t* m_Type;
 	const char* m_Name;
 	jx_ir_use_t* m_UsesListHead;
+	jx_ir_use_t* m_UsesListTail;
 } jx_ir_value_t;
 
 typedef struct jx_ir_user_t

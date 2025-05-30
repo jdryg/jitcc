@@ -520,8 +520,6 @@ void jx_ir_moduleEnd(jx_ir_context_t* ctx, jx_ir_module_t* mod)
 					++iter;
 				}
 
-				// NOTE: Always returns true even if no change is made!
-				// TODO: Fix?
 				jir_funcPassApply(ctx, ctx->m_FuncPass_reorderBasicBlocks, func);
 			}
 
@@ -2711,15 +2709,14 @@ void jx_ir_valueAddUse(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_use_t* us
 {
 	JX_UNUSED(ctx);
 
-	jx_ir_use_t* tail = val->m_UsesListHead;
-	if (!tail) {
+	if (!val->m_UsesListHead) {
 		val->m_UsesListHead = use;
+		val->m_UsesListTail = use;
 	} else {
-		while (tail->m_Next) {
-			tail = tail->m_Next;
-		}
-		tail->m_Next = use;
-		use->m_Prev = tail;
+		val->m_UsesListTail->m_Next = use;
+		use->m_Prev = val->m_UsesListTail;
+
+		val->m_UsesListTail = use;
 	}
 }
 
@@ -2742,6 +2739,9 @@ void jx_ir_valueKillUse(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_use_t* u
 
 			if (cur == val->m_UsesListHead) {
 				val->m_UsesListHead = next;
+			}
+			if (cur == val->m_UsesListTail) {
+				val->m_UsesListTail = prev;
 			}
 
 			found = true;
@@ -3108,6 +3108,7 @@ jx_ir_type_struct_t* jx_ir_typeStructBegin(jx_ir_context_t* ctx, uint64_t unique
 jx_ir_type_t* jx_ir_typeStructEnd(jx_ir_context_t* ctx, jx_ir_type_struct_t* type)
 {
 	JX_CHECK((type->m_Flags & JIR_TYPE_STRUCT_FLAGS_IS_INCOMPLETE_Msk) != 0, "Expected incomplete struct type!");
+	// TODO: Mark struct as opaque of it has no members?
 	type->m_Flags &= ~JIR_TYPE_STRUCT_FLAGS_IS_INCOMPLETE_Msk;
 	return &type->super;
 }
