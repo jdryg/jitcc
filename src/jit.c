@@ -680,6 +680,11 @@ bool jx64_movzx(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 			// No-op.
 			return true;
 		} else {
+			// movzx reg64, reg32 is actually a mov reg64d, reg32
+			// The upper part of the 64-bit register is implicitly zeroed whenever 
+			// the lower 32-bit part is written.
+			dst.m_Size = JX64_SIZE_32;
+			dst.u.m_Reg = JX64_REG(JX64_REG_GET_ID(dst.u.m_Reg), 0, JX64_SIZE_32);
 			return jx64_mov(ctx, dst, src);
 		}
 	}
