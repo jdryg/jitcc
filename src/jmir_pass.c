@@ -1292,10 +1292,10 @@ static bool jmir_regAlloc_isMoveInstr(jmir_regalloc_instr_info_t* instrInfo, jx_
 
 	const bool isMov = false
 		|| instr->m_OpCode == JMIR_OP_MOV
-		|| instr->m_OpCode == JMIR_OP_MOVSX
-		|| instr->m_OpCode == JMIR_OP_MOVZX
 		|| instr->m_OpCode == JMIR_OP_MOVSS
 		|| instr->m_OpCode == JMIR_OP_MOVSD
+		|| instr->m_OpCode == JMIR_OP_MOVAPS
+		|| instr->m_OpCode == JMIR_OP_MOVAPD
 		;
 	if (!isMov) {
 		return false;
@@ -1448,7 +1448,7 @@ static void jmir_regAlloc_selectSpill(jmir_func_pass_regalloc_t* pass)
 
 	jmir_graph_node_t* spilledNode = spillCandidate;
 #if 1
-	uint32_t spillCost = spillCandidate->m_LastUseInstrID - spillCandidate->m_FirstDefInstrID;
+	uint32_t spillCost = (spillCandidate->m_LastUseInstrID - spillCandidate->m_FirstDefInstrID) * spillCandidate->m_Degree;
 #else
 	uint32_t spillCost = spillCandidate->m_Degree;
 #endif
@@ -1457,8 +1457,8 @@ static void jmir_regAlloc_selectSpill(jmir_func_pass_regalloc_t* pass)
 		JX_CHECK(jmir_nodeIs(spillCandidate, JMIR_NODE_STATE_SPILL), "Node in spill worklist not in spill state!");
 
 #if 1
-		const uint32_t candidateCost = spillCandidate->m_LastUseInstrID - spillCandidate->m_FirstDefInstrID;
-		if (candidateCost > spillCost) {
+		const uint32_t candidateCost = (spillCandidate->m_LastUseInstrID - spillCandidate->m_FirstDefInstrID) * spillCandidate->m_Degree;
+		if ((candidateCost > spillCost) || (candidateCost == spillCost && spilledNode->m_Degree < spillCandidate->m_Degree)) {
 			spilledNode = spillCandidate;
 			spillCost = candidateCost;
 		}
@@ -1515,8 +1515,12 @@ static void jmir_regAlloc_assignColors(jmir_func_pass_regalloc_t* pass)
 
 		jmir_graph_node_t* alias = jmir_regAlloc_nodeGetAlias(pass, node);
 
-		node->m_Color = alias->m_Color;
-		jmir_regAlloc_nodeSetState(pass, node, JMIR_NODE_STATE_COLORED);
+		if (alias->m_Color <= pass->m_NumHWRegs) {
+			node->m_Color = alias->m_Color;
+			jmir_regAlloc_nodeSetState(pass, node, JMIR_NODE_STATE_COLORED);
+		} else {
+			jmir_regAlloc_nodeSetState(pass, node, JMIR_NODE_STATE_SPILLED);
+		}
 
 		node = pass->m_NodeList[JMIR_NODE_STATE_COALESCED];
 	}
@@ -1734,6 +1738,12 @@ static void jmir_regAlloc_replaceInstrRegDef(jx_mir_instruction_t* instr, jx_mir
 	case JMIR_OP_MOV:
 	case JMIR_OP_MOVSX:
 	case JMIR_OP_MOVZX:
+	case JMIR_OP_MOVSS:
+	case JMIR_OP_MOVSD:
+	case JMIR_OP_MOVAPS:
+	case JMIR_OP_MOVAPD:
+	case JMIR_OP_MOVD:
+	case JMIR_OP_MOVQ:
 	case JMIR_OP_IMUL:
 	case JMIR_OP_ADD:
 	case JMIR_OP_SUB:
@@ -1743,7 +1753,67 @@ static void jmir_regAlloc_replaceInstrRegDef(jx_mir_instruction_t* instr, jx_mir
 	case JMIR_OP_OR:
 	case JMIR_OP_SAR:
 	case JMIR_OP_SHR:
-	case JMIR_OP_SHL: {
+	case JMIR_OP_SHL: 
+	case JMIR_OP_ADDPS:
+	case JMIR_OP_ADDSS:
+	case JMIR_OP_ADDPD:
+	case JMIR_OP_ADDSD:
+	case JMIR_OP_ANDNPS:
+	case JMIR_OP_ANDNPD:
+	case JMIR_OP_ANDPS:
+	case JMIR_OP_ANDPD: 
+	case JMIR_OP_CVTSI2SS:
+	case JMIR_OP_CVTSI2SD:
+	case JMIR_OP_CVTSS2SI:
+	case JMIR_OP_CVTSD2SI:
+	case JMIR_OP_CVTTSS2SI:
+	case JMIR_OP_CVTTSD2SI:
+	case JMIR_OP_CVTSD2SS:
+	case JMIR_OP_CVTSS2SD:
+	case JMIR_OP_DIVPS:
+	case JMIR_OP_DIVSS:
+	case JMIR_OP_DIVPD:
+	case JMIR_OP_DIVSD:
+	case JMIR_OP_MAXPS:
+	case JMIR_OP_MAXSS:
+	case JMIR_OP_MAXPD:
+	case JMIR_OP_MAXSD:
+	case JMIR_OP_MINPS:
+	case JMIR_OP_MINSS:
+	case JMIR_OP_MINPD:
+	case JMIR_OP_MINSD:
+	case JMIR_OP_MULPS:
+	case JMIR_OP_MULSS:
+	case JMIR_OP_MULPD:
+	case JMIR_OP_MULSD:
+	case JMIR_OP_ORPS:
+	case JMIR_OP_ORPD:
+	case JMIR_OP_RCPPS:
+	case JMIR_OP_RCPSS:
+	case JMIR_OP_RSQRTPS:
+	case JMIR_OP_RSQRTSS:
+	case JMIR_OP_SQRTPS:
+	case JMIR_OP_SQRTSS:
+	case JMIR_OP_SQRTPD:
+	case JMIR_OP_SQRTSD:
+	case JMIR_OP_SUBPS:
+	case JMIR_OP_SUBSS:
+	case JMIR_OP_SUBPD:
+	case JMIR_OP_SUBSD: 
+	case JMIR_OP_UNPCKHPS:
+	case JMIR_OP_UNPCKHPD:
+	case JMIR_OP_UNPCKLPS:
+	case JMIR_OP_UNPCKLPD:
+	case JMIR_OP_XORPS:
+	case JMIR_OP_XORPD:
+	case JMIR_OP_PUNPCKLBW:
+	case JMIR_OP_PUNPCKLWD:
+	case JMIR_OP_PUNPCKLDQ:
+	case JMIR_OP_PUNPCKLQDQ:
+	case JMIR_OP_PUNPCKHBW:
+	case JMIR_OP_PUNPCKHWD:
+	case JMIR_OP_PUNPCKHDQ:
+	case JMIR_OP_PUNPCKHQDQ: {
 		jx_mir_operand_t* dst = instr->m_Operands[0];
 		JX_CHECK(dst->m_Kind == JMIR_OPERAND_REGISTER, "Move dest expected to be a register.");
 		JX_CHECK(jx_mir_regEqual(dst->u.m_Reg, vreg), "Expected a different virtual register!");
@@ -1802,6 +1872,18 @@ static void jmir_regAlloc_replaceInstrRegDef(jx_mir_instruction_t* instr, jx_mir
 	case JMIR_OP_JNLE: {
 		JX_NOT_IMPLEMENTED();
 	} break;
+	case JMIR_OP_COMISS: {
+		JX_NOT_IMPLEMENTED();
+	} break;
+	case JMIR_OP_COMISD: {
+		JX_NOT_IMPLEMENTED();
+	} break;
+	case JMIR_OP_UCOMISS: {
+		JX_NOT_IMPLEMENTED();
+	} break;
+	case JMIR_OP_UCOMISD: {
+		JX_NOT_IMPLEMENTED();
+	} break;
 	default:
 		JX_CHECK(false, "Unknown mir opcode");
 		break;
@@ -1823,6 +1905,12 @@ static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, jx_mir
 	case JMIR_OP_MOV:
 	case JMIR_OP_MOVSX:
 	case JMIR_OP_MOVZX: 
+	case JMIR_OP_MOVSS:
+	case JMIR_OP_MOVSD:
+	case JMIR_OP_MOVAPS:
+	case JMIR_OP_MOVAPD:
+	case JMIR_OP_MOVD:
+	case JMIR_OP_MOVQ:
 	case JMIR_OP_LEA: {
 		bool regReplaced = false;
 
@@ -1843,17 +1931,23 @@ static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, jx_mir
 			}
 		}
 
-		if (!regReplaced) {
-			jx_mir_operand_t* dst = instr->m_Operands[0];
-			if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-				jx_mir_memory_ref_t* memRef = dst->u.m_MemRef;
-				if (jx_mir_regEqual(memRef->m_BaseReg, vreg)) {
-					memRef->m_BaseReg = newReg->u.m_Reg;
-					regReplaced = true;
-				} else if (jx_mir_regEqual(memRef->m_IndexReg, vreg)) {
-					memRef->m_IndexReg = newReg->u.m_Reg;
-					regReplaced = true;
-				}
+		jx_mir_operand_t* dst = instr->m_Operands[0];
+		if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+			jx_mir_memory_ref_t* memRef = dst->u.m_MemRef;
+			if (jx_mir_regEqual(memRef->m_BaseReg, vreg)) {
+				memRef->m_BaseReg = newReg->u.m_Reg;
+				regReplaced = true;
+			} else if (jx_mir_regEqual(memRef->m_IndexReg, vreg)) {
+				memRef->m_IndexReg = newReg->u.m_Reg;
+				regReplaced = true;
+			}
+		} else if (dst->m_Kind == JMIR_OPERAND_REGISTER && regReplaced) {
+			// NOTE: This is needed for lea vreg, [vreg + ...].
+			// In this case vreg is both used and defined by lea, but if I 
+			// replace only the true use, there is still a reference to the 
+			// old vreg.
+			if (jx_mir_regEqual(dst->u.m_Reg, vreg)) {
+				instr->m_Operands[0] = newReg;
 			}
 		}
 
@@ -1862,37 +1956,137 @@ static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, jx_mir
 	case JMIR_OP_CMP:
 	case JMIR_OP_IMUL:
 	case JMIR_OP_ADD:
-	case JMIR_OP_SUB: {
+	case JMIR_OP_SUB: 
+	case JMIR_OP_SAR:
+	case JMIR_OP_SHR:
+	case JMIR_OP_SHL:
+	case JMIR_OP_ADDPS:
+	case JMIR_OP_ADDSS:
+	case JMIR_OP_ADDPD:
+	case JMIR_OP_ADDSD:
+	case JMIR_OP_ANDNPS:
+	case JMIR_OP_ANDNPD:
+	case JMIR_OP_ANDPS:
+	case JMIR_OP_ANDPD:
+	case JMIR_OP_COMISS:
+	case JMIR_OP_COMISD:
+	case JMIR_OP_CVTSI2SS:
+	case JMIR_OP_CVTSI2SD:
+	case JMIR_OP_CVTSS2SI:
+	case JMIR_OP_CVTSD2SI:
+	case JMIR_OP_CVTTSS2SI:
+	case JMIR_OP_CVTTSD2SI:
+	case JMIR_OP_CVTSD2SS:
+	case JMIR_OP_CVTSS2SD:
+	case JMIR_OP_DIVPS:
+	case JMIR_OP_DIVSS:
+	case JMIR_OP_DIVPD:
+	case JMIR_OP_DIVSD:
+	case JMIR_OP_MAXPS:
+	case JMIR_OP_MAXSS:
+	case JMIR_OP_MAXPD:
+	case JMIR_OP_MAXSD:
+	case JMIR_OP_MINPS:
+	case JMIR_OP_MINSS:
+	case JMIR_OP_MINPD:
+	case JMIR_OP_MINSD:
+	case JMIR_OP_MULPS:
+	case JMIR_OP_MULSS:
+	case JMIR_OP_MULPD:
+	case JMIR_OP_MULSD:
+	case JMIR_OP_ORPS:
+	case JMIR_OP_ORPD:
+	case JMIR_OP_RCPPS:
+	case JMIR_OP_RCPSS:
+	case JMIR_OP_RSQRTPS:
+	case JMIR_OP_RSQRTSS:
+	case JMIR_OP_SQRTPS:
+	case JMIR_OP_SQRTSS:
+	case JMIR_OP_SQRTPD:
+	case JMIR_OP_SQRTSD:
+	case JMIR_OP_SUBPS:
+	case JMIR_OP_SUBSS:
+	case JMIR_OP_SUBPD:
+	case JMIR_OP_SUBSD:
+	case JMIR_OP_UCOMISS:
+	case JMIR_OP_UCOMISD:
+	case JMIR_OP_UNPCKHPS:
+	case JMIR_OP_UNPCKHPD:
+	case JMIR_OP_UNPCKLPS:
+	case JMIR_OP_UNPCKLPD:
+	case JMIR_OP_XORPS:
+	case JMIR_OP_XORPD:
+	case JMIR_OP_PUNPCKLBW:
+	case JMIR_OP_PUNPCKLWD:
+	case JMIR_OP_PUNPCKLDQ:
+	case JMIR_OP_PUNPCKLQDQ:
+	case JMIR_OP_PUNPCKHBW:
+	case JMIR_OP_PUNPCKHWD:
+	case JMIR_OP_PUNPCKHDQ:
+	case JMIR_OP_PUNPCKHQDQ: {
+		bool regReplaced = false;
 		jx_mir_operand_t* src = instr->m_Operands[1];
 		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
 			if (jx_mir_regEqual(src->u.m_Reg, vreg)) {
 				instr->m_Operands[1] = newReg;
+				regReplaced = true;
 			}
 		} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			JX_NOT_IMPLEMENTED();
+			jx_mir_memory_ref_t* memRef = src->u.m_MemRef;
+			if (jx_mir_regEqual(memRef->m_BaseReg, vreg)) {
+				memRef->m_BaseReg = newReg->u.m_Reg;
+				regReplaced = true;
+			} else if (jx_mir_regEqual(memRef->m_IndexReg, vreg)) {
+				memRef->m_IndexReg = newReg->u.m_Reg;
+				regReplaced = true;
+			}
 		}
 
 		jx_mir_operand_t* dst = instr->m_Operands[0];
 		if (dst->m_Kind == JMIR_OPERAND_REGISTER) {
 			if (jx_mir_regEqual(dst->u.m_Reg, vreg)) {
 				instr->m_Operands[0] = newReg;
+				regReplaced = true;
 			}
 		} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			JX_NOT_IMPLEMENTED();
+			jx_mir_memory_ref_t* memRef = dst->u.m_MemRef;
+			if (jx_mir_regEqual(memRef->m_BaseReg, vreg)) {
+				memRef->m_BaseReg = newReg->u.m_Reg;
+				regReplaced = true;
+			} else if (jx_mir_regEqual(memRef->m_IndexReg, vreg)) {
+				memRef->m_IndexReg = newReg->u.m_Reg;
+				regReplaced = true;
+			}
 		}
+
+		JX_CHECK(regReplaced, "Register not found!");
 	} break;
 	case JMIR_OP_IDIV:
 	case JMIR_OP_DIV: {
-		JX_NOT_IMPLEMENTED();
+		bool regReplaced = false;
+
+		jx_mir_operand_t* op = instr->m_Operands[0];
+		if (op->m_Kind == JMIR_OPERAND_REGISTER) {
+			if (jx_mir_regEqual(op->u.m_Reg, vreg)) {
+				instr->m_Operands[0] = newReg;
+				regReplaced = true;
+			}
+		} else if (op->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+			jx_mir_memory_ref_t* memRef = op->u.m_MemRef;
+			if (jx_mir_regEqual(memRef->m_BaseReg, vreg)) {
+				memRef->m_BaseReg = newReg->u.m_Reg;
+				regReplaced = true;
+			} else if (jx_mir_regEqual(memRef->m_IndexReg, vreg)) {
+				memRef->m_IndexReg = newReg->u.m_Reg;
+				regReplaced = true;
+			}
+		}
+
+		JX_CHECK(regReplaced, "Register not found!");
 	} break;
 	case JMIR_OP_XOR:
 	case JMIR_OP_AND:
 	case JMIR_OP_OR: {
-		JX_NOT_IMPLEMENTED();
-	} break;
-	case JMIR_OP_SAR:
-	case JMIR_OP_SHR:
-	case JMIR_OP_SHL: {
 		JX_NOT_IMPLEMENTED();
 	} break;
 	case JMIR_OP_CALL: {

@@ -851,10 +851,12 @@ static jx_mir_operand_t* jmirgen_instrBuild_setcc(jx_mirgen_context_t* ctx, jx_i
 		} else if (lhsConst && !rhsConst) {
 			// Swap operands and condition code.
 			lhs = jmirgen_ensureOperandNotConstI64(ctx, lhs);
+			lhs = jmirgen_ensureOperandRegOrMem(ctx, lhs);
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cmp(ctx->m_MIRCtx, rhs, lhs));
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_setcc(ctx->m_MIRCtx, jx_mir_ccSwapOperands(mirCC), dstReg));
 		} else {
 			rhs = jmirgen_ensureOperandNotConstI64(ctx, rhs);
+			rhs = jmirgen_ensureOperandRegOrMem(ctx, rhs);
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cmp(ctx->m_MIRCtx, lhs, rhs));
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_setcc(ctx->m_MIRCtx, mirCC, dstReg));
 		}
@@ -1545,9 +1547,9 @@ static jx_mir_operand_t* jmirgen_instrBuild_fp2si(jx_mirgen_context_t* ctx, jx_i
 
 	jx_mir_operand_t* resReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, targetType);
 	if (operand->m_Type == JMIR_TYPE_F32) {
-		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cvtss2si(ctx->m_MIRCtx, resReg, operand));
+		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cvttss2si(ctx->m_MIRCtx, resReg, operand));
 	} else if (operand->m_Type == JMIR_TYPE_F64) {
-		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cvtsd2si(ctx->m_MIRCtx, resReg, operand));
+		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cvttsd2si(ctx->m_MIRCtx, resReg, operand));
 	} else {
 		JX_CHECK(false, "Unknown floating point type");
 	}
