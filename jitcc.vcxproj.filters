@@ -186,6 +186,9 @@
     <ClInclude Include="bin\include\wchar.h">
       <Filter>bin\include</Filter>
     </ClInclude>
+    <ClInclude Include="bin\test\stb\stb_truetype.h">
+      <Filter>bin\test\stb</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\jcc.c">
@@ -990,6 +993,9 @@
       <Filter>bin\test</Filter>
     </ClCompile>
     <ClCompile Include="bin\test\stb_sprintf_test.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\stb_truetype_test.c">
       <Filter>bin\test</Filter>
     </ClCompile>
   </ItemGroup>

@@ -10,5 +10,6 @@ void* realloc(void* ptr, size_t new_size);
 void abort(void);
 
 int abs(int n);
+int atoi(const char* str);
 
 #endif // _STDLIB

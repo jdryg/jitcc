@@ -713,14 +713,14 @@ static double _jx_strto_double(const char* str, uint32_t len, char** str_end, do
 	}
 
 	// JD: Allow ending parsing at invalid characters without error if initial len is equal to UINT32_MAX
-	if (error && initialLen == UINT32_MAX && (state == _JDOUBLE_PARSER_STATE_BEFORE_DECIMAL_POINT || state == _JDOUBLE_PARSER_STATE_FRACTIONAL || state == _JDOUBLE_PARSER_STATE_EXPONENT)) {
+	if (error && initialLen == UINT32_MAX && (state == _JDOUBLE_PARSER_STATE_BEFORE_DECIMAL_POINT || state == _JDOUBLE_PARSER_STATE_FRACTIONAL || state == _JDOUBLE_PARSER_STATE_EXPONENT || state == _JDOUBLE_PARSER_STATE_FIRST_FRACTIONAL_DIGIT)) {
 		error = 0;
 	}
 
 	if (!error && (false
 		|| (state == _JDOUBLE_PARSER_STATE_INITIAL)
 		|| (state == _JDOUBLE_PARSER_STATE_AFTER_SIGN)
-		|| (state == _JDOUBLE_PARSER_STATE_FIRST_FRACTIONAL_DIGIT)
+//		|| (state == _JDOUBLE_PARSER_STATE_FIRST_FRACTIONAL_DIGIT)
 		|| (state == _JDOUBLE_PARSER_STATE_BEFORE_EXPONENT_SIGN)
 		|| (state == _JDOUBLE_PARSER_STATE_FIRST_EXPONENT_DIGIT))) {
 		error = 1;

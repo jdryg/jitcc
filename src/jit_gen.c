@@ -450,48 +450,65 @@ bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
 
 	// DEBUG/TEST
 	{
-		jx_x64gen_setExternalSymbol(jitCtx, "strlen", (void*)jx_strlen);
+		jx_x64gen_setExternalSymbol(jitCtx, "abs", (void*)abs);
+		jx_x64gen_setExternalSymbol(jitCtx, "abort", (void*)abort);
+		jx_x64gen_setExternalSymbol(jitCtx, "acos", (void*)acos);
+		jx_x64gen_setExternalSymbol(jitCtx, "atoi", (void*)atoi);
+
 		jx_x64gen_setExternalSymbol(jitCtx, "calloc", (void*)calloc);
-		jx_x64gen_setExternalSymbol(jitCtx, "printf", (void*)printf);
-		jx_x64gen_setExternalSymbol(jitCtx, "memset", (void*)memset);
-		jx_x64gen_setExternalSymbol(jitCtx, "memcpy", (void*)memcpy);
-		jx_x64gen_setExternalSymbol(jitCtx, "memmove", (void*)memmove);
-		jx_x64gen_setExternalSymbol(jitCtx, "memcmp", (void*)memcmp);
-		jx_x64gen_setExternalSymbol(jitCtx, "sprintf", (void*)sprintf);
+		jx_x64gen_setExternalSymbol(jitCtx, "ceil", (void*)ceil);
+		jx_x64gen_setExternalSymbol(jitCtx, "cos", (void*)cos);
 		jx_x64gen_setExternalSymbol(jitCtx, "cosf", (void*)cosf);
-		jx_x64gen_setExternalSymbol(jitCtx, "sinf", (void*)sinf);
-		jx_x64gen_setExternalSymbol(jitCtx, "sin", (void*)sin);
+
+		jx_x64gen_setExternalSymbol(jitCtx, "fabs", (void*)fabs);
+		jx_x64gen_setExternalSymbol(jitCtx, "fclose", (void*)fclose);
+		jx_x64gen_setExternalSymbol(jitCtx, "fgetc", (void*)fgetc);
+		jx_x64gen_setExternalSymbol(jitCtx, "fgets", (void*)fgets);
+		jx_x64gen_setExternalSymbol(jitCtx, "floor", (void*)floor);
+		jx_x64gen_setExternalSymbol(jitCtx, "fmod", (void*)fmod);
+		jx_x64gen_setExternalSymbol(jitCtx, "fopen", (void*)fopen);
+		jx_x64gen_setExternalSymbol(jitCtx, "fprintf", (void*)fprintf);
+		jx_x64gen_setExternalSymbol(jitCtx, "fread", (void*)fread);
+		jx_x64gen_setExternalSymbol(jitCtx, "free", (void*)free);
+		jx_x64gen_setExternalSymbol(jitCtx, "frexp", (void*)frexp);
+		jx_x64gen_setExternalSymbol(jitCtx, "fseek", (void*)fseek);
+		jx_x64gen_setExternalSymbol(jitCtx, "ftell", (void*)ftell);
+		jx_x64gen_setExternalSymbol(jitCtx, "fwrite", (void*)fwrite);
+
 		jx_x64gen_setExternalSymbol(jitCtx, "func1", (void*)func1);
 		jx_x64gen_setExternalSymbol(jitCtx, "func2", (void*)func2);
 		jx_x64gen_setExternalSymbol(jitCtx, "func3", (void*)func3);
 		jx_x64gen_setExternalSymbol(jitCtx, "func5", (void*)func5);
 		jx_x64gen_setExternalSymbol(jitCtx, "func7", (void*)func7);
 		jx_x64gen_setExternalSymbol(jitCtx, "func8", (void*)func8);
+
+		jx_x64gen_setExternalSymbol(jitCtx, "getc", (void*)getc);
+
+		jx_x64gen_setExternalSymbol(jitCtx, "malloc", (void*)malloc);
+		jx_x64gen_setExternalSymbol(jitCtx, "memcmp", (void*)memcmp);
+		jx_x64gen_setExternalSymbol(jitCtx, "memcpy", (void*)memcpy);
+		jx_x64gen_setExternalSymbol(jitCtx, "memmove", (void*)memmove);
+		jx_x64gen_setExternalSymbol(jitCtx, "memset", (void*)memset);
+
+		jx_x64gen_setExternalSymbol(jitCtx, "pow", (void*)pow);
+		jx_x64gen_setExternalSymbol(jitCtx, "printf", (void*)printf);
 		jx_x64gen_setExternalSymbol(jitCtx, "putchar", (void*)putchar);
 
-		jx_x64gen_setExternalSymbol(jitCtx, "fopen", (void*)fopen);
-		jx_x64gen_setExternalSymbol(jitCtx, "fclose", (void*)fclose);
-		jx_x64gen_setExternalSymbol(jitCtx, "fwrite", (void*)fwrite);
-		jx_x64gen_setExternalSymbol(jitCtx, "fread", (void*)fread);
-		jx_x64gen_setExternalSymbol(jitCtx, "fgetc", (void*)fgetc);
-		jx_x64gen_setExternalSymbol(jitCtx, "getc", (void*)getc);
-		jx_x64gen_setExternalSymbol(jitCtx, "fgets", (void*)fgets);
-		jx_x64gen_setExternalSymbol(jitCtx, "fprintf", (void*)fprintf);
-
-		jx_x64gen_setExternalSymbol(jitCtx, "strcpy", (void*)strcpy);
-		jx_x64gen_setExternalSymbol(jitCtx, "strncpy", (void*)strncpy);
-		jx_x64gen_setExternalSymbol(jitCtx, "strcmp", (void*)strcmp);
-		jx_x64gen_setExternalSymbol(jitCtx, "strlen", (void*)strlen);
-		jx_x64gen_setExternalSymbol(jitCtx, "strcat", (void*)strcat);
-		jx_x64gen_setExternalSymbol(jitCtx, "strncmp", (void*)strncmp);
-		jx_x64gen_setExternalSymbol(jitCtx, "strchr", (void*)strchr);
-		jx_x64gen_setExternalSymbol(jitCtx, "strrchr", (void*)strrchr);
-		
-		jx_x64gen_setExternalSymbol(jitCtx, "frexp", (void*)frexp);
-		jx_x64gen_setExternalSymbol(jitCtx, "malloc", (void*)malloc);
-		jx_x64gen_setExternalSymbol(jitCtx, "free", (void*)free);
 		jx_x64gen_setExternalSymbol(jitCtx, "realloc", (void*)realloc);
-		jx_x64gen_setExternalSymbol(jitCtx, "abs", (void*)abs);
+		jx_x64gen_setExternalSymbol(jitCtx, "roundf", (void*)roundf);
+
+		jx_x64gen_setExternalSymbol(jitCtx, "sin", (void*)sin);
+		jx_x64gen_setExternalSymbol(jitCtx, "sinf", (void*)sinf);
+		jx_x64gen_setExternalSymbol(jitCtx, "sprintf", (void*)sprintf);
+		jx_x64gen_setExternalSymbol(jitCtx, "sqrt", (void*)sqrt);
+		jx_x64gen_setExternalSymbol(jitCtx, "strcat", (void*)strcat);
+		jx_x64gen_setExternalSymbol(jitCtx, "strchr", (void*)strchr);
+		jx_x64gen_setExternalSymbol(jitCtx, "strcmp", (void*)strcmp);
+		jx_x64gen_setExternalSymbol(jitCtx, "strcpy", (void*)strcpy);
+		jx_x64gen_setExternalSymbol(jitCtx, "strlen", (void*)strlen);
+		jx_x64gen_setExternalSymbol(jitCtx, "strncmp", (void*)strncmp);
+		jx_x64gen_setExternalSymbol(jitCtx, "strncpy", (void*)strncpy);
+		jx_x64gen_setExternalSymbol(jitCtx, "strrchr", (void*)strrchr);
 	}
 
 	jx64_finalize(jitCtx);
