@@ -1898,7 +1898,12 @@ static jx_ir_type_t* jccTypeToIRType(jx_irgen_context_t* ctx, jx_cc_type_t* ccTy
 		irType = jx_ir_typeGetArray(irctx, jccTypeToIRType(ctx, ccType->m_BaseType), ccType->m_ArrayLen);
 	} break;
 	case JCC_TYPE_STRUCT: {
-		const uint64_t structUniqueID = (uint64_t)ccType;
+		const jx_cc_type_t* uniqueIDType = ccType;
+		while (uniqueIDType->m_OriginType) {
+			uniqueIDType = uniqueIDType->m_OriginType;
+		}
+		const uint64_t structUniqueID = (uint64_t)uniqueIDType;
+		ccType = (jx_cc_type_t*)uniqueIDType;
 		irType = jx_ir_typeGetStruct(irctx, structUniqueID);
 		if (!irType) {
 			jx_ir_type_struct_t* structType = jx_ir_typeStructBegin(irctx, structUniqueID, 0);
