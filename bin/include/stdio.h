@@ -5,6 +5,10 @@
 
 #define EOF    (-1)
 
+#define SEEK_CUR    1
+#define SEEK_END    2
+#define SEEK_SET    0
+
 typedef struct _iobuf
 {
     void* _Placeholder;
@@ -21,5 +25,9 @@ size_t fread(void* buffer, size_t size, size_t count, FILE* stream);
 int fgetc(FILE* stream);
 int getc(FILE* stream);
 char* fgets(char* str, int count, FILE* stream);
+int fseek(FILE* stream, long offset, int origin);
+long ftell(FILE* stream);
+
+int putchar(int ch);
 
 #endif // _STDIO

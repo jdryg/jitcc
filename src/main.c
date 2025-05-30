@@ -153,9 +153,10 @@ int main(int argc, char** argv)
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 	jx_cc_addIncludePath(ctx, JX_FILE_BASE_DIR_INSTALL, "include");
 
-//	const char* sourceFile = "test/c-testsuite/00189.c";
+//	const char* sourceFile = "test/c-testsuite/00144.c";
 //	const char* sourceFile = "test/stb_image_write_test.c";
-	const char* sourceFile = "test/stb_sprintf_test.c";
+//	const char* sourceFile = "test/stb_sprintf_test.c";
+	const char* sourceFile = "test/stb_truetype_test.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
 	jx_cc_translation_unit_t* tu = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_INSTALL, sourceFile);
@@ -201,22 +202,30 @@ int main(int argc, char** argv)
 				jx_x64gen_context_t* jitgenCtx = jx_x64gen_createContext(jitCtx, mirCtx, allocator);
 
 				if (jx_x64gen_codeGen(jitgenCtx)) {
-					sb = jx_strbuf_create(allocator);
-
 					uint32_t bufferSize = 0;
 					const uint8_t* buffer = jx64_getBuffer(jitCtx, &bufferSize);
+
+#if 1
+					jx_os_file_t* binFile = jx_os_fileOpenWrite(JX_FILE_BASE_DIR_USERDATA, "output.bin");
+					jx_os_fileWrite(binFile, buffer, bufferSize);
+					jx_os_fileClose(binFile);
+
+#else
+					sb = jx_strbuf_create(allocator);
 					for (uint32_t i = 0; i < bufferSize; ++i) {
 						jx_strbuf_printf(sb, "%02X", buffer[i]);
 					}
-
 					jx_strbuf_nullTerminate(sb);
 					JX_SYS_LOG_INFO(NULL, "\n%s\n\n", jx_strbuf_getString(sb, NULL));
 					jx_strbuf_destroy(sb);
+#endif
 
 					typedef int32_t(*pfnMain)(void);
 					jx_x64_symbol_t* symMain = jx64_symbolGetByName(jitCtx, "main");
 					if (symMain) {
-						pfnMain mainFunc = (pfnMain)((uint8_t*)buffer + jx64_labelGetOffset(jitCtx, symMain->m_Label));
+						uint32_t mainOffset = jx64_labelGetOffset(jitCtx, symMain->m_Label);
+						JX_SYS_LOG_INFO(NULL, "main offset %u\n", mainOffset);
+						pfnMain mainFunc = (pfnMain)((uint8_t*)buffer + mainOffset);
 						int32_t ret = mainFunc();
 						JX_SYS_LOG_DEBUG(NULL, "main() returned %d\n", ret);
 					} else {

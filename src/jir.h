@@ -228,6 +228,7 @@ typedef struct jx_ir_value_t
 	jx_ir_type_t* m_Type;
 	const char* m_Name;
 	jx_ir_use_t* m_UsesListHead;
+	jx_ir_use_t* m_UsesListTail;
 } jx_ir_value_t;
 
 typedef struct jx_ir_user_t
@@ -325,10 +326,16 @@ typedef struct jx_ir_basic_block_t
 	jx_ir_function_t* m_ParentFunc;
 	jx_ir_basic_block_t** m_PredArr; // Predecessors
 	jx_ir_basic_block_t** m_SuccArr; // Successors, max 2 but keep it as a dynamic array for consistency.
+
+	jx_ir_basic_block_t* m_ImmDom;   // Immediate Dominator
+	uint32_t m_RevPostOrderID;
+	JX_PAD(4);
 } jx_ir_basic_block_t;
 
-#define JIR_FUNC_FLAGS_INLINE_Pos  0
-#define JIR_FUNC_FLAGS_INLINE_Msk  (1u << JIR_FUNC_FLAGS_INLINE_Pos)
+#define JIR_FUNC_FLAGS_INLINE_Pos          0
+#define JIR_FUNC_FLAGS_INLINE_Msk          (1u << JIR_FUNC_FLAGS_INLINE_Pos)
+#define JIR_FUNC_FLAGS_DOM_TREE_VALID_Pos  1
+#define JIR_FUNC_FLAGS_DOM_TREE_VALID_Msk  (1u << JIR_FUNC_FLAGS_DOM_TREE_VALID_Pos)
 
 typedef struct jx_ir_function_t
 {
@@ -390,6 +397,8 @@ jx_ir_argument_t* jx_ir_funcGetArgument(jx_ir_context_t* ctx, jx_ir_function_t* 
 void jx_ir_funcAppendBasicBlock(jx_ir_context_t* ctx, jx_ir_function_t* func, jx_ir_basic_block_t* bb);
 bool jx_ir_funcRemoveBasicBlock(jx_ir_context_t* ctx, jx_ir_function_t* func, jx_ir_basic_block_t* bb);
 jx_ir_type_function_t* jx_ir_funcGetType(jx_ir_context_t* ctx, jx_ir_function_t* func);
+uint32_t jx_ir_funcCountBasicBlocks(jx_ir_context_t* ctx, jx_ir_function_t* func);
+bool jx_ir_funcUpdateDomTree(jx_ir_context_t* ctx, jx_ir_function_t* func);
 void jx_ir_funcPrint(jx_ir_context_t* ctx, jx_ir_function_t* func, jx_string_buffer_t* sb);
 bool jx_ir_funcCheck(jx_ir_context_t* ctx, jx_ir_function_t* func);
 

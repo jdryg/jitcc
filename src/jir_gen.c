@@ -1380,6 +1380,11 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 			idxVal = jirgenConvertType(ctx, idxVal, jx_ir_typeGetPrimitive(irctx, JIR_TYPE_I64));
 		}
 
+		// Make sure index type is signed.
+		if (jx_ir_typeIsUnsigned(idxVal->m_Type)) {
+			idxVal = jirgenConvertType(ctx, idxVal, jx_ir_typeGetPrimitive(irctx, idxVal->m_Type->m_Kind == JIR_TYPE_U64 ? JIR_TYPE_I64 : JIR_TYPE_I32));
+		}
+
 		// If gepNode->m_ExprPtr is an array, use a 2 index GEP because the first index
 		// refers to the array itself.
 		const bool isArray = gepNode->m_ExprPtr->m_Type->m_Kind == JCC_TYPE_ARRAY;
@@ -1893,7 +1898,12 @@ static jx_ir_type_t* jccTypeToIRType(jx_irgen_context_t* ctx, jx_cc_type_t* ccTy
 		irType = jx_ir_typeGetArray(irctx, jccTypeToIRType(ctx, ccType->m_BaseType), ccType->m_ArrayLen);
 	} break;
 	case JCC_TYPE_STRUCT: {
-		const uint64_t structUniqueID = (uint64_t)ccType;
+		const jx_cc_type_t* uniqueIDType = ccType;
+		while (uniqueIDType->m_OriginType) {
+			uniqueIDType = uniqueIDType->m_OriginType;
+		}
+		const uint64_t structUniqueID = (uint64_t)uniqueIDType;
+		ccType = (jx_cc_type_t*)uniqueIDType;
 		irType = jx_ir_typeGetStruct(irctx, structUniqueID);
 		if (!irType) {
 			jx_ir_type_struct_t* structType = jx_ir_typeStructBegin(irctx, structUniqueID, 0);

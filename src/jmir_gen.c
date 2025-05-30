@@ -851,10 +851,12 @@ static jx_mir_operand_t* jmirgen_instrBuild_setcc(jx_mirgen_context_t* ctx, jx_i
 		} else if (lhsConst && !rhsConst) {
 			// Swap operands and condition code.
 			lhs = jmirgen_ensureOperandNotConstI64(ctx, lhs);
+			lhs = jmirgen_ensureOperandRegOrMem(ctx, lhs);
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cmp(ctx->m_MIRCtx, rhs, lhs));
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_setcc(ctx->m_MIRCtx, jx_mir_ccSwapOperands(mirCC), dstReg));
 		} else {
 			rhs = jmirgen_ensureOperandNotConstI64(ctx, rhs);
+			rhs = jmirgen_ensureOperandRegOrMem(ctx, rhs);
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cmp(ctx->m_MIRCtx, lhs, rhs));
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_setcc(ctx->m_MIRCtx, mirCC, dstReg));
 		}
@@ -1122,23 +1124,28 @@ static jx_mir_operand_t* jmirgen_instrBuild_call(jx_mirgen_context_t* ctx, jx_ir
 
 	// If funcPtrVal->m_Name is a build-in/intrinsic function, handle it here before generating
 	// any code for the actual call. E.g. replace memset/memcpy with movs, etc.
+	// NOTE: Function name can be NULL (e.g.) if the original code intentionally casted the NULL
+	// pointer to a function type and called it. Let it compile correctly and fail at runtime.
+	// E.g. c-testsuite/00159.c zfunc
 	const char* funcName = funcPtrVal->m_Name;
-	if (!jx_strncmp(funcName, "jir.", 4)) {
-		// Intrinsic function
-		if (!jx_strncmp(funcName, "jir.memset.", 11)) {
-			if (jmirgen_genMemSet(ctx, irInstr)) {
+	if (funcName) {
+		if (!jx_strncmp(funcName, "jir.", 4)) {
+			// Intrinsic function
+			if (!jx_strncmp(funcName, "jir.memset.", 11)) {
+				if (jmirgen_genMemSet(ctx, irInstr)) {
+					return NULL;
+				}
+			} else if (!jx_strncmp(funcName, "jir.memcpy.", 11)) {
+				if (jmirgen_genMemCpy(ctx, irInstr)) {
+					return NULL;
+				}
+			} else {
+				JX_CHECK(false, "Unknown intrinsic function");
+			}
+		} else if (!jx_strcmp(funcName, "__va_start")) {
+			if (jmirgen_genVAStart(ctx, irInstr)) {
 				return NULL;
 			}
-		} else if (!jx_strncmp(funcName, "jir.memcpy.", 11)) {
-			if (jmirgen_genMemCpy(ctx, irInstr)) {
-				return NULL;
-			}
-		} else {
-			JX_CHECK(false, "Unknown intrinsic function");
-		}
-	} else if (!jx_strcmp(funcName, "__va_start")) {
-		if (jmirgen_genVAStart(ctx, irInstr)) {
-			return NULL;
 		}
 	}
 
@@ -1186,6 +1193,9 @@ static jx_mir_operand_t* jmirgen_instrBuild_call(jx_mirgen_context_t* ctx, jx_ir
 	}
 
 	jx_mir_operand_t* funcOp = jmirgen_getOperand(ctx, funcPtrVal);
+	if (funcOp->m_Kind == JMIR_OPERAND_CONST) {
+		funcOp = jmirgen_ensureOperandReg(ctx, funcOp);
+	}
 	jx_mir_function_proto_t* funcProto = jmirgen_funcTypeToProto(ctx, funcType);
 	jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_call(ctx->m_MIRCtx, funcOp, funcProto));
 
@@ -1537,9 +1547,9 @@ static jx_mir_operand_t* jmirgen_instrBuild_fp2si(jx_mirgen_context_t* ctx, jx_i
 
 	jx_mir_operand_t* resReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, targetType);
 	if (operand->m_Type == JMIR_TYPE_F32) {
-		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cvtss2si(ctx->m_MIRCtx, resReg, operand));
+		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cvttss2si(ctx->m_MIRCtx, resReg, operand));
 	} else if (operand->m_Type == JMIR_TYPE_F64) {
-		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cvtsd2si(ctx->m_MIRCtx, resReg, operand));
+		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_cvttsd2si(ctx->m_MIRCtx, resReg, operand));
 	} else {
 		JX_CHECK(false, "Unknown floating point type");
 	}
