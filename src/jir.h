@@ -466,6 +466,9 @@ jx_ir_value_t* jx_ir_instrPhiRemoveValue(jx_ir_context_t* ctx, jx_ir_instruction
 jx_ir_value_t* jx_ir_instrPhiHasValue(jx_ir_context_t* ctx, jx_ir_instruction_t* phiInstr, jx_ir_basic_block_t* bb);
 void jx_ir_instrPrint(jx_ir_context_t* ctx, jx_ir_instruction_t* instr, jx_string_buffer_t* sb);
 bool jx_ir_instrCheck(jx_ir_context_t* ctx, jx_ir_instruction_t* instr);
+jx_ir_value_t* jx_ir_instrGetOperandVal(jx_ir_instruction_t* instr, uint32_t operandID);
+void jx_ir_instrSwapOperands(jx_ir_instruction_t* instr, uint32_t op1, uint32_t op2);
+bool jx_ir_instrIsDead(jx_ir_instruction_t* instr);
 
 jx_ir_value_t* jx_ir_userToValue(jx_ir_user_t* user);
 jx_ir_value_t* jx_ir_typeToValue(jx_ir_type_t* type);
@@ -486,6 +489,7 @@ jx_ir_user_t* jx_ir_instrToUser(jx_ir_instruction_t* instr);
 bool jx_ir_opcodeIsAssociative(jx_ir_opcode opcode, jx_ir_type_t* type);
 bool jx_ir_opcodeIsCommutative(jx_ir_opcode opcode);
 bool jx_ir_opcodeIsTerminator(jx_ir_opcode opcode);
+bool jx_ir_opcodeIsSetcc(jx_ir_opcode opcode);
 
 bool jx_ir_valueSetName(jx_ir_context_t* ctx, jx_ir_value_t* val, const char* name);
 void jx_ir_valueAddUse(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_use_t* use);
@@ -551,6 +555,52 @@ jx_ir_constant_t* jx_ir_constPointerToGlobalVal(jx_ir_context_t* ctx, jx_ir_glob
 jx_ir_constant_t* jx_ir_constGetZero(jx_ir_context_t* ctx, jx_ir_type_t* type);
 jx_ir_constant_t* jx_ir_constGetOnes(jx_ir_context_t* ctx, jx_ir_type_t* type);
 void jx_ir_constPrint(jx_ir_context_t* ctx, jx_ir_constant_t* c, jx_string_buffer_t* sb);
+
+static inline bool jx_ir_opcodeIsAssociative(jx_ir_opcode opcode, jx_ir_type_t* type)
+{
+	return !jx_ir_typeIsFloatingPoint(type)
+		&& (false
+			|| opcode == JIR_OP_ADD
+			|| opcode == JIR_OP_MUL
+			|| opcode == JIR_OP_AND
+			|| opcode == JIR_OP_OR
+			|| opcode == JIR_OP_XOR
+			)
+		;
+}
+
+static inline bool jx_ir_opcodeIsCommutative(jx_ir_opcode opcode)
+{
+	return (false
+		|| opcode == JIR_OP_ADD
+		|| opcode == JIR_OP_MUL
+		|| opcode == JIR_OP_AND
+		|| opcode == JIR_OP_OR
+		|| opcode == JIR_OP_XOR
+		|| opcode == JIR_OP_SET_EQ
+		|| opcode == JIR_OP_SET_NE
+		);
+}
+
+static inline bool jx_ir_opcodeIsTerminator(jx_ir_opcode opcode)
+{
+	return false
+		|| opcode == JIR_OP_RET
+		|| opcode == JIR_OP_BRANCH
+		;
+}
+
+static inline bool jx_ir_opcodeIsSetcc(jx_ir_opcode opcode)
+{
+	return false
+		|| opcode == JIR_OP_SET_LE
+		|| opcode == JIR_OP_SET_GE
+		|| opcode == JIR_OP_SET_LT
+		|| opcode == JIR_OP_SET_GT
+		|| opcode == JIR_OP_SET_EQ
+		|| opcode == JIR_OP_SET_NE
+		;
+}
 
 static inline jx_ir_condition_code jx_ir_ccSwapOperands(jx_ir_condition_code cc)
 {
@@ -656,6 +706,33 @@ static inline void jx_ir_instrSwapOperands(jx_ir_instruction_t* instr, uint32_t 
 	jx_ir_use_t* tmp = instr->super.m_OperandArr[0];
 	instr->super.m_OperandArr[0] = instr->super.m_OperandArr[1];
 	instr->super.m_OperandArr[1] = tmp;
+}
+
+static inline bool jx_ir_instrIsDead(jx_ir_instruction_t* instr)
+{
+	return true
+		&& !instr->super.super.m_UsesListHead
+		&& instr->m_OpCode != JIR_OP_BRANCH
+		&& instr->m_OpCode != JIR_OP_CALL
+		&& instr->m_OpCode != JIR_OP_RET
+		&& instr->m_OpCode != JIR_OP_STORE
+		;
+}
+
+static inline bool jx_ir_instrIsUncondBranch(jx_ir_instruction_t* instr)
+{
+	return true
+		&& instr->m_OpCode == JIR_OP_BRANCH
+		&& jx_array_sizeu(instr->super.m_OperandArr) == 1
+		;
+}
+
+static inline bool jx_ir_instrIsCondBranch(jx_ir_instruction_t* instr)
+{
+	return true
+		&& instr->m_OpCode == JIR_OP_BRANCH
+		&& jx_array_sizeu(instr->super.m_OperandArr) == 3
+		;
 }
 
 #endif // JX_IR_H
