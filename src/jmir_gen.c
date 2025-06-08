@@ -1029,6 +1029,8 @@ static jx_mir_operand_t* jmirgen_instrBuild_gep(jx_mirgen_context_t* ctx, jx_ir_
 				JX_CHECK(displacement <= INT32_MAX, "Displacement too large");
 				if (displacement != 0) {
 					jx_mir_operand_t* memRef = jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, dstReg->u.m_Reg, kMIRRegGPNone, 1, (int32_t)displacement);
+
+					dstReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
 					jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstReg, memRef));
 				}
 				dstRegType = ptrType->m_BaseType;
@@ -1039,6 +1041,8 @@ static jx_mir_operand_t* jmirgen_instrBuild_gep(jx_mirgen_context_t* ctx, jx_ir_
 				JX_CHECK(displacement <= INT32_MAX, "Displacement too large");
 				if (displacement != 0) {
 					jx_mir_operand_t* memRef = jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, dstReg->u.m_Reg, kMIRRegGPNone, 1, (int32_t)displacement);
+
+					dstReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
 					jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstReg, memRef));
 				}
 				dstRegType = arrType->m_BaseType;
@@ -1050,6 +1054,8 @@ static jx_mir_operand_t* jmirgen_instrBuild_gep(jx_mirgen_context_t* ctx, jx_ir_
 				JX_CHECK(memberOffset <= INT32_MAX, "Displacement too large");
 				if (memberOffset != 0) {
 					jx_mir_operand_t* memRef = jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, dstReg->u.m_Reg, kMIRRegGPNone, 1, (int32_t)memberOffset);
+
+					dstReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
 					jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstReg, memRef));
 				}
 				dstRegType = memberType;
@@ -1090,6 +1096,8 @@ static jx_mir_operand_t* jmirgen_instrBuild_gep(jx_mirgen_context_t* ctx, jx_ir_
 			const uint32_t itemSize = (uint32_t)jx_ir_typeGetSize(baseType);
 			if (itemSize <= 8 && jx_isPow2_u32(itemSize)) {
 				jx_mir_operand_t* memRef = jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, dstReg->u.m_Reg, indexOperand->u.m_Reg, itemSize, 0);
+
+				dstReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
 				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstReg, memRef));
 			} else {
 				jx_mir_operand_t* tmp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64);
