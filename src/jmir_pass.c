@@ -85,6 +85,15 @@ static bool jmir_funcPass_removeFallthroughJmpRun(jx_mir_function_pass_o* inst, 
 
 //////////////////////////////////////////////////////////////////////////
 // Remove redundant moves
+// 
+// Eliminates mov/movss/movsd rX, rX even if one of them is a subset of the other
+// E.g. mov cx, ecx is considered redundant.
+// 
+// Note that this instruction is actually invalid (there is no valid encoding)
+// and it's not generated during codegen. It might appear when the variable is spilled 
+// during register allocation.
+// 
+// TODO: Check if this is wrong and if it should be fixed in the regalloc code.
 //
 static void jmir_funcPass_removeRedundantMovesDestroy(jx_mir_function_pass_o* inst, jx_allocator_i* allocator);
 static bool jmir_funcPass_removeRedundantMovesRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func);
@@ -203,6 +212,25 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 									|| cmpInstr->m_OpCode == JMIR_OP_UCOMISD)
 									;
 								if (isCmpInstr) {
+									if (cmpInstr->m_Operands[1]->m_Kind == JMIR_OPERAND_REGISTER) {
+										jx_mir_instruction_t* movInstr = cmpInstr->m_Prev;
+										const bool isMovRegConst = true
+											&& movInstr
+											&& movInstr->m_OpCode == JMIR_OP_MOV
+											&& movInstr->m_Operands[0]->m_Kind == JMIR_OPERAND_REGISTER
+											&& jx_mir_regEqual(movInstr->m_Operands[0]->u.m_Reg, cmpInstr->m_Operands[1]->u.m_Reg)
+											&& movInstr->m_Operands[1]->m_Kind == JMIR_OPERAND_CONST
+											;
+										if (isMovRegConst) {
+											jx_mir_bbInsertInstrBefore(ctx, bb, cmpInstr, jx_mir_cmp(ctx, cmpInstr->m_Operands[0], movInstr->m_Operands[1]));
+
+											jx_mir_bbRemoveInstr(ctx, bb, movInstr);
+											jx_mir_bbRemoveInstr(ctx, bb, cmpInstr);
+											jx_mir_instrFree(ctx, movInstr);
+											jx_mir_instrFree(ctx, cmpInstr);
+										}
+									}
+
 									const jx_mir_condition_code jumpCC = (jx_mir_condition_code)(instr->m_OpCode - JMIR_OP_JCC_BASE);
 									jx_mir_condition_code setCC = (jx_mir_condition_code)(setccInstr->m_OpCode - JMIR_OP_SETCC_BASE);
 									if (jumpCC == JMIR_CC_E) {
@@ -425,8 +453,9 @@ static void jmir_regAlloc_selectSpill(jmir_func_pass_regalloc_t* pass);
 static void jmir_regAlloc_assignColors(jmir_func_pass_regalloc_t* pass);
 static void jmir_regAlloc_replaceRegs(jmir_func_pass_regalloc_t* pass);
 static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass);
-static void jmir_regAlloc_replaceInstrRegDef(jx_mir_instruction_t* instr, jx_mir_reg_t vreg, jx_mir_operand_t* newReg);
-static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, jx_mir_reg_t vreg, jx_mir_operand_t* newReg);
+static void jmir_regAlloc_replaceInstrRegDef(jmir_func_pass_regalloc_t* pass, jx_mir_instruction_t* instr, jx_mir_reg_t vreg, jx_mir_operand_t* newReg);
+static void jmir_regAlloc_replaceInstrRegUse(jmir_func_pass_regalloc_t* pass, jx_mir_instruction_t* instr, jx_mir_reg_t vreg, jx_mir_operand_t* newReg);
+static jx_mir_operand_t* jmir_regAlloc_operandReplaceReg(jmir_func_pass_regalloc_t* pass, jx_mir_operand_t* operand, jx_mir_reg_t vreg, jx_mir_operand_t* newRegOp);
 
 static void jmir_regAlloc_addEdge(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* u, jmir_graph_node_t* v);
 static bool jmir_regAlloc_areNodesAdjacent(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* u, jmir_graph_node_t* v);
@@ -1674,7 +1703,7 @@ static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass)
 						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, temp, stackSlot));
 					}
 
-					jmir_regAlloc_replaceInstrRegUse(instr, vreg, temp);
+					jmir_regAlloc_replaceInstrRegUse(pass, instr, vreg, temp);
 
 					if (temp->m_Type == JMIR_TYPE_F32) {
 						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movss(ctx, stackSlot, temp));
@@ -1698,10 +1727,10 @@ static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass)
 						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, temp, stackSlot));
 					}
 
-					jmir_regAlloc_replaceInstrRegUse(instr, vreg, temp);
+					jmir_regAlloc_replaceInstrRegUse(pass, instr, vreg, temp);
 				} else if (def) {
 					jx_mir_operand_t* temp = jx_mir_opVirtualReg(ctx, func, stackSlot->m_Type);
-					jmir_regAlloc_replaceInstrRegDef(instr, vreg, temp);
+					jmir_regAlloc_replaceInstrRegDef(pass, instr, vreg, temp);
 
 					if (temp->m_Type == JMIR_TYPE_F32) {
 						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movss(ctx, stackSlot, temp));
@@ -1720,7 +1749,7 @@ static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass)
 	}
 }
 
-static void jmir_regAlloc_replaceInstrRegDef(jx_mir_instruction_t* instr, jx_mir_reg_t vreg, jx_mir_operand_t* newReg)
+static void jmir_regAlloc_replaceInstrRegDef(jmir_func_pass_regalloc_t* pass, jx_mir_instruction_t* instr, jx_mir_reg_t vreg, jx_mir_operand_t* newReg)
 {
 	switch (instr->m_OpCode) {
 	case JMIR_OP_RET: {
@@ -1890,7 +1919,7 @@ static void jmir_regAlloc_replaceInstrRegDef(jx_mir_instruction_t* instr, jx_mir
 	}
 }
 
-static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, jx_mir_reg_t vreg, jx_mir_operand_t* newReg)
+static void jmir_regAlloc_replaceInstrRegUse(jmir_func_pass_regalloc_t* pass, jx_mir_instruction_t* instr, jx_mir_reg_t vreg, jx_mir_operand_t* newReg)
 {
 	switch (instr->m_OpCode) {
 	case JMIR_OP_RET: {
@@ -1913,24 +1942,37 @@ static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, jx_mir
 	case JMIR_OP_MOVQ:
 	case JMIR_OP_LEA: {
 		bool regReplaced = false;
-
-		jx_mir_operand_t* src = instr->m_Operands[1];
-		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
-			if (jx_mir_regEqual(src->u.m_Reg, vreg)) {
+#if 1
+		jx_mir_operand_t* newSrc = jmir_regAlloc_operandReplaceReg(pass, instr->m_Operands[1], vreg, newReg);
+		if (newSrc != instr->m_Operands[1]) {
+			instr->m_Operands[1] = newSrc;
+			regReplaced = true;
+		}
+#else
+		if (instr->m_Operands[1]->m_Kind == JMIR_OPERAND_REGISTER) {
+			if (jx_mir_regEqual(instr->m_Operands[1]->u.m_Reg, vreg)) {
 				instr->m_Operands[1] = newReg;
 				regReplaced = true;
 			}
-		} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-			jx_mir_memory_ref_t* memRef = src->u.m_MemRef;
+		} else if (instr->m_Operands[1]->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+			const jx_mir_memory_ref_t* memRef = instr->m_Operands[1]->u.m_MemRef;
 			if (jx_mir_regEqual(memRef->m_BaseReg, vreg)) {
-				memRef->m_BaseReg = newReg->u.m_Reg;
+				instr->m_Operands[1] = jx_mir_opMemoryRef(pass->m_Ctx, pass->m_Func, instr->m_Operands[1]->m_Type, newReg->u.m_Reg, memRef->m_IndexReg, memRef->m_Scale, memRef->m_Displacement);
 				regReplaced = true;
 			} else if (jx_mir_regEqual(memRef->m_IndexReg, vreg)) {
-				memRef->m_IndexReg = newReg->u.m_Reg;
+				instr->m_Operands[1] = jx_mir_opMemoryRef(pass->m_Ctx, pass->m_Func, instr->m_Operands[1]->m_Type, memRef->m_BaseReg, newReg->u.m_Reg, memRef->m_Scale, memRef->m_Displacement);
 				regReplaced = true;
 			}
 		}
+#endif
 
+#if 1
+		jx_mir_operand_t* newDst = jmir_regAlloc_operandReplaceReg(pass, instr->m_Operands[0], vreg, newReg);
+		if (newDst != instr->m_Operands[0]) {
+			instr->m_Operands[0] = newDst;
+			regReplaced = true;
+		}
+#else
 		jx_mir_operand_t* dst = instr->m_Operands[0];
 		if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF) {
 			jx_mir_memory_ref_t* memRef = dst->u.m_MemRef;
@@ -1950,6 +1992,7 @@ static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, jx_mir
 				instr->m_Operands[0] = newReg;
 			}
 		}
+#endif
 
 		JX_CHECK(regReplaced, "vreg use not found!");
 	} break;
@@ -2025,6 +2068,19 @@ static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, jx_mir
 	case JMIR_OP_PUNPCKHDQ:
 	case JMIR_OP_PUNPCKHQDQ: {
 		bool regReplaced = false;
+
+#if 1
+		jx_mir_operand_t* newSrc = jmir_regAlloc_operandReplaceReg(pass, instr->m_Operands[1], vreg, newReg);
+		if (newSrc != instr->m_Operands[1]) {
+			instr->m_Operands[1] = newSrc;
+			regReplaced = true;
+		}
+		jx_mir_operand_t* newDst = jmir_regAlloc_operandReplaceReg(pass, instr->m_Operands[0], vreg, newReg);
+		if (newDst != instr->m_Operands[0]) {
+			instr->m_Operands[0] = newDst;
+			regReplaced = true;
+		}
+#else
 		jx_mir_operand_t* src = instr->m_Operands[1];
 		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
 			if (jx_mir_regEqual(src->u.m_Reg, vreg)) {
@@ -2058,6 +2114,7 @@ static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, jx_mir
 				regReplaced = true;
 			}
 		}
+#endif
 
 		JX_CHECK(regReplaced, "Register not found!");
 	} break;
@@ -2149,6 +2206,26 @@ static void jmir_regAlloc_replaceInstrRegUse(jx_mir_instruction_t* instr, jx_mir
 		JX_CHECK(false, "Unknown mir opcode");
 		break;
 	}
+}
+
+static jx_mir_operand_t* jmir_regAlloc_operandReplaceReg(jmir_func_pass_regalloc_t* pass, jx_mir_operand_t* operand, jx_mir_reg_t vreg, jx_mir_operand_t* newRegOp)
+{
+	jx_mir_operand_t* newOp = operand;
+
+	if (operand->m_Kind == JMIR_OPERAND_REGISTER) {
+		if (jx_mir_regEqual(operand->u.m_Reg, vreg)) {
+			newOp = newRegOp;
+		}
+	} else if (operand->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+		const jx_mir_memory_ref_t* memRef = operand->u.m_MemRef;
+		if (jx_mir_regEqual(memRef->m_BaseReg, vreg)) {
+			newOp = jx_mir_opMemoryRef(pass->m_Ctx, pass->m_Func, operand->m_Type, newRegOp->u.m_Reg, memRef->m_IndexReg, memRef->m_Scale, memRef->m_Displacement);
+		} else if (jx_mir_regEqual(memRef->m_IndexReg, vreg)) {
+			newOp = jx_mir_opMemoryRef(pass->m_Ctx, pass->m_Func, operand->m_Type, memRef->m_BaseReg, newRegOp->u.m_Reg, memRef->m_Scale, memRef->m_Displacement);
+		}
+	}
+
+	return newOp;
 }
 
 static void jmir_regAlloc_addEdge(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* u, jmir_graph_node_t* v)
@@ -2532,14 +2609,39 @@ static inline bool jmir_movIs(const jmir_mov_instr_t* mov, jmir_mov_instr_state 
 //////////////////////////////////////////////////////////////////////////
 // Peephole optimizations
 //
+typedef struct jmir_func_pass_peephole_t
+{
+	jx_allocator_i* m_Allocator;
+	jx_mir_context_t* m_Ctx;
+	jx_mir_function_t* m_Func;
+} jmir_func_pass_peephole_t;
+
 static void jmir_funcPass_peepholeDestroy(jx_mir_function_pass_o* inst, jx_allocator_i* allocator);
 static bool jmir_funcPass_peepholeRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func);
+
+static bool jmir_peephole_mov(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr);
+static bool jmir_peephole_movss(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr);
+static bool jmir_peephole_movsd(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr);
+static bool jmir_peephole_comiss(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr);
+static bool jmir_peephole_comisd(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr);
+static bool jmir_peephole_jumps(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr);
+static bool jmir_peephole_imul(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr);
+static bool jmir_peephole_lea(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr);
+static bool jmir_peephole_mov_x(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr);
 
 static bool jmir_peephole_isFloatConst(jx_mir_operand_t* op, double val);
 
 bool jx_mir_funcPassCreate_peephole(jx_mir_function_pass_t* pass, jx_allocator_i* allocator)
 {
-	pass->m_Inst = NULL;
+	jmir_func_pass_peephole_t* inst = (jmir_func_pass_peephole_t*)JX_ALLOC(allocator, sizeof(jmir_func_pass_peephole_t));
+	if (!inst) {
+		return false;
+	}
+
+	jx_memset(inst, 0, sizeof(jmir_func_pass_peephole_t));
+	inst->m_Allocator = allocator;
+
+	pass->m_Inst = (jx_mir_function_pass_o*)inst;
 	pass->run = jmir_funcPass_peepholeRun;
 	pass->destroy = jmir_funcPass_peepholeDestroy;
 
@@ -2548,10 +2650,17 @@ bool jx_mir_funcPassCreate_peephole(jx_mir_function_pass_t* pass, jx_allocator_i
 
 static void jmir_funcPass_peepholeDestroy(jx_mir_function_pass_o* inst, jx_allocator_i* allocator)
 {
+	jmir_func_pass_peephole_t* pass = (jmir_func_pass_peephole_t*)inst;
+	JX_FREE(allocator, pass);
 }
 
 static bool jmir_funcPass_peepholeRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
+	jmir_func_pass_peephole_t* pass = (jmir_func_pass_peephole_t*)inst;
+
+	pass->m_Ctx = ctx;
+	pass->m_Func = func;
+
 	uint32_t numOpts = 0;
 
 	bool changed = true;
@@ -2566,72 +2675,24 @@ static bool jmir_funcPass_peepholeRun(jx_mir_function_pass_o* inst, jx_mir_conte
 			while (instr) {
 				jx_mir_instruction_t* instrNext = instr->m_Next;
 
-				if (instr->m_OpCode == JMIR_OP_MOVSS && jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
-					// movss xmm, 0.0
-					//  =>
-					// xorps xmm, xmm
-					jx_mir_instruction_t* xorInstr = jx_mir_xorps(ctx, instr->m_Operands[0], instr->m_Operands[0]);
-					jx_mir_bbInsertInstrBefore(ctx, bb, instr, xorInstr);
-					jx_mir_bbRemoveInstr(ctx, bb, instr);
-					jx_mir_instrFree(ctx, instr);
-
-					++numOpts;
-				} else if (instr->m_OpCode == JMIR_OP_MOVSD && jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
-					// movsd xmm, 0.0
-					//  =>
-					// xorpd xmm, xmm
-					jx_mir_instruction_t* xorInstr = jx_mir_xorpd(ctx, instr->m_Operands[0], instr->m_Operands[0]);
-					jx_mir_bbInsertInstrBefore(ctx, bb, instr, xorInstr);
-					jx_mir_bbRemoveInstr(ctx, bb, instr);
-					jx_mir_instrFree(ctx, instr);
-
-					++numOpts;
-				} else if ((instr->m_OpCode == JMIR_OP_UCOMISS || instr->m_OpCode == JMIR_OP_COMISS) && jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
-					// ucomiss xmm, 0.0
-					//  => 
-					// xorps xmmtmp, xmmtmp
-					// ucomiss xmm, xmmtmp
-					jx_mir_operand_t* tmp = jx_mir_opVirtualReg(ctx, func, JMIR_TYPE_F128);
-					jx_mir_instruction_t* xorInstr = jx_mir_xorps(ctx, tmp, tmp);
-					jx_mir_bbInsertInstrBefore(ctx, bb, instr, xorInstr);
-					instr->m_Operands[1] = tmp;
-
-					++numOpts;
-				} else if ((instr->m_OpCode == JMIR_OP_UCOMISD || instr->m_OpCode == JMIR_OP_COMISD) && jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
-					JX_CHECK(false, "Implement like the ucomiss/comiss above.");
+				if (instr->m_OpCode == JMIR_OP_MOV) {
+					numOpts += jmir_peephole_mov(pass, instr) ? 1 : 0;
+				} else if (instr->m_OpCode == JMIR_OP_MOVSS) {
+					numOpts += jmir_peephole_movss(pass, instr) ? 1 : 0;
+				} else if (instr->m_OpCode == JMIR_OP_MOVSD) {
+					numOpts += jmir_peephole_movsd(pass, instr) ? 1 : 0;
+				} else if (instr->m_OpCode == JMIR_OP_UCOMISS || instr->m_OpCode == JMIR_OP_COMISS) {
+					numOpts += jmir_peephole_comiss(pass, instr) ? 1 : 0;
+				} else if (instr->m_OpCode == JMIR_OP_UCOMISD || instr->m_OpCode == JMIR_OP_COMISD) {
+					numOpts += jmir_peephole_comisd(pass, instr) ? 1 : 0;
 				} else if (instr->m_OpCode == JMIR_OP_JMP || jx_mir_opcodeIsJcc(instr->m_OpCode)) {
-					// Redirect jmp to jmp to the final jmp directly.
-					jx_mir_operand_t* targetOp = instr->m_Operands[0];
-					JX_CHECK(targetOp->m_Kind == JMIR_OPERAND_BASIC_BLOCK, "Expected basic block as jmp target");
-					jx_mir_basic_block_t* targetBB = targetOp->u.m_BB;
-					if (targetBB->m_InstrListHead && targetBB->m_InstrListHead->m_OpCode == JMIR_OP_JMP) {
-						JX_CHECK(!targetBB->m_InstrListHead->m_Next, "Unconditional jump should be the last instruction in a basic block!");
-						jx_mir_operand_t* newTargetOp = targetBB->m_InstrListHead->m_Operands[0];
-						JX_CHECK(newTargetOp->m_Kind == JMIR_OPERAND_BASIC_BLOCK, "Expected basic block as jmp target");
-						targetOp->u.m_BB = newTargetOp->u.m_BB;
-
-						++numOpts;
-					}
-				} else if (instr->m_OpCode == JMIR_OP_IMUL && instr->m_NumOperands == 2) {
-					// mov reg1, const
-					// imul reg2, reg1
-					//  => 
-					// imul reg2, reg2, const
-					jx_mir_operand_t* imul_dstOp = instr->m_Operands[0];
-					jx_mir_operand_t* imul_srcOp = instr->m_Operands[1];
-					if (imul_dstOp->m_Kind == JMIR_OPERAND_REGISTER && imul_srcOp->m_Kind == JMIR_OPERAND_REGISTER) {
-						jx_mir_instruction_t* prevInstr = instr->m_Prev;
-						if (prevInstr && prevInstr->m_OpCode == JMIR_OP_MOV && jx_mir_opEqual(imul_srcOp, prevInstr->m_Operands[0])) {
-							jx_mir_operand_t* mov_srcOp = prevInstr->m_Operands[1];
-							if (mov_srcOp->m_Kind == JMIR_OPERAND_CONST && mov_srcOp->u.m_ConstI64 >= INT32_MIN && mov_srcOp->u.m_ConstI64 <= INT32_MAX) {
-								jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_imul3(ctx, imul_dstOp, imul_dstOp, mov_srcOp));
-								jx_mir_bbRemoveInstr(ctx, bb, prevInstr);
-								jx_mir_bbRemoveInstr(ctx, bb, instr);
-								jx_mir_instrFree(ctx, prevInstr);
-								jx_mir_instrFree(ctx, instr);
-							}
-						}
-					}
+					numOpts += jmir_peephole_jumps(pass, instr) ? 1 : 0;
+				} else if (instr->m_OpCode == JMIR_OP_IMUL) {
+					numOpts += jmir_peephole_imul(pass, instr) ? 1 : 0;
+				} else if (instr->m_OpCode == JMIR_OP_LEA) {
+					numOpts += jmir_peephole_lea(pass, instr) ? 1 : 0;
+				} else if (instr->m_OpCode == JMIR_OP_MOVSX || instr->m_OpCode == JMIR_OP_MOVZX) {
+					numOpts += jmir_peephole_mov_x(pass, instr) ? 1 : 0;
 				}
 
 				instr = instrNext;
@@ -2643,7 +2704,299 @@ static bool jmir_funcPass_peepholeRun(jx_mir_function_pass_o* inst, jx_mir_conte
 		changed = prevIterNumOpts != numOpts;
 	}
 
+	if (!jx_strcmp(func->m_Name, "stbtt__isfont")) {
+		jx_string_buffer_t* sb = jx_strbuf_create(pass->m_Allocator);
+		jx_mir_funcPrint(ctx, func, sb);
+		jx_strbuf_nullTerminate(sb);
+		JX_SYS_LOG_INFO(NULL, "\n%s", jx_strbuf_getString(sb, NULL));
+		jx_strbuf_destroy(sb);
+	}
+
 	return numOpts != 0;
+}
+
+static bool jmir_peephole_mov(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr)
+{
+	jx_mir_context_t* ctx = pass->m_Ctx;
+	jx_mir_basic_block_t* bb = instr->m_ParentBB;
+
+	bool res = false;
+
+	// Try to merge with previous instruction
+	if (instr->m_Prev) {
+		jx_mir_operand_t* dstOp = instr->m_Operands[0];
+		jx_mir_operand_t* srcOp = instr->m_Operands[1];
+		const bool dstOp_isMemRef = dstOp->m_Kind == JMIR_OPERAND_MEMORY_REF && !jx_mir_opIsStackObj(dstOp);
+		const bool srcOp_isMemRef = srcOp->m_Kind == JMIR_OPERAND_MEMORY_REF && !jx_mir_opIsStackObj(srcOp);
+
+		if (dstOp_isMemRef || srcOp_isMemRef) {
+			JX_CHECK(dstOp_isMemRef ^ srcOp_isMemRef, "Both operands are memory references?");
+			jx_mir_memory_ref_t* memRef = dstOp_isMemRef
+				? dstOp->u.m_MemRef
+				: srcOp->u.m_MemRef
+				;
+
+			// Check if the memory reference is [baseReg + disp]
+			const bool isMemRef_reg = true
+				&& jx_mir_regIsValid(memRef->m_BaseReg)
+				&& jx_mir_regIsVirtual(memRef->m_BaseReg)
+				&& !jx_mir_regIsValid(memRef->m_IndexReg)
+				&& memRef->m_Scale == 1
+				;
+			if (isMemRef_reg) {
+				jx_mir_instruction_t* prevInstr = instr->m_Prev;
+
+				const bool isMovToBaseReg = true
+					&& prevInstr->m_OpCode == JMIR_OP_MOV
+					&& jx_mir_opIsReg(prevInstr->m_Operands[0], memRef->m_BaseReg)
+					&& prevInstr->m_Operands[1]->m_Kind == JMIR_OPERAND_REGISTER
+					;
+				const bool isLeaToBaseReg = true
+					&& prevInstr->m_OpCode == JMIR_OP_LEA
+					&& jx_mir_opIsReg(prevInstr->m_Operands[0], memRef->m_BaseReg)
+					&& prevInstr->m_Operands[1]->m_Kind == JMIR_OPERAND_MEMORY_REF && !jx_mir_opIsStackObj(prevInstr->m_Operands[1])
+					;
+				if (isMovToBaseReg) {
+					// mov vr1, vr_base
+					// mov [vr1], val  or  mov reg, [vr1]
+					//  =>
+					// mov [vr_base], val or mov reg, [vr_base]
+					memRef->m_BaseReg = prevInstr->m_Operands[1]->u.m_Reg;
+
+					res = true;
+				} else if (isLeaToBaseReg) {
+					jx_mir_memory_ref_t* srcMemRef = prevInstr->m_Operands[1]->u.m_MemRef;
+					JX_CHECK(!jx_mir_opIsReg(prevInstr->m_Operands[1], srcMemRef->m_BaseReg), "!!!");
+					memRef->m_BaseReg = srcMemRef->m_BaseReg;
+					memRef->m_IndexReg = srcMemRef->m_IndexReg;
+					memRef->m_Scale = srcMemRef->m_Scale;
+					memRef->m_Displacement += srcMemRef->m_Displacement;
+
+					res = true;
+				}
+			}
+		}
+	}
+
+	return res;
+}
+
+static bool jmir_peephole_movss(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr)
+{
+	jx_mir_context_t* ctx = pass->m_Ctx;
+	jx_mir_basic_block_t* bb = instr->m_ParentBB;
+
+	bool res = false;
+	if (jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
+		// movss xmm, 0.0
+		//  =>
+		// xorps xmm, xmm
+		jx_mir_instruction_t* xorInstr = jx_mir_xorps(ctx, instr->m_Operands[0], instr->m_Operands[0]);
+		jx_mir_bbInsertInstrBefore(ctx, bb, instr, xorInstr);
+		jx_mir_bbRemoveInstr(ctx, bb, instr);
+		jx_mir_instrFree(ctx, instr);
+
+		res = true;
+	}
+
+	return res;
+}
+
+static bool jmir_peephole_movsd(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr)
+{
+	jx_mir_context_t* ctx = pass->m_Ctx;
+	jx_mir_basic_block_t* bb = instr->m_ParentBB;
+
+	bool res = false;
+	if (jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
+		// movsd xmm, 0.0
+		//  =>
+		// xorpd xmm, xmm
+		jx_mir_instruction_t* xorInstr = jx_mir_xorpd(ctx, instr->m_Operands[0], instr->m_Operands[0]);
+		jx_mir_bbInsertInstrBefore(ctx, bb, instr, xorInstr);
+		jx_mir_bbRemoveInstr(ctx, bb, instr);
+		jx_mir_instrFree(ctx, instr);
+
+		res = true;
+	}
+
+	return res;
+}
+
+static bool jmir_peephole_comiss(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr)
+{
+	jx_mir_context_t* ctx = pass->m_Ctx;
+	jx_mir_function_t* func = pass->m_Func;
+	jx_mir_basic_block_t* bb = instr->m_ParentBB;
+
+	bool res = false;
+	if (jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
+		// (u)comiss xmm, 0.0
+		//  => 
+		// xorps xmmtmp, xmmtmp
+		// ucomiss xmm, xmmtmp
+		jx_mir_operand_t* tmp = jx_mir_opVirtualReg(ctx, func, JMIR_TYPE_F128);
+		jx_mir_instruction_t* xorInstr = jx_mir_xorps(ctx, tmp, tmp);
+		jx_mir_bbInsertInstrBefore(ctx, bb, instr, xorInstr);
+		instr->m_Operands[1] = tmp;
+
+		res = true;
+	}
+
+	return res;
+}
+
+static bool jmir_peephole_comisd(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr)
+{
+	jx_mir_context_t* ctx = pass->m_Ctx;
+	jx_mir_function_t* func = pass->m_Func;
+	jx_mir_basic_block_t* bb = instr->m_ParentBB;
+
+	bool res = false;
+	if (jmir_peephole_isFloatConst(instr->m_Operands[1], 0.0)) {
+		// (u)comisd xmm, 0.0
+		//  => 
+		// xorps xmmtmp, xmmtmp
+		// (u)comisd xmm, xmmtmp
+		jx_mir_operand_t* tmp = jx_mir_opVirtualReg(ctx, func, JMIR_TYPE_F128);
+		jx_mir_instruction_t* xorInstr = jx_mir_xorpd(ctx, tmp, tmp);
+		jx_mir_bbInsertInstrBefore(ctx, bb, instr, xorInstr);
+		instr->m_Operands[1] = tmp;
+
+		res = true;
+	}
+
+	return res;
+}
+
+static bool jmir_peephole_jumps(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr)
+{
+	jx_mir_context_t* ctx = pass->m_Ctx;
+	jx_mir_basic_block_t* bb = instr->m_ParentBB;
+
+	bool res = false;
+	{
+		// Redirect jmp to jmp to the final jmp directly.
+		jx_mir_operand_t* targetOp = instr->m_Operands[0];
+		JX_CHECK(targetOp->m_Kind == JMIR_OPERAND_BASIC_BLOCK, "Expected basic block as jmp target");
+
+		jx_mir_basic_block_t* targetBB = targetOp->u.m_BB;
+		if (targetBB->m_InstrListHead && targetBB->m_InstrListHead->m_OpCode == JMIR_OP_JMP) {
+			JX_CHECK(!targetBB->m_InstrListHead->m_Next, "Unconditional jump should be the last instruction in a basic block!");
+
+			jx_mir_operand_t* newTargetOp = targetBB->m_InstrListHead->m_Operands[0];
+			JX_CHECK(newTargetOp->m_Kind == JMIR_OPERAND_BASIC_BLOCK, "Expected basic block as jmp target");
+			targetOp->u.m_BB = newTargetOp->u.m_BB;
+
+			res = true;
+		}
+	}
+
+	return res;
+}
+
+static bool jmir_peephole_imul(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr)
+{
+	jx_mir_context_t* ctx = pass->m_Ctx;
+	jx_mir_basic_block_t* bb = instr->m_ParentBB;
+
+	bool res = false;
+	
+	{
+		// mov reg1, const
+		// imul reg2, reg1
+		//  => 
+		// imul reg2, reg2, const
+		jx_mir_operand_t* imul_dstOp = instr->m_Operands[0];
+		jx_mir_operand_t* imul_srcOp = instr->m_Operands[1];
+		if (imul_dstOp->m_Kind == JMIR_OPERAND_REGISTER && imul_srcOp->m_Kind == JMIR_OPERAND_REGISTER) {
+			jx_mir_instruction_t* prevInstr = instr->m_Prev;
+			if (prevInstr && prevInstr->m_OpCode == JMIR_OP_MOV && jx_mir_opEqual(imul_srcOp, prevInstr->m_Operands[0])) {
+				jx_mir_operand_t* mov_srcOp = prevInstr->m_Operands[1];
+				// TODO: 
+				// mov %vr18d, 0x00000006;
+				// mov %vr17d, %vr16d;
+				// imul %vr17d, %vr18d;
+				//  =>
+				// imul %vr17d, %vr16d, 0x00000006
+				if (mov_srcOp->m_Kind == JMIR_OPERAND_CONST && mov_srcOp->u.m_ConstI64 >= INT32_MIN && mov_srcOp->u.m_ConstI64 <= INT32_MAX) {
+					jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_imul3(ctx, imul_dstOp, imul_dstOp, mov_srcOp));
+					jx_mir_bbRemoveInstr(ctx, bb, instr);
+					jx_mir_instrFree(ctx, instr);
+
+					res = true;
+				}
+			}
+		}
+	}
+
+	return res;
+}
+
+static bool jmir_peephole_lea(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr)
+{
+	jx_mir_context_t* ctx = pass->m_Ctx;
+	jx_mir_function_t* func = pass->m_Func;
+	jx_mir_basic_block_t* bb = instr->m_ParentBB;
+
+	bool res = false;
+
+#if 0 // NOTE: This is handled by instruction combiner
+	{
+		// mov vr1, vr_base
+		// lea vr2, [vr1 + offset]
+		//  =>
+		// lea vr2, [vr_base + offset]
+		jx_mir_operand_t* lea_dstOp = instr->m_Operands[0];
+		jx_mir_operand_t* lea_srcOp = instr->m_Operands[1];
+		JX_CHECK(lea_dstOp->m_Kind == JMIR_OPERAND_REGISTER, "Expected register operand");
+		if (lea_srcOp->m_Kind == JMIR_OPERAND_MEMORY_REF && !jx_mir_opIsStackObj(lea_srcOp)) {
+			jx_mir_instruction_t* prevInstr = instr->m_Prev;
+			if (prevInstr && prevInstr->m_OpCode == JMIR_OP_MOV) {
+				jx_mir_operand_t* mov_dstOp = prevInstr->m_Operands[0];
+				jx_mir_operand_t* mov_srcOp = prevInstr->m_Operands[1];
+				if (mov_dstOp->m_Kind == JMIR_OPERAND_REGISTER && mov_srcOp->m_Kind == JMIR_OPERAND_REGISTER && jx_mir_regEqual(lea_srcOp->u.m_MemRef->m_BaseReg, mov_dstOp->u.m_Reg)) {
+					lea_srcOp->u.m_MemRef->m_BaseReg = mov_srcOp->u.m_Reg;
+
+					res = true;
+				}
+			}
+		}
+	}
+#endif
+
+	return res;
+}
+
+static bool jmir_peephole_mov_x(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr)
+{
+	jx_mir_context_t* ctx = pass->m_Ctx;
+	jx_mir_function_t* func = pass->m_Func;
+	jx_mir_basic_block_t* bb = instr->m_ParentBB;
+
+	bool res = false;
+
+	{
+		jx_mir_operand_t* dst = instr->m_Operands[0];
+		jx_mir_operand_t* src = instr->m_Operands[1];
+		JX_CHECK(dst->m_Kind == JMIR_OPERAND_REGISTER, "Expected register operand");
+		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
+			// mov vr1, any
+			// movsx/movzx vr2, vr1
+			//  =>
+			// movsx/movzx vr2, any
+			jx_mir_instruction_t* prevInstr = instr->m_Prev;
+			if (prevInstr && prevInstr->m_OpCode == JMIR_OP_MOV) {
+				jx_mir_operand_t* movDst = prevInstr->m_Operands[0];
+				if (movDst->m_Kind == JMIR_OPERAND_REGISTER && jx_mir_regEqual(src->u.m_Reg, movDst->u.m_Reg) && instr->m_Operands[1]->m_Type == prevInstr->m_Operands[1]->m_Type) {
+					instr->m_Operands[1] = prevInstr->m_Operands[1];
+					res = true;
+				}
+			}
+		}
+	}
+
+	return res;
 }
 
 static bool jmir_peephole_isFloatConst(jx_mir_operand_t* op, double val)
@@ -2745,20 +3098,19 @@ static bool jmir_funcPass_combineLEAsRun(jx_mir_function_pass_o* inst, jx_mir_co
 				JX_CHECK(ptrOp->m_Kind == JMIR_OPERAND_REGISTER, "Expected lea destination operand to be a register.");
 				if (jx_mir_opIsStackObj(addrOp)) {
 					jx_hashmapSet(pass->m_ValueMap, &(jmir_reg_value_item_t){ .m_Reg = ptrOp->u.m_Reg, .m_Value = addrOp });
-				} else 
-				if (addrOp->m_Kind == JMIR_OPERAND_MEMORY_REF && !jx_mir_regIsValid(addrOp->u.m_MemRef->m_IndexReg)) {
+				} else if (addrOp->m_Kind == JMIR_OPERAND_MEMORY_REF && !jx_mir_regIsValid(addrOp->u.m_MemRef->m_IndexReg)) {
 					jx_mir_operand_t* newOperand = jmir_combineLEAs_replaceMemRef(pass, addrOp->m_Type, addrOp->u.m_MemRef);
 					if (newOperand) {
 						instr->m_Operands[1] = newOperand;
-						jx_hashmapSet(pass->m_ValueMap, &(jmir_reg_value_item_t){.m_Reg = ptrOp->u.m_Reg, .m_Value = newOperand });
+						jx_hashmapSet(pass->m_ValueMap, &(jmir_reg_value_item_t){ .m_Reg = ptrOp->u.m_Reg, .m_Value = newOperand });
 					} else {
-						jx_hashmapDelete(pass->m_ValueMap, &(jmir_reg_value_item_t){.m_Reg = ptrOp->u.m_Reg });
+						jx_hashmapDelete(pass->m_ValueMap, &(jmir_reg_value_item_t){ .m_Reg = ptrOp->u.m_Reg });
 					}
 				} else if (addrOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
 //					JX_NOT_IMPLEMENTED();
-					jx_hashmapDelete(pass->m_ValueMap, &(jmir_reg_value_item_t){.m_Reg = ptrOp->u.m_Reg });
+					jx_hashmapDelete(pass->m_ValueMap, &(jmir_reg_value_item_t){ .m_Reg = ptrOp->u.m_Reg });
 				} else {
-					jx_hashmapDelete(pass->m_ValueMap, &(jmir_reg_value_item_t){.m_Reg = ptrOp->u.m_Reg });
+					jx_hashmapDelete(pass->m_ValueMap, &(jmir_reg_value_item_t){ .m_Reg = ptrOp->u.m_Reg });
 				}
 			} else if (instr->m_OpCode == JMIR_OP_MOV
 				|| instr->m_OpCode == JMIR_OP_MOVSX 
@@ -2848,6 +3200,737 @@ static int32_t jir_regValueItemCompare(const void* a, const void* b, void* udata
 {
 	const jmir_reg_value_item_t* varA = (const jmir_reg_value_item_t*)a;
 	const jmir_reg_value_item_t* varB = (const jmir_reg_value_item_t*)b;
+	const jx_mir_reg_t regA = varA->m_Reg;
+	const jx_mir_reg_t regB = varB->m_Reg;
+	int32_t res = regA.m_Class < regB.m_Class
+		? -1
+		: (regA.m_Class > regB.m_Class ? 1 : 0)
+		;
+	if (res == 0) {
+		res = regA.m_IsVirtual < regB.m_IsVirtual
+			? -1
+			: (regA.m_IsVirtual > regB.m_IsVirtual ? 1 : 0)
+			;
+		if (res == 0) {
+			res = regA.m_ID < regB.m_ID
+				? -1
+				: (regA.m_ID > regB.m_ID ? 1 : 0)
+				;
+		}
+	}
+
+	return res;
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Instruction Combiner
+//
+typedef struct jmir_reg_instr_item_t
+{
+	jx_mir_reg_t m_Reg;
+	jx_mir_instruction_t* m_Instr;
+} jmir_reg_instr_item_t;
+
+typedef struct jmir_func_pass_instr_combine_t
+{
+	jx_allocator_i* m_Allocator;
+	jx_mir_context_t* m_Ctx;
+	jx_mir_function_t* m_Func;
+	jx_hashmap_t* m_ValueMap;
+} jmir_func_pass_instr_combine_t;
+
+static void jmir_funcPass_instrCombineDestroy(jx_mir_function_pass_o* inst, jx_allocator_i* allocator);
+static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func);
+
+static void jmir_instrCombine_setRegDef(jmir_func_pass_instr_combine_t* pass, jx_mir_reg_t reg, jx_mir_instruction_t* value);
+static jx_mir_instruction_t* jmir_instrCombine_getRegDef(jmir_func_pass_instr_combine_t* pass, jx_mir_reg_t reg);
+static void jmir_instrCombine_removeRegDef(jmir_func_pass_instr_combine_t* pass, jx_mir_reg_t reg);
+static bool jmir_instrCombine_isMovVRegAny(jx_mir_instruction_t* instr);
+static bool jmir_instrCombine_isMovVRegVReg(jx_mir_instruction_t* instr);
+static bool jmir_instrCombine_isMovVRegMem(jx_mir_instruction_t* instr);
+static bool jmir_instrCombine_isLeaVReg(jx_mir_instruction_t* instr);
+
+static uint64_t jir_regInstrItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
+static int32_t jir_regInstrItemCompare(const void* a, const void* b, void* udata);
+
+bool jx_mir_funcPassCreate_instrCombine(jx_mir_function_pass_t* pass, jx_allocator_i* allocator)
+{
+	jmir_func_pass_instr_combine_t* inst = (jmir_func_pass_instr_combine_t*)JX_ALLOC(allocator, sizeof(jmir_func_pass_instr_combine_t));
+	if (!inst) {
+		return false;
+	}
+
+	jx_memset(inst, 0, sizeof(jmir_func_pass_instr_combine_t));
+	inst->m_Allocator = allocator;
+
+	inst->m_ValueMap = jx_hashmapCreate(allocator, sizeof(jmir_reg_instr_item_t), 64, 0, 0, jir_regInstrItemHash, jir_regInstrItemCompare, NULL, NULL);
+	if (!inst->m_ValueMap) {
+		jmir_funcPass_instrCombineDestroy((jx_mir_function_pass_o*)inst, allocator);
+		return false;
+	}
+
+	pass->m_Inst = (jx_mir_function_pass_o*)inst;
+	pass->run = jmir_funcPass_instrCombineRun;
+	pass->destroy = jmir_funcPass_instrCombineDestroy;
+
+	return true;
+}
+
+static void jmir_funcPass_instrCombineDestroy(jx_mir_function_pass_o* inst, jx_allocator_i* allocator)
+{
+	jmir_func_pass_instr_combine_t* pass = (jmir_func_pass_instr_combine_t*)inst;
+
+	if (pass->m_ValueMap) {
+		jx_hashmapDestroy(pass->m_ValueMap);
+		pass->m_ValueMap = NULL;
+	}
+
+	JX_FREE(pass->m_Allocator, pass);
+}
+
+static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
+{
+	jmir_func_pass_instr_combine_t* pass = (jmir_func_pass_instr_combine_t*)inst;
+
+#if 0
+	{
+		jx_string_buffer_t* sb = jx_strbuf_create(pass->m_Allocator);
+		jx_mir_funcPrint(ctx, func, sb);
+		jx_strbuf_nullTerminate(sb);
+		JX_SYS_LOG_INFO(NULL, "%s\n", jx_strbuf_getString(sb, NULL));
+		jx_strbuf_destroy(sb);
+	}
+#endif
+
+	pass->m_Ctx = ctx;
+	pass->m_Func = func;
+
+	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
+	while (bb) {
+		jx_hashmapClear(pass->m_ValueMap, false);
+
+		jx_mir_instruction_t* instr = bb->m_InstrListHead;
+		while (instr) {
+			jx_mir_instruction_t* instrNext = instr->m_Next;
+
+			switch (instr->m_OpCode) {
+			case JMIR_OP_CMP: {
+				jx_mir_operand_t* lhs = instr->m_Operands[0];
+				jx_mir_operand_t* rhs = instr->m_Operands[1];
+
+				if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_CONST) {
+					// cmp reg, const
+				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					// cmp reg, reg
+				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+					// cmp reg, [mem]
+				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+					// cmp reg, [sym]
+				} else if (lhs->m_Kind == JMIR_OPERAND_MEMORY_REF && rhs->m_Kind == JMIR_OPERAND_CONST) {
+					// cmp [mem], const
+				} else if (lhs->m_Kind == JMIR_OPERAND_MEMORY_REF && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					// cmp [mem], reg
+				} else if (lhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL && rhs->m_Kind == JMIR_OPERAND_CONST) {
+					// cmp [sym], const
+				} else if (lhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					// cmp [sym], reg
+				} else {
+					JX_CHECK(false, "Invalid operands?");
+				}
+
+				instr->m_Operands[0] = lhs;
+				instr->m_Operands[1] = rhs;
+			} break;
+			case JMIR_OP_TEST: {
+				// No-op
+			} break;
+			case JMIR_OP_MOV: 
+			case JMIR_OP_MOVSS:
+			case JMIR_OP_MOVSD:
+			case JMIR_OP_MOVAPS:
+			case JMIR_OP_MOVAPD: {
+				jx_mir_operand_t* dst = instr->m_Operands[0];
+				jx_mir_operand_t* src = instr->m_Operands[1];
+
+				if (dst->m_Kind == JMIR_OPERAND_REGISTER && src->m_Kind == JMIR_OPERAND_CONST) {
+					// mov reg, const
+					jmir_instrCombine_setRegDef(pass, dst->u.m_Reg, instr);
+				} else if (dst->m_Kind == JMIR_OPERAND_REGISTER && src->m_Kind == JMIR_OPERAND_REGISTER) {
+					// mov reg, reg
+					jx_mir_instruction_t* srcRegDef = jmir_instrCombine_getRegDef(pass, src->u.m_Reg);
+					if (jmir_instrCombine_isMovVRegAny(srcRegDef) && srcRegDef->m_Operands[1]->m_Type == src->m_Type) {
+						// The src reg definition instruction is a mov reg, any. 
+						// 
+						// TODO: If 'any' is a memory reference replace operand only if the reg
+						// is not live out of this instruction. Otherwise it might be better to leave
+						// the load to reg. Requires liveness analysis.
+						src = srcRegDef->m_Operands[1];
+					}
+
+					if (src->m_Kind != JMIR_OPERAND_REGISTER || jx_mir_regIsVirtual(src->u.m_Reg)) {
+						jmir_instrCombine_setRegDef(pass, dst->u.m_Reg, instr);
+					} else {
+						jmir_instrCombine_removeRegDef(pass, dst->u.m_Reg);
+					}
+				} else if (dst->m_Kind == JMIR_OPERAND_REGISTER && src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+					// mov reg, [mem]
+					jx_mir_memory_ref_t memRef = *src->u.m_MemRef;
+					if (jx_mir_regIsValid(memRef.m_BaseReg) && jx_mir_regIsVirtual(memRef.m_BaseReg)) {
+						jx_mir_instruction_t* baseRegDef = jmir_instrCombine_getRegDef(pass, memRef.m_BaseReg);
+						if (jmir_instrCombine_isMovVRegVReg(baseRegDef)) {
+							memRef.m_BaseReg = baseRegDef->m_Operands[1]->u.m_Reg;
+						} else if (!jx_mir_regIsValid(memRef.m_IndexReg) && jmir_instrCombine_isLeaVReg(baseRegDef)) {
+							if (baseRegDef->m_Operands[1]->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+								memRef.m_BaseReg = baseRegDef->m_Operands[1]->u.m_MemRef->m_BaseReg;
+								memRef.m_IndexReg = baseRegDef->m_Operands[1]->u.m_MemRef->m_IndexReg;
+								memRef.m_Scale = baseRegDef->m_Operands[1]->u.m_MemRef->m_Scale;
+								memRef.m_Displacement += baseRegDef->m_Operands[1]->u.m_MemRef->m_Displacement;
+							} else if (baseRegDef->m_Operands[1]->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+								// TODO: 
+							}
+						}
+					}
+
+					if (jx_mir_regIsValid(memRef.m_IndexReg) && jx_mir_regIsVirtual(memRef.m_IndexReg)) {
+						jx_mir_instruction_t* indexRegDef = jmir_instrCombine_getRegDef(pass, memRef.m_IndexReg);
+						if (jmir_instrCombine_isMovVRegVReg(indexRegDef)) {
+							memRef.m_IndexReg = indexRegDef->m_Operands[1]->u.m_Reg;
+						}
+					}
+
+					if (!jx_mir_memRefEqual(&memRef, src->u.m_MemRef)) {
+						src = jx_mir_opMemoryRef(ctx, func, src->m_Type, memRef.m_BaseReg, memRef.m_IndexReg, memRef.m_Scale, memRef.m_Displacement);
+					}
+
+					jmir_instrCombine_removeRegDef(pass, dst->u.m_Reg);
+				} else if (dst->m_Kind == JMIR_OPERAND_REGISTER && src->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+					// mov reg, [sym]
+					jmir_instrCombine_removeRegDef(pass, dst->u.m_Reg);
+				} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF && (src->m_Kind == JMIR_OPERAND_REGISTER || src->m_Kind == JMIR_OPERAND_CONST)) {
+					// mov [mem], reg
+					// mov [mem], const
+					jx_mir_memory_ref_t memRef = *dst->u.m_MemRef;
+					if (jx_mir_regIsValid(memRef.m_BaseReg) && jx_mir_regIsVirtual(memRef.m_BaseReg)) {
+						jx_mir_instruction_t* baseRegDef = jmir_instrCombine_getRegDef(pass, memRef.m_BaseReg);
+						if (jmir_instrCombine_isMovVRegVReg(baseRegDef)) {
+							memRef.m_BaseReg = baseRegDef->m_Operands[1]->u.m_Reg;
+						} else if (jmir_instrCombine_isLeaVReg(baseRegDef)) {
+							jx_mir_operand_t* leaSrc = baseRegDef->m_Operands[1];
+							if (leaSrc->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+								const jx_mir_memory_ref_t* leaSrcMemRef = leaSrc->u.m_MemRef;
+
+								// If the original memory reference's index reg was invalid (e.g. [baseReg + offset])
+								// then use lea's index reg (might still be invalid).
+								// Otherwise, replace memory reference only if lea's index reg is invalid.
+								if (!jx_mir_regIsValid(memRef.m_IndexReg)) {
+									memRef.m_BaseReg = leaSrcMemRef->m_BaseReg;
+									memRef.m_IndexReg = leaSrcMemRef->m_IndexReg;
+									memRef.m_Scale = leaSrcMemRef->m_Scale;
+									memRef.m_Displacement += leaSrcMemRef->m_Displacement;
+								} else if (!jx_mir_regIsValid(leaSrcMemRef->m_IndexReg)) {
+									memRef.m_BaseReg = leaSrcMemRef->m_BaseReg;
+									memRef.m_Displacement += leaSrcMemRef->m_Displacement;
+								}
+							} else if (leaSrc->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+								// TODO: 
+							}
+						}
+					} else {
+#if 0
+						if (jx_mir_regIsValid(memRef.m_IndexReg) && jx_mir_regIsVirtual(memRef.m_IndexReg)) {
+							jx_mir_instruction_t* indexRegDef = jmir_instrCombine_getRegDef(pass, memRef.m_IndexReg);
+							if (jmir_instrCombine_isMovVRegVReg(indexRegDef)) {
+								memRef.m_IndexReg = indexRegDef->m_Operands[1]->u.m_Reg;
+							}
+						}
+#endif
+					}
+
+					if (!jx_mir_memRefEqual(&memRef, dst->u.m_MemRef)) {
+						dst = jx_mir_opMemoryRef(ctx, func, dst->m_Type, memRef.m_BaseReg, memRef.m_IndexReg, memRef.m_Scale, memRef.m_Displacement);
+					}
+				} else if (dst->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL && src->m_Kind == JMIR_OPERAND_CONST) {
+					// mov [sym], const
+				} else if (dst->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL && src->m_Kind == JMIR_OPERAND_REGISTER) {
+					// mov [sym], reg
+				} else {
+					JX_CHECK(false, "Invalid operands?");
+				}
+
+				instr->m_Operands[0] = dst;
+				instr->m_Operands[1] = src;
+			} break;
+			case JMIR_OP_MOVSX: 
+			case JMIR_OP_MOVZX: {
+				jx_mir_operand_t* lhs = instr->m_Operands[0];
+				JX_CHECK(lhs->m_Kind == JMIR_OPERAND_REGISTER, "Invalid operand type");
+
+				jx_mir_operand_t* rhs = instr->m_Operands[1];
+
+				// TODO: 
+
+				instr->m_Operands[1] = rhs;
+
+				jmir_instrCombine_setRegDef(pass, lhs->u.m_Reg, instr);
+			} break;
+			case JMIR_OP_IMUL3: {
+				JX_NOT_IMPLEMENTED();
+			} break;
+			case JMIR_OP_LEA: {
+				jx_mir_operand_t* dst = instr->m_Operands[0];
+				JX_CHECK(dst->m_Kind == JMIR_OPERAND_REGISTER, "Invalid operand type");
+
+				jx_mir_operand_t* src = instr->m_Operands[1];
+				if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+					jx_mir_memory_ref_t memRef = *src->u.m_MemRef;
+					if (jx_mir_regIsValid(memRef.m_BaseReg) && jx_mir_regIsVirtual(memRef.m_BaseReg)) {
+						jx_mir_instruction_t* baseRegDef = jmir_instrCombine_getRegDef(pass, memRef.m_BaseReg);
+						if (jmir_instrCombine_isMovVRegVReg(baseRegDef)) {
+							memRef.m_BaseReg = baseRegDef->m_Operands[1]->u.m_Reg;
+						} else if (jmir_instrCombine_isLeaVReg(baseRegDef)) {
+							jx_mir_operand_t* leaSrc = baseRegDef->m_Operands[1];
+							if (leaSrc->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+								const jx_mir_memory_ref_t* leaSrcMemRef = leaSrc->u.m_MemRef;
+
+								// If the original memory reference's index reg was invalid (e.g. [baseReg + offset])
+								// then use lea's index reg (might still be invalid).
+								// Otherwise, replace memory reference only if lea's index reg is invalid.
+								if (!jx_mir_regIsValid(memRef.m_IndexReg)) {
+									memRef.m_BaseReg = leaSrcMemRef->m_BaseReg;
+									memRef.m_IndexReg = leaSrcMemRef->m_IndexReg;
+									memRef.m_Scale = leaSrcMemRef->m_Scale;
+									memRef.m_Displacement += leaSrcMemRef->m_Displacement;
+								} else if (!jx_mir_regIsValid(leaSrcMemRef->m_IndexReg)) {
+									memRef.m_BaseReg = leaSrcMemRef->m_BaseReg;
+									memRef.m_Displacement += leaSrcMemRef->m_Displacement;
+								}
+							} else if (leaSrc->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+								// TODO: 
+							}
+						}
+					} else {
+#if 0
+						if (jx_mir_regIsValid(memRef.m_IndexReg) && jx_mir_regIsVirtual(memRef.m_IndexReg)) {
+							jx_mir_instruction_t* indexRegDef = jmir_instrCombine_getRegDef(pass, memRef.m_IndexReg);
+							if (jmir_instrCombine_isMovVRegVReg(indexRegDef)) {
+								memRef.m_IndexReg = indexRegDef->m_Operands[1]->u.m_Reg;
+							}
+						}
+#endif
+					}
+
+					if (!jx_mir_memRefEqual(&memRef, src->u.m_MemRef)) {
+						src = jx_mir_opMemoryRef(ctx, func, src->m_Type, memRef.m_BaseReg, memRef.m_IndexReg, memRef.m_Scale, memRef.m_Displacement);
+					}
+				} else {
+					JX_CHECK(src->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL, "Invalid lea source operand.");
+				}
+
+				instr->m_Operands[1] = src;
+				jmir_instrCombine_setRegDef(pass, dst->u.m_Reg, instr);
+			} break;
+			case JMIR_OP_IDIV:
+			case JMIR_OP_DIV: {
+				jx_mir_operand_t* op = instr->m_Operands[0];
+
+				// TODO: 
+
+				instr->m_Operands[0] = op;
+			} break;
+			case JMIR_OP_IMUL:
+			case JMIR_OP_ADD:
+			case JMIR_OP_SUB:
+			case JMIR_OP_XOR:
+			case JMIR_OP_AND:
+			case JMIR_OP_OR: {
+				jx_mir_operand_t* lhs = instr->m_Operands[0];
+				jx_mir_operand_t* rhs = instr->m_Operands[1];
+
+				if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_CONST) {
+					// op reg, const
+					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
+				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					// op reg, reg
+					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
+				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+					// op reg, [mem]
+					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
+				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+					// op reg, [sym]
+					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
+				} else if (lhs->m_Kind == JMIR_OPERAND_MEMORY_REF && rhs->m_Kind == JMIR_OPERAND_CONST) {
+					// op [mem], const
+				} else if (lhs->m_Kind == JMIR_OPERAND_MEMORY_REF && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					// op [mem], reg
+				} else if (lhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL && rhs->m_Kind == JMIR_OPERAND_CONST) {
+					// op [sym], const
+				} else if (lhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					// op [sym], reg
+				} else {
+					JX_CHECK(false, "Invalid operands?");
+				}
+
+				instr->m_Operands[0] = lhs;
+				instr->m_Operands[1] = rhs;
+			} break;
+			case JMIR_OP_SAR:
+			case JMIR_OP_SHR:
+			case JMIR_OP_SHL: {
+				jx_mir_operand_t* lhs = instr->m_Operands[0];
+				if (lhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
+				}
+			} break;
+			case JMIR_OP_SETO:
+			case JMIR_OP_SETNO:
+			case JMIR_OP_SETB:
+			case JMIR_OP_SETNB:
+			case JMIR_OP_SETE:
+			case JMIR_OP_SETNE:
+			case JMIR_OP_SETBE:
+			case JMIR_OP_SETNBE:
+			case JMIR_OP_SETS:
+			case JMIR_OP_SETNS:
+			case JMIR_OP_SETP:
+			case JMIR_OP_SETNP:
+			case JMIR_OP_SETL:
+			case JMIR_OP_SETNL:
+			case JMIR_OP_SETLE:
+			case JMIR_OP_SETNLE: {
+				// Nop
+			} break;
+			case JMIR_OP_JO:
+			case JMIR_OP_JNO:
+			case JMIR_OP_JB:
+			case JMIR_OP_JNB:
+			case JMIR_OP_JE:
+			case JMIR_OP_JNE:
+			case JMIR_OP_JBE:
+			case JMIR_OP_JNBE:
+			case JMIR_OP_JS:
+			case JMIR_OP_JNS:
+			case JMIR_OP_JP:
+			case JMIR_OP_JNP:
+			case JMIR_OP_JL:
+			case JMIR_OP_JNL:
+			case JMIR_OP_JLE:
+			case JMIR_OP_JNLE: {
+				// Nop
+			} break;
+			case JMIR_OP_MOVD:
+			case JMIR_OP_MOVQ: {
+				jx_mir_operand_t* dst = instr->m_Operands[0];
+				jx_mir_operand_t* src = instr->m_Operands[1];
+
+				if (dst->m_Kind == JMIR_OPERAND_REGISTER && src->m_Kind == JMIR_OPERAND_REGISTER) {
+					// op reg, reg
+					jmir_instrCombine_removeRegDef(pass, dst->u.m_Reg);
+				} else if (dst->m_Kind == JMIR_OPERAND_REGISTER && src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+					// op reg, [mem]
+					jmir_instrCombine_removeRegDef(pass, dst->u.m_Reg);
+				} else if (dst->m_Kind == JMIR_OPERAND_REGISTER && src->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+					// op reg, [sym]
+					jmir_instrCombine_removeRegDef(pass, dst->u.m_Reg);
+				} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF && src->m_Kind == JMIR_OPERAND_REGISTER) {
+					// op [mem], reg
+				} else if (dst->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL && src->m_Kind == JMIR_OPERAND_REGISTER) {
+					// op [sym], reg
+				} else {
+					JX_CHECK(false, "Invalid operands?");
+				}
+
+				instr->m_Operands[0] = dst;
+				instr->m_Operands[1] = src;
+			} break;
+			case JMIR_OP_ADDPS:
+			case JMIR_OP_ADDSS:
+			case JMIR_OP_ADDPD:
+			case JMIR_OP_ADDSD:
+			case JMIR_OP_ANDNPS:
+			case JMIR_OP_ANDNPD:
+			case JMIR_OP_ANDPS:
+			case JMIR_OP_ANDPD:
+			case JMIR_OP_DIVPS:
+			case JMIR_OP_DIVSS:
+			case JMIR_OP_DIVPD:
+			case JMIR_OP_DIVSD:
+			case JMIR_OP_MAXPS:
+			case JMIR_OP_MAXSS:
+			case JMIR_OP_MAXPD:
+			case JMIR_OP_MAXSD:
+			case JMIR_OP_MINPS:
+			case JMIR_OP_MINSS:
+			case JMIR_OP_MINPD:
+			case JMIR_OP_MINSD:
+			case JMIR_OP_MULPS:
+			case JMIR_OP_MULSS:
+			case JMIR_OP_MULPD:
+			case JMIR_OP_MULSD:
+			case JMIR_OP_ORPS:
+			case JMIR_OP_ORPD:
+			case JMIR_OP_RCPPS:
+			case JMIR_OP_RCPSS:
+			case JMIR_OP_RSQRTPS:
+			case JMIR_OP_RSQRTSS:
+			case JMIR_OP_SQRTPS:
+			case JMIR_OP_SQRTSS:
+			case JMIR_OP_SQRTPD:
+			case JMIR_OP_SQRTSD:
+			case JMIR_OP_SUBPS:
+			case JMIR_OP_SUBSS:
+			case JMIR_OP_SUBPD:
+			case JMIR_OP_SUBSD: 
+			case JMIR_OP_XORPS:
+			case JMIR_OP_XORPD: {
+				jx_mir_operand_t* lhs = instr->m_Operands[0];
+				jx_mir_operand_t* rhs = instr->m_Operands[1];
+
+				if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_CONST) {
+					// op reg, const
+					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
+				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					// op reg, reg
+					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
+				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+					// op reg, [mem]
+					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
+				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+					// op reg, [sym]
+					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
+				} else if (lhs->m_Kind == JMIR_OPERAND_MEMORY_REF && rhs->m_Kind == JMIR_OPERAND_CONST) {
+					// op [mem], const
+				} else if (lhs->m_Kind == JMIR_OPERAND_MEMORY_REF && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					// op [mem], reg
+				} else if (lhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL && rhs->m_Kind == JMIR_OPERAND_CONST) {
+					// op [sym], const
+				} else if (lhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					// op [sym], reg
+				} else {
+					JX_CHECK(false, "Invalid operands?");
+				}
+
+				instr->m_Operands[0] = lhs;
+				instr->m_Operands[1] = rhs;
+			} break;
+			case JMIR_OP_COMISS:
+			case JMIR_OP_COMISD: 
+			case JMIR_OP_UCOMISS:
+			case JMIR_OP_UCOMISD: {
+				jx_mir_operand_t* lhs = instr->m_Operands[0];
+				jx_mir_operand_t* rhs = instr->m_Operands[1];
+
+				if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_CONST) {
+					// op reg, const
+				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					// op reg, reg
+				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+					// op reg, [mem]
+				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+					// op reg, [sym]
+				} else if (lhs->m_Kind == JMIR_OPERAND_MEMORY_REF && rhs->m_Kind == JMIR_OPERAND_CONST) {
+					// op [mem], const
+				} else if (lhs->m_Kind == JMIR_OPERAND_MEMORY_REF && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					// op [mem], reg
+				} else if (lhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL && rhs->m_Kind == JMIR_OPERAND_CONST) {
+					// op [sym], const
+				} else if (lhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					// op [sym], reg
+				} else {
+					JX_CHECK(false, "Invalid operands?");
+				}
+
+				instr->m_Operands[0] = lhs;
+				instr->m_Operands[1] = rhs;
+			} break;
+			case JMIR_OP_CVTSI2SS:
+			case JMIR_OP_CVTSI2SD:
+			case JMIR_OP_CVTSS2SI:
+			case JMIR_OP_CVTSD2SI:
+			case JMIR_OP_CVTTSS2SI:
+			case JMIR_OP_CVTTSD2SI:
+			case JMIR_OP_CVTSD2SS:
+			case JMIR_OP_CVTSS2SD: {
+				jx_mir_operand_t* lhs = instr->m_Operands[0];
+				jx_mir_operand_t* rhs = instr->m_Operands[1];
+
+				if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_CONST) {
+					// op reg, const
+					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
+				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					// op reg, reg
+					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
+				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+					// op reg, [mem]
+					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
+				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+					// op reg, [sym]
+					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
+				} else if (lhs->m_Kind == JMIR_OPERAND_MEMORY_REF && rhs->m_Kind == JMIR_OPERAND_CONST) {
+					// op [mem], const
+				} else if (lhs->m_Kind == JMIR_OPERAND_MEMORY_REF && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					// op [mem], reg
+				} else if (lhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL && rhs->m_Kind == JMIR_OPERAND_CONST) {
+					// op [sym], const
+				} else if (lhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					// op [sym], reg
+				} else {
+					JX_CHECK(false, "Invalid operands?");
+				}
+
+				instr->m_Operands[0] = lhs;
+				instr->m_Operands[1] = rhs;
+			} break;
+			case JMIR_OP_UNPCKHPS:
+			case JMIR_OP_UNPCKHPD:
+			case JMIR_OP_UNPCKLPS:
+			case JMIR_OP_UNPCKLPD:
+			case JMIR_OP_PUNPCKLBW:
+			case JMIR_OP_PUNPCKLWD:
+			case JMIR_OP_PUNPCKLDQ:
+			case JMIR_OP_PUNPCKLQDQ:
+			case JMIR_OP_PUNPCKHBW:
+			case JMIR_OP_PUNPCKHWD:
+			case JMIR_OP_PUNPCKHDQ:
+			case JMIR_OP_PUNPCKHQDQ: {
+				jx_mir_operand_t* lhs = instr->m_Operands[0];
+				jx_mir_operand_t* rhs = instr->m_Operands[1];
+
+				if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_CONST) {
+					// op reg, const
+					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
+				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					// op reg, reg
+					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
+				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+					// op reg, [mem]
+					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
+				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+					// op reg, [sym]
+					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
+				} else if (lhs->m_Kind == JMIR_OPERAND_MEMORY_REF && rhs->m_Kind == JMIR_OPERAND_CONST) {
+					// op [mem], const
+				} else if (lhs->m_Kind == JMIR_OPERAND_MEMORY_REF && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					// op [mem], reg
+				} else if (lhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL && rhs->m_Kind == JMIR_OPERAND_CONST) {
+					// op [sym], const
+				} else if (lhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
+					// op [sym], reg
+				} else {
+					JX_CHECK(false, "Invalid operands?");
+				}
+
+				instr->m_Operands[0] = lhs;
+				instr->m_Operands[1] = rhs;
+			} break;
+			case JMIR_OP_PUSH:
+			case JMIR_OP_POP: {
+				JX_NOT_IMPLEMENTED();
+			} break;
+			case JMIR_OP_RET:
+			case JMIR_OP_JMP:
+			case JMIR_OP_CALL:
+			case JMIR_OP_CDQ:
+			case JMIR_OP_CQO: {
+				// No-ops
+			} break;
+			default: {
+				JX_CHECK(false, "Unknown mir opcode");
+			} break;
+			}
+
+			instr = instrNext;
+		}
+
+		bb = bb->m_Next;
+	}
+
+#if 0
+	{
+		jx_string_buffer_t* sb = jx_strbuf_create(pass->m_Allocator);
+		jx_mir_funcPrint(ctx, func, sb);
+		jx_strbuf_nullTerminate(sb);
+		JX_SYS_LOG_INFO(NULL, "%s\n", jx_strbuf_getString(sb, NULL));
+		jx_strbuf_destroy(sb);
+	}
+#endif
+
+	return false;
+}
+
+static void jmir_instrCombine_setRegDef(jmir_func_pass_instr_combine_t* pass, jx_mir_reg_t reg, jx_mir_instruction_t* def)
+{
+	if (!jx_mir_regIsVirtual(reg)) {
+		return;
+	}
+
+	jx_hashmapSet(pass->m_ValueMap, &(jmir_reg_instr_item_t){.m_Reg = reg, .m_Instr = def});
+}
+
+static jx_mir_instruction_t* jmir_instrCombine_getRegDef(jmir_func_pass_instr_combine_t* pass, jx_mir_reg_t reg)
+{
+	if (!jx_mir_regIsVirtual(reg)) {
+		return NULL;
+	}
+
+	jmir_reg_instr_item_t* item = jx_hashmapGet(pass->m_ValueMap, &(jmir_reg_instr_item_t){.m_Reg = reg});
+	return item
+		? item->m_Instr
+		: NULL
+		;
+}
+
+static void jmir_instrCombine_removeRegDef(jmir_func_pass_instr_combine_t* pass, jx_mir_reg_t reg)
+{
+	if (!jx_mir_regIsVirtual(reg)) {
+		return;
+	}
+
+	jx_hashmapDelete(pass->m_ValueMap, &(jmir_reg_instr_item_t){.m_Reg = reg});
+}
+
+static bool jmir_instrCombine_isMovVRegAny(jx_mir_instruction_t* instr)
+{
+	return instr
+		&& (instr->m_OpCode == JMIR_OP_MOV || instr->m_OpCode == JMIR_OP_MOVSS || instr->m_OpCode == JMIR_OP_MOVSD)
+		&& instr->m_Operands[0]->m_Kind == JMIR_OPERAND_REGISTER
+		&& jx_mir_regIsVirtual(instr->m_Operands[0]->u.m_Reg)
+		;
+}
+
+static bool jmir_instrCombine_isMovVRegVReg(jx_mir_instruction_t* instr)
+{
+	return jmir_instrCombine_isMovVRegAny(instr)
+		&& instr->m_Operands[1]->m_Kind == JMIR_OPERAND_REGISTER
+		&& jx_mir_regIsVirtual(instr->m_Operands[1]->u.m_Reg)
+		;
+}
+
+static bool jmir_instrCombine_isMovVRegMem(jx_mir_instruction_t* instr)
+{
+	return jmir_instrCombine_isMovVRegAny(instr)
+		&& instr->m_Operands[1]->m_Kind == JMIR_OPERAND_MEMORY_REF
+		;
+}
+
+static bool jmir_instrCombine_isLeaVReg(jx_mir_instruction_t* instr)
+{
+	return instr
+		&& instr->m_OpCode == JMIR_OP_LEA
+		&& jx_mir_regIsVirtual(instr->m_Operands[0]->u.m_Reg)
+		;
+}
+
+static uint64_t jir_regInstrItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata)
+{
+	const jmir_reg_instr_item_t* var = (const jmir_reg_instr_item_t*)item;
+	uint64_t hash = jx_hashFNV1a(&var->m_Reg, sizeof(jx_mir_reg_t), seed0, seed1);
+	return hash;
+}
+
+static int32_t jir_regInstrItemCompare(const void* a, const void* b, void* udata)
+{
+	const jmir_reg_instr_item_t* varA = (const jmir_reg_instr_item_t*)a;
+	const jmir_reg_instr_item_t* varB = (const jmir_reg_instr_item_t*)b;
 	const jx_mir_reg_t regA = varA->m_Reg;
 	const jx_mir_reg_t regB = varB->m_Reg;
 	int32_t res = regA.m_Class < regB.m_Class

@@ -739,6 +739,16 @@ static inline uint32_t jx_mir_regGetArgID(jx_mir_reg_t reg)
 	return UINT32_MAX;
 }
 
+static inline bool jx_mir_memRefEqual(const jx_mir_memory_ref_t* a, const jx_mir_memory_ref_t* b)
+{
+	return true
+		&& jx_mir_regEqual(a->m_BaseReg, b->m_BaseReg)
+		&& jx_mir_regEqual(a->m_IndexReg, b->m_IndexReg)
+		&& a->m_Scale == b->m_Scale
+		&& a->m_Displacement == b->m_Displacement
+		;
+}
+
 static inline bool jx_mir_opIsReg(jx_mir_operand_t* op, jx_mir_reg_t reg)
 {
 	return true
