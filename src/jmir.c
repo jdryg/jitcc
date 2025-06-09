@@ -165,7 +165,6 @@ typedef struct jx_mir_context_t
 	jx_hashmap_t* m_FuncProtoMap;
 } jx_mir_context_t;
 
-static bool jmir_opcodeIsTerminator(uint32_t opcode);
 static jx_mir_operand_t* jmir_operandAlloc(jx_mir_context_t* ctx, jx_mir_operand_kind kind, jx_mir_type_kind type);
 static jx_mir_instruction_t* jmir_instrAlloc(jx_mir_context_t* ctx, uint32_t opcode, uint32_t numOperands, jx_mir_operand_t** operands);
 static jx_mir_instruction_t* jmir_instrAlloc1(jx_mir_context_t* ctx, uint32_t opcode, jx_mir_operand_t* op1);
@@ -184,10 +183,9 @@ static jx_mir_memory_ref_t* jmir_frameAllocObj(jx_mir_context_t* ctx, jx_mir_fra
 static jx_mir_memory_ref_t* jmir_frameObjRel(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo, jx_mir_memory_ref_t* baseObj, int32_t offset);
 static void jmir_frameMakeRoomForCall(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo, uint32_t numArguments);
 static void jmir_frameFinalize(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo);
-static jx_mir_annotation_t* jx_mir_annotationAlloc(jx_mir_context_t* ctx, uint32_t kind, jmirAnnotationDestroyCallback destroyCb, uint32_t sz);
-static void jx_mir_annotationFree(jx_mir_context_t* ctx, jx_mir_annotation_t* annotation);
 static uint64_t jmir_funcProtoHashCallback(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
 static int32_t jmir_funcProtoCompareCallback(const void* a, const void* b, void* udata);
+static void jmir_annotBBCFGDestroy(jx_mir_annotation_t* annotation);
 
 jx_mir_context_t* jx_mir_createContext(jx_allocator_i* allocator)
 {
@@ -310,14 +308,6 @@ void jx_mir_destroyContext(jx_mir_context_t* ctx)
 	jx_array_free(ctx->m_FuncArr);
 
 	if (ctx->m_FuncProtoMap) {
-		uint32_t iterID = 0;
-		jx_mir_function_proto_t** protoPtr = NULL;
-		while (jx_hashmapIter(ctx->m_FuncProtoMap, &iterID, (void**)&protoPtr)) {
-			jx_mir_function_proto_t* proto = *protoPtr;
-			JX_FREE(allocator, proto->m_Args);
-			JX_FREE(allocator, proto);
-		}
-
 		jx_hashmapDestroy(ctx->m_FuncProtoMap);
 		ctx->m_FuncProtoMap = NULL;
 	}
@@ -342,12 +332,12 @@ void jx_mir_print(jx_mir_context_t* ctx, jx_string_buffer_t* sb)
 jx_mir_annotation_t* jx_mir_annotationAlloc(jx_mir_context_t* ctx, uint32_t kind, jmirAnnotationDestroyCallback destroyCb, uint32_t sz)
 {
 	JX_CHECK(sz >= sizeof(jx_mir_annotation_t), "Annotation size expected to be at least sizeof(jx_mir_annotation_t)");
-	jx_mir_annotation_t* annot = (jx_mir_annotation_t*)JX_ALLOC(ctx->m_Allocator, sz);
+	jx_mir_annotation_t* annot = (jx_mir_annotation_t*)JX_ALLOC(ctx->m_LinearAllocator, sz);
 	if (!annot) {
 		return NULL;
 	}
 
-	jx_memset(annot, 0, sizeof(jx_mir_annotation_t));
+	jx_memset(annot, 0, sz);
 	annot->m_Kind = kind;
 	annot->destroy = destroyCb;
 
@@ -359,7 +349,6 @@ void jx_mir_annotationFree(jx_mir_context_t* ctx, jx_mir_annotation_t* annotatio
 	if (annotation->destroy) {
 		annotation->destroy(annotation);
 	}
-	JX_FREE(ctx->m_Allocator, annotation);
 }
 
 uint32_t jx_mir_getNumGlobalVars(jx_mir_context_t* ctx)
@@ -410,14 +399,14 @@ jx_mir_function_t* jx_mir_getFunctionByName(jx_mir_context_t* ctx, const char* n
 
 jx_mir_global_variable_t* jx_mir_globalVarBegin(jx_mir_context_t* ctx, const char* name, uint32_t alignment)
 {
-	jx_mir_global_variable_t* gv = (jx_mir_global_variable_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_global_variable_t));
+	jx_mir_global_variable_t* gv = (jx_mir_global_variable_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_mir_global_variable_t));
 	if (!gv) {
 		return NULL;
 	}
 
 	jx_memset(gv, 0, sizeof(jx_mir_global_variable_t));
 	gv->m_Alignment = alignment;
-	gv->m_Name = jx_strdup(name, ctx->m_Allocator);
+	gv->m_Name = jx_strdup(name, ctx->m_LinearAllocator);
 	if (!gv->m_Name) {
 		jmir_globalVarFree(ctx, gv);
 		return NULL;
@@ -461,7 +450,7 @@ uint32_t jx_mir_globalVarAppendData(jx_mir_context_t* ctx, jx_mir_global_variabl
 void jx_mir_globalVarAddRelocation(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv, uint32_t dataOffset, const char* symbolName)
 {
 	jx_array_push_back(gv->m_RelocationsArr, (jx_mir_relocation_t){
-		.m_SymbolName = jx_strdup(symbolName, ctx->m_Allocator),
+		.m_SymbolName = jx_strdup(symbolName, ctx->m_LinearAllocator),
 		.m_Offset = dataOffset
 	});
 }
@@ -480,7 +469,7 @@ jx_mir_function_proto_t* jx_mir_funcProto(jx_mir_context_t* ctx, jx_mir_type_kin
 		return *cachedProto;
 	}
 
-	jx_mir_function_proto_t* proto = (jx_mir_function_proto_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_proto_t));
+	jx_mir_function_proto_t* proto = (jx_mir_function_proto_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_mir_function_proto_t));
 	if (!proto) {
 		return NULL;
 	}
@@ -491,7 +480,7 @@ jx_mir_function_proto_t* jx_mir_funcProto(jx_mir_context_t* ctx, jx_mir_type_kin
 	proto->m_Flags = flags;
 
 	if (numArgs) {
-		proto->m_Args = (jx_mir_type_kind*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_type_kind) * numArgs);
+		proto->m_Args = (jx_mir_type_kind*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_mir_type_kind) * numArgs);
 		if (!proto->m_Args) {
 			return NULL;
 		}
@@ -507,36 +496,33 @@ jx_mir_function_proto_t* jx_mir_funcProto(jx_mir_context_t* ctx, jx_mir_type_kin
 
 jx_mir_function_t* jx_mir_funcBegin(jx_mir_context_t* ctx, const char* name, jx_mir_function_proto_t* proto)
 {
-	jx_mir_function_t* func = (jx_mir_function_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_t));
+	jx_mir_function_t* func = (jx_mir_function_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_mir_function_t));
 	if (!func) {
 		return NULL;
 	}
 
 	jx_memset(func, 0, sizeof(jx_mir_function_t));
-	func->m_Name = jx_strdup(name, ctx->m_Allocator);
+	func->m_Name = jx_strdup(name, ctx->m_LinearAllocator);
 	func->m_Prototype = proto;
 
 	jx_mir_basic_block_t* entryBlock = jx_mir_bbAlloc(ctx);
 
 	const uint32_t numArgs = proto->m_NumArgs;
 	if (numArgs) {
-		func->m_Args = (jx_mir_operand_t**)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_operand_t*) * numArgs);
+		func->m_Args = (jx_mir_operand_t**)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_mir_operand_t*) * numArgs);
 		if (!func->m_Args) {
-			JX_FREE(ctx->m_Allocator, func);
 			return NULL;
 		}
 
 		for (uint32_t iArg = 0; iArg < numArgs; ++iArg) {
 			func->m_Args[iArg] = jmir_funcCreateArgument(ctx, func, entryBlock, iArg, proto->m_Args[iArg]);
 			if (!func->m_Args[iArg]) {
-				JX_FREE(ctx->m_Allocator, func->m_Args);
-				JX_FREE(ctx->m_Allocator, func);
 				return NULL;
 			}
 		}
 	}
 
-	if ((proto->m_Flags & JMIR_FUNC_FLAGS_EXTERNAL_Msk) == 0) {
+	if ((proto->m_Flags & JMIR_FUNC_PROTO_FLAGS_EXTERNAL_Msk) == 0) {
 		jx_mir_funcAppendBasicBlock(ctx, func, entryBlock);
 
 		func->m_FrameInfo = jmir_frameCreate(ctx);
@@ -555,7 +541,7 @@ jx_mir_function_t* jx_mir_funcBegin(jx_mir_context_t* ctx, const char* name, jx_
 void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
 	if (!func->m_BasicBlockListHead) {
-		JX_CHECK((func->m_Prototype->m_Flags & JMIR_FUNC_FLAGS_EXTERNAL_Msk) != 0, "Internal function without body?");
+		JX_CHECK((func->m_Prototype->m_Flags & JMIR_FUNC_PROTO_FLAGS_EXTERNAL_Msk) != 0, "Internal function without body?");
 		return;
 	}
 
@@ -569,6 +555,8 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 	}
 #endif
 	
+	jx_mir_funcUpdateCFG(ctx, func);
+
 	{
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_removeFallthroughJmp, func);
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCondJmp, func);
@@ -582,7 +570,7 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func);
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_peephole, func);
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func);
-#if 1
+#if 0
 		{
 			jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
 			jx_mir_funcPrint(ctx, func, sb);
@@ -624,13 +612,13 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 	if (frameInfo->m_Size != 0) {
 		// NOTE: Prepend prologue instructions in reverse order.
 		jx_mir_basic_block_t* entryBlock = func->m_BasicBlockListHead;
-		if ((func->m_Prototype->m_Flags & JMIR_FUNC_FLAGS_VARARG_Msk) != 0) {
+		if ((func->m_Prototype->m_Flags & JMIR_FUNC_PROTO_FLAGS_VARARG_Msk) != 0) {
 			// Store register operands into their shadow space.
 			for (uint32_t iArgReg = 0; iArgReg < JX_COUNTOF(kMIRFuncArgIReg); ++iArgReg) {
 #if 1
 				jx_mir_operand_t* shadowSpaceSlot = jx_mir_opMemoryRef(ctx, func, JMIR_TYPE_I64, kMIRRegGP_BP, kMIRRegGPNone, 1, 16 + iArgReg * 8);
 #else
-				// NOTE: RSP. There is not reason to keep this, but leave it here in case I need it in the future.
+				// NOTE: Use RSP instead of RBP. There is no reason to keep this, but leave it here in case I need it in the future.
 				jx_mir_operand_t* shadowSpaceSlot = jx_mir_opMemoryRef(ctx, func, JMIR_TYPE_I64, kMIRRegGP_SP, kMIRRegGPNone, 1, frameInfo->m_Size + 16 + iArgReg * 8);
 #endif
 				jx_mir_bbPrependInstr(ctx, entryBlock, jx_mir_mov(ctx, shadowSpaceSlot, jx_mir_opHWReg(ctx, func, JMIR_TYPE_I64, kMIRFuncArgIReg[iArgReg])));
@@ -712,6 +700,8 @@ void jx_mir_funcAppendBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func,
 		tail->m_Next = bb;
 		bb->m_Prev = tail;
 	}
+
+	func->m_Flags &= ~JMIR_FUNC_FLAGS_CFG_VALID_Msk;
 }
 
 void jx_mir_funcPrependBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb)
@@ -727,6 +717,8 @@ void jx_mir_funcPrependBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func
 		func->m_BasicBlockListHead->m_Prev = bb;
 	}
 	func->m_BasicBlockListHead = bb;
+
+	func->m_Flags &= ~JMIR_FUNC_FLAGS_CFG_VALID_Msk;
 }
 
 bool jx_mir_funcRemoveBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb)
@@ -754,6 +746,8 @@ bool jx_mir_funcRemoveBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func,
 	bb->m_Next = NULL;
 	bb->m_ID = UINT32_MAX;
 
+	func->m_Flags &= ~JMIR_FUNC_FLAGS_CFG_VALID_Msk;
+
 	return true;
 }
 
@@ -762,13 +756,140 @@ void jx_mir_funcAllocStackForCall(jx_mir_context_t* ctx, jx_mir_function_t* func
 	jmir_frameMakeRoomForCall(ctx, func->m_FrameInfo, numArguments);
 }
 
+bool jx_mir_funcUpdateCFG(jx_mir_context_t* ctx, jx_mir_function_t* func)
+{
+	if ((func->m_Flags & JMIR_FUNC_FLAGS_CFG_VALID_Msk) != 0) {
+		return true;
+	}
+
+	// Make sure every basic block has a CFG annotation and reset its pred/succ arrays
+	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
+	while (bb) {
+		jx_mir_annotation_bb_cfg_t* cfgAnnot = (jx_mir_annotation_bb_cfg_t*)jx_mir_bbGetAnnotation(ctx, bb, JMIR_ANNOT_BB_CFG);
+		if (!cfgAnnot) {
+			cfgAnnot = (jx_mir_annotation_bb_cfg_t*)jx_mir_annotationAlloc(ctx, JMIR_ANNOT_BB_CFG, jmir_annotBBCFGDestroy, sizeof(jx_mir_annotation_bb_cfg_t));
+			if (!cfgAnnot) {
+				return false;
+			}
+
+			cfgAnnot->m_PredArr = (jx_mir_basic_block_t**)jx_array_create(ctx->m_Allocator);
+			if (!cfgAnnot->m_PredArr) {
+				return false;
+			}
+
+			cfgAnnot->m_SuccArr = (jx_mir_basic_block_t**)jx_array_create(ctx->m_Allocator);
+			if (!cfgAnnot->m_SuccArr) {
+				return false;
+			}
+			jx_array_reserve(cfgAnnot->m_SuccArr, 2);
+
+			jx_mir_bbAddAnnotation(ctx, bb, &cfgAnnot->super);
+		}
+
+		jx_array_resize(cfgAnnot->m_PredArr, 0);
+		jx_array_resize(cfgAnnot->m_SuccArr, 0);
+
+		bb = bb->m_Next;
+	}
+
+	// Build the CFG
+	bb = func->m_BasicBlockListHead;
+	while (bb) {
+		jx_mir_annotation_bb_cfg_t* cfgAnnot = (jx_mir_annotation_bb_cfg_t*)jx_mir_bbGetAnnotation(ctx, bb, JMIR_ANNOT_BB_CFG);
+		JX_CHECK(cfgAnnot, "Missing CFG annotation!");
+
+		jx_mir_instruction_t* instr = jx_mir_bbGetFirstTerminatorInstr(ctx, bb);
+		bool fallthroughToNextBlock = true;
+		bool retFound = false;
+		while (instr) {
+			if (instr->m_OpCode == JMIR_OP_JMP || jx_mir_opcodeIsJcc(instr->m_OpCode)) {
+				JX_CHECK(!retFound && fallthroughToNextBlock, "Already found ret or jmp instruction. Did not expect more instructions!");
+
+				// Conditional or unconditional jump
+				jx_mir_operand_t* targetOperand = instr->m_Operands[0];
+				if (targetOperand->m_Kind == JMIR_OPERAND_BASIC_BLOCK) {
+					jx_mir_basic_block_t* targetBB = targetOperand->u.m_BB;
+					jx_mir_annotation_bb_cfg_t* targetBBCFGAnnot = (jx_mir_annotation_bb_cfg_t*)jx_mir_bbGetAnnotation(ctx, targetBB, JMIR_ANNOT_BB_CFG);
+					JX_CHECK(targetBBCFGAnnot, "Missing CFG annotation!");
+					jx_array_push_back(cfgAnnot->m_SuccArr, targetBB);
+					jx_array_push_back(targetBBCFGAnnot->m_PredArr, bb);
+				} else {
+					// TODO: What should I do in this case? I should probably add all func's basic blocks
+					// as successors to this block, since it's hard (impossible?) to know all potential targets.
+					// 
+					// Alternatively, I can move the pred/succ arrays into jx_mir_basic_block_t and build the CFG
+					// during IR-to-Asm translation (mir_gen).
+					// 
+					// Currently this cannot happen (afair) because mir_gen always uses basic blocks 
+					// as jump targets.
+					JX_NOT_IMPLEMENTED();
+				}
+
+				fallthroughToNextBlock = instr->m_OpCode != JMIR_OP_JMP;
+			} else if (instr->m_OpCode == JMIR_OP_RET) {
+				// Return.
+				fallthroughToNextBlock = false;
+				retFound = true;
+			} else {
+				JX_CHECK(false, "Expected only terminator instructions after first terminator!");
+			}
+
+			instr = instr->m_Next;
+		}
+
+		if (fallthroughToNextBlock) {
+			JX_CHECK(bb->m_Next, "Trying to fallthrough to the next block but there is no next block!");
+			jx_mir_basic_block_t* targetBB = bb->m_Next;
+			jx_mir_annotation_bb_cfg_t* targetBBCFGAnnot = (jx_mir_annotation_bb_cfg_t*)jx_mir_bbGetAnnotation(ctx, targetBB, JMIR_ANNOT_BB_CFG);
+			JX_CHECK(targetBBCFGAnnot, "Missing CFG annotation!");
+			jx_array_push_back(cfgAnnot->m_SuccArr, targetBB);
+			jx_array_push_back(targetBBCFGAnnot->m_PredArr, bb);
+		}
+
+		bb = bb->m_Next;
+	}
+
+	func->m_Flags |= JMIR_FUNC_FLAGS_CFG_VALID_Msk;
+
+	return true;
+}
+
 void jx_mir_funcPrint(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_string_buffer_t* sb)
 {
+	// TODO: Only update CFG if it's already created by some other code.
+	jx_mir_funcUpdateCFG(ctx, func);
+
 	jx_strbuf_printf(sb, "global %s:\n", func->m_Name);
 
 	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
 	while (bb) {
 		jx_strbuf_printf(sb, "bb.%u:\n", bb->m_ID);
+
+		jx_mir_annotation_bb_cfg_t* cfgAnnot = (jx_mir_annotation_bb_cfg_t*)jx_mir_bbGetAnnotation(ctx, bb, JMIR_ANNOT_BB_CFG);
+		if (cfgAnnot) {
+			const uint32_t numPred = (uint32_t)jx_array_sizeu(cfgAnnot->m_PredArr);
+			jx_strbuf_printf(sb, "  ; pred[%u] = { ", numPred);
+			for (uint32_t iPred = 0; iPred < numPred; ++iPred) {
+				jx_mir_basic_block_t* pred = cfgAnnot->m_PredArr[iPred];
+				if (iPred != 0) {
+					jx_strbuf_pushCStr(sb, ", ");
+				}
+				jx_strbuf_printf(sb, "bb.%u", pred->m_ID);
+			}
+			jx_strbuf_pushCStr(sb, " }\n");
+
+			const uint32_t numSucc = (uint32_t)jx_array_sizeu(cfgAnnot->m_SuccArr);
+			jx_strbuf_printf(sb, "  ; succ[%u] = { ", numSucc);
+			for (uint32_t iSucc = 0; iSucc < numSucc; ++iSucc) {
+				jx_mir_basic_block_t* succ = cfgAnnot->m_SuccArr[iSucc];
+				if (iSucc != 0) {
+					jx_strbuf_pushCStr(sb, ", ");
+				}
+				jx_strbuf_printf(sb, "bb.%u", succ->m_ID);
+			}
+			jx_strbuf_pushCStr(sb, " }\n");
+		}
+
 		jx_mir_instruction_t* instr = bb->m_InstrListHead;
 		while (instr) {
 			jx_mir_instrPrint(ctx, instr, sb);
@@ -782,7 +903,7 @@ void jx_mir_funcPrint(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_string_
 
 jx_mir_basic_block_t* jx_mir_bbAlloc(jx_mir_context_t* ctx)
 {
-	jx_mir_basic_block_t* bb = (jx_mir_basic_block_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_basic_block_t));
+	jx_mir_basic_block_t* bb = (jx_mir_basic_block_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_mir_basic_block_t));
 	if (!bb) {
 		return NULL;
 	}
@@ -799,11 +920,15 @@ void jx_mir_bbFree(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb)
 	while (instr) {
 		jx_mir_instruction_t* nextInstr = instr->m_Next;
 		jx_mir_instrFree(ctx, instr);
-
 		instr = nextInstr;
 	}
 
-	JX_FREE(ctx->m_Allocator, bb);
+	jx_mir_annotation_t* annot = bb->m_AnnotationListHead;
+	while (annot) {
+		jx_mir_annotation_t* annotNext = annot->m_Next;
+		jx_mir_annotationFree(ctx, annot);
+		annot = annotNext;
+	}
 }
 
 bool jx_mir_bbAppendInstr(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb, jx_mir_instruction_t* instr)
@@ -814,15 +939,18 @@ bool jx_mir_bbAppendInstr(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb, jx_mi
 	instr->m_ParentBB = bb;
 
 	if (!bb->m_InstrListHead) {
+		JX_CHECK(!bb->m_InstrListTail, "Invalid linked-list state");
 		bb->m_InstrListHead = instr;
 	} else {
-		jx_mir_instruction_t* tail = bb->m_InstrListHead;
-		while (tail->m_Next) {
-			tail = tail->m_Next;
-		}
+		JX_CHECK(bb->m_InstrListTail, "Invalid linked-list state");
+		bb->m_InstrListTail->m_Next = instr;
+		instr->m_Prev = bb->m_InstrListTail;
+	}
 
-		tail->m_Next = instr;
-		instr->m_Prev = tail;
+	bb->m_InstrListTail = instr;
+
+	if (bb->m_ParentFunc) {
+		bb->m_ParentFunc->m_Flags &= ~JMIR_FUNC_FLAGS_CFG_VALID_Msk;
 	}
 
 	return true;
@@ -839,9 +967,15 @@ bool jx_mir_bbPrependInstr(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb, jx_m
 
 	if (bb->m_InstrListHead) {
 		bb->m_InstrListHead->m_Prev = instr;
+	} else {
+		bb->m_InstrListTail = instr;
 	}
 
 	bb->m_InstrListHead = instr;
+
+	if (bb->m_ParentFunc) {
+		bb->m_ParentFunc->m_Flags &= ~JMIR_FUNC_FLAGS_CFG_VALID_Msk;
+	}
 
 	return true;
 }
@@ -868,6 +1002,10 @@ bool jx_mir_bbInsertInstrBefore(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb,
 		bb->m_InstrListHead = instr;
 	}
 
+	if (bb->m_ParentFunc) {
+		bb->m_ParentFunc->m_Flags &= ~JMIR_FUNC_FLAGS_CFG_VALID_Msk;
+	}
+
 	return true;
 }
 
@@ -889,6 +1027,14 @@ bool jx_mir_bbInsertInstrAfter(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb, 
 	anchor->m_Next = instr;
 	instr->m_Prev = anchor;
 
+	if (bb->m_InstrListTail == anchor) {
+		bb->m_InstrListTail = instr;
+	}
+
+	if (bb->m_ParentFunc) {
+		bb->m_ParentFunc->m_Flags &= ~JMIR_FUNC_FLAGS_CFG_VALID_Msk;
+	}
+
 	return true;
 }
 
@@ -904,6 +1050,9 @@ bool jx_mir_bbRemoveInstr(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb, jx_mi
 	if (bb->m_InstrListHead == instr) {
 		bb->m_InstrListHead = instr->m_Next;
 	}
+	if (bb->m_InstrListTail == instr) {
+		bb->m_InstrListTail = instr->m_Prev;
+	}
 
 	if (instr->m_Prev) {
 		instr->m_Prev->m_Next = instr->m_Next;
@@ -916,24 +1065,52 @@ bool jx_mir_bbRemoveInstr(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb, jx_mi
 	instr->m_Prev = NULL;
 	instr->m_Next = NULL;
 
-	return true;
+	if (bb->m_ParentFunc) {
+		bb->m_ParentFunc->m_Flags &= ~JMIR_FUNC_FLAGS_CFG_VALID_Msk;
+	}
 
+	return true;
 }
 
 jx_mir_instruction_t* jx_mir_bbGetFirstTerminatorInstr(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb)
 {
 	JX_UNUSED(ctx);
 
-	jx_mir_instruction_t* instr = bb->m_InstrListHead;
+	jx_mir_instruction_t* instr = bb->m_InstrListTail;
+	jx_mir_instruction_t* lastTerminatorInstr = instr && jx_mir_opcodeIsTerminator(instr->m_OpCode)
+		? instr
+		: NULL
+		;
 	while (instr) {
-		if (jmir_opcodeIsTerminator(instr->m_OpCode)) {
-			return instr;
+		if (!jx_mir_opcodeIsTerminator(instr->m_OpCode)) {
+			return lastTerminatorInstr;
 		}
 
-		instr = instr->m_Next;
+		lastTerminatorInstr = instr;
+		instr = instr->m_Prev;
+	}
+
+	return lastTerminatorInstr;
+}
+
+jx_mir_annotation_t* jx_mir_bbGetAnnotation(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb, uint32_t annotationKind)
+{
+	jx_mir_annotation_t* annotation = bb->m_AnnotationListHead;
+	while (annotation) {
+		if (annotation->m_Kind == annotationKind) {
+			return annotation;
+		}
+
+		annotation = annotation->m_Next;
 	}
 
 	return NULL;
+}
+
+void jx_mir_bbAddAnnotation(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb, jx_mir_annotation_t* annotation)
+{
+	annotation->m_Next = bb->m_AnnotationListHead;
+	bb->m_AnnotationListHead = annotation;
 }
 
 jx_mir_operand_t* jx_mir_opVirtualReg(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type)
@@ -1029,15 +1206,11 @@ jx_mir_operand_t* jx_mir_opMemoryRef(jx_mir_context_t* ctx, jx_mir_function_t* f
 		return NULL;
 	}
 
-	jx_mir_memory_ref_t* memRef = (jx_mir_memory_ref_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_mir_memory_ref_t));
+	jx_mir_memory_ref_t* memRef = jmir_memRefAlloc(ctx, baseReg, indexReg, scale, displacement);
 	if (!memRef) {
 		return NULL;
 	}
 
-	memRef->m_BaseReg = baseReg;
-	memRef->m_IndexReg = indexReg;
-	memRef->m_Scale = scale;
-	memRef->m_Displacement = displacement;
 	operand->u.m_MemRef = memRef;
 
 	return operand;
@@ -1306,17 +1479,12 @@ void jx_mir_opPrint(jx_mir_context_t* ctx, jx_mir_operand_t* op, jx_string_buffe
 
 void jx_mir_instrFree(jx_mir_context_t* ctx, jx_mir_instruction_t* instr)
 {
-	jx_allocator_i* allocator = ctx->m_Allocator;
-
 	jx_mir_annotation_t* annot = instr->m_AnnotationListHead;
 	while (annot) {
 		jx_mir_annotation_t* annotNext = annot->m_Next;
 		jx_mir_annotationFree(ctx, annot);
 		annot = annotNext;
 	}
-
-	JX_FREE(allocator, instr->m_Operands);
-	JX_FREE(allocator, instr);
 }
 
 void jx_mir_instrPrint(jx_mir_context_t* ctx, jx_mir_instruction_t* instr, jx_string_buffer_t* sb)
@@ -1346,7 +1514,7 @@ jx_mir_annotation_t* jx_mir_instrGetAnnotation(jx_mir_context_t* ctx, jx_mir_ins
 		annotation = annotation->m_Next;
 	}
 
-	return annotation;
+	return NULL;
 }
 
 void jx_mir_instrAddAnnotation(jx_mir_context_t* ctx, jx_mir_instruction_t* instr, jx_mir_annotation_t* annotation)
@@ -1995,7 +2163,7 @@ static jx_mir_operand_t* jmir_operandAlloc(jx_mir_context_t* ctx, jx_mir_operand
 
 static jx_mir_instruction_t* jmir_instrAlloc(jx_mir_context_t* ctx, uint32_t opcode, uint32_t numOperands, jx_mir_operand_t** operands)
 {
-	jx_mir_instruction_t* instr = (jx_mir_instruction_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_instruction_t));
+	jx_mir_instruction_t* instr = (jx_mir_instruction_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_mir_instruction_t));
 	if (!instr) {
 		return NULL;
 	}
@@ -2004,9 +2172,8 @@ static jx_mir_instruction_t* jmir_instrAlloc(jx_mir_context_t* ctx, uint32_t opc
 	instr->m_OpCode = opcode;
 	instr->m_NumOperands = numOperands;
 	if (numOperands) {
-		instr->m_Operands = (jx_mir_operand_t**)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_operand_t*) * numOperands);
+		instr->m_Operands = (jx_mir_operand_t**)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_mir_operand_t*) * numOperands);
 		if (!instr->m_Operands) {
-			JX_FREE(ctx->m_Allocator, instr);
 			return NULL;
 		}
 
@@ -2071,14 +2238,10 @@ static jx_mir_operand_t* jmir_funcCreateArgument(jx_mir_context_t* ctx, jx_mir_f
 
 static void jmir_funcFree(jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
-	jx_allocator_i* allocator = ctx->m_Allocator;
-
 	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
 	while (bb) {
 		jx_mir_basic_block_t* nextBB = bb->m_Next;
-
 		jx_mir_bbFree(ctx, bb);
-
 		bb = nextBB;
 	}
 
@@ -2086,22 +2249,17 @@ static void jmir_funcFree(jx_mir_context_t* ctx, jx_mir_function_t* func)
 		jmir_frameDestroy(ctx, func->m_FrameInfo);
 		func->m_FrameInfo = NULL;
 	}
-
-	JX_FREE(allocator, func->m_Args);
-	JX_FREE(allocator, func->m_Name);
-	JX_FREE(allocator, func);
 }
 
 static jx_mir_function_pass_t* jmir_funcPassCreate(jx_mir_context_t* ctx, jmirFuncPassCtorFunc ctorFunc, void* passConfig)
 {
-	jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_function_pass_t));
+	jx_mir_function_pass_t* pass = (jx_mir_function_pass_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_mir_function_pass_t));
 	if (!pass) {
 		return NULL;
 	}
 
 	jx_memset(pass, 0, sizeof(jx_mir_function_pass_t));
 	if (!ctorFunc(pass, ctx->m_Allocator)) {
-		JX_FREE(ctx->m_Allocator, pass);
 		return NULL;
 	}
 
@@ -2111,7 +2269,6 @@ static jx_mir_function_pass_t* jmir_funcPassCreate(jx_mir_context_t* ctx, jmirFu
 static void jmir_funcPassDestroy(jx_mir_context_t* ctx, jx_mir_function_pass_t* pass)
 {
 	pass->destroy(pass->m_Inst, ctx->m_Allocator);
-	JX_FREE(ctx->m_Allocator, pass);
 }
 
 static bool jmir_funcPassApply(jx_mir_context_t* ctx, jx_mir_function_pass_t* pass, jx_mir_function_t* func)
@@ -2121,16 +2278,8 @@ static bool jmir_funcPassApply(jx_mir_context_t* ctx, jx_mir_function_pass_t* pa
 
 static void jmir_globalVarFree(jx_mir_context_t* ctx, jx_mir_global_variable_t* gv)
 {
-	jx_allocator_i* allocator = ctx->m_Allocator;
-	const uint32_t numRelocs = (uint32_t)jx_array_sizeu(gv->m_RelocationsArr);
-	for (uint32_t iReloc = 0; iReloc < numRelocs; ++iReloc) {
-		jx_mir_relocation_t* reloc = &gv->m_RelocationsArr[iReloc];
-		JX_FREE(allocator, reloc->m_SymbolName);
-	}
 	jx_array_free(gv->m_RelocationsArr);
-	JX_FREE(allocator, gv->m_Name);
 	jx_array_free(gv->m_DataArr);
-	JX_FREE(allocator, gv);
 }
 
 static jx_mir_memory_ref_t* jmir_memRefAlloc(jx_mir_context_t* ctx, jx_mir_reg_t baseReg, jx_mir_reg_t indexReg, uint32_t scale, int32_t displacement)
@@ -2151,7 +2300,7 @@ static jx_mir_memory_ref_t* jmir_memRefAlloc(jx_mir_context_t* ctx, jx_mir_reg_t
 
 static jx_mir_frame_info_t* jmir_frameCreate(jx_mir_context_t* ctx)
 {
-	jx_mir_frame_info_t* fi = (jx_mir_frame_info_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_frame_info_t));
+	jx_mir_frame_info_t* fi = (jx_mir_frame_info_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_mir_frame_info_t));
 	if (!fi) {
 		return NULL;
 	}
@@ -2169,7 +2318,6 @@ static jx_mir_frame_info_t* jmir_frameCreate(jx_mir_context_t* ctx)
 static void jmir_frameDestroy(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo)
 {
 	jx_array_free(frameInfo->m_StackObjArr);
-	JX_FREE(ctx->m_Allocator, frameInfo);
 }
 
 static jx_mir_memory_ref_t* jmir_frameAllocObj(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo, uint32_t sz, uint32_t alignment)
@@ -2285,4 +2433,11 @@ static int32_t jmir_funcProtoCompareCallback(const void* a, const void* b, void*
 	}
 
 	return 0;
+}
+
+static void jmir_annotBBCFGDestroy(jx_mir_annotation_t* annotation)
+{
+	jx_mir_annotation_bb_cfg_t* cfgAnnot = (jx_mir_annotation_bb_cfg_t*)annotation;
+	jx_array_free(cfgAnnot->m_PredArr);
+	jx_array_free(cfgAnnot->m_SuccArr);
 }

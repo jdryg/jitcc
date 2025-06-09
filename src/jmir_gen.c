@@ -374,8 +374,8 @@ static bool jmirgen_funcBuild(jx_mirgen_context_t* ctx, const char* namePrefix, 
 
 	const bool isExternal = irFunc->m_BasicBlockListHead == NULL;
 	const uint32_t flags = 0
-		| (isVarArg ? JMIR_FUNC_FLAGS_VARARG_Msk : 0)
-		| (isExternal ? JMIR_FUNC_FLAGS_EXTERNAL_Msk : 0)
+		| (isVarArg ? JMIR_FUNC_PROTO_FLAGS_VARARG_Msk : 0)
+		| (isExternal ? JMIR_FUNC_PROTO_FLAGS_EXTERNAL_Msk : 0)
 		;
 	jx_mir_function_proto_t* funcProto = jx_mir_funcProto(mirctx, retType, numArgs, args, flags);
 	jx_mir_function_t* func = jx_mir_funcBegin(mirctx, funcName, funcProto);
@@ -2081,7 +2081,7 @@ static jx_mir_function_proto_t* jmirgen_funcTypeToProto(jx_mirgen_context_t* ctx
 		}
 	}
 
-	jx_mir_function_proto_t* funcProto = jx_mir_funcProto(ctx->m_MIRCtx, jmirgen_convertType(funcType->m_RetType), numArgs, args, funcType->m_IsVarArg ? JMIR_FUNC_FLAGS_VARARG_Msk : 0);
+	jx_mir_function_proto_t* funcProto = jx_mir_funcProto(ctx->m_MIRCtx, jmirgen_convertType(funcType->m_RetType), numArgs, args, funcType->m_IsVarArg ? JMIR_FUNC_PROTO_FLAGS_VARARG_Msk : 0);
 
 	JX_FREE(ctx->m_Allocator, args);
 
