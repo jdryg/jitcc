@@ -2703,15 +2703,7 @@ static bool jmir_funcPass_peepholeRun(jx_mir_function_pass_o* inst, jx_mir_conte
 
 		changed = prevIterNumOpts != numOpts;
 	}
-
-	if (!jx_strcmp(func->m_Name, "stbtt__isfont")) {
-		jx_string_buffer_t* sb = jx_strbuf_create(pass->m_Allocator);
-		jx_mir_funcPrint(ctx, func, sb);
-		jx_strbuf_nullTerminate(sb);
-		JX_SYS_LOG_INFO(NULL, "\n%s", jx_strbuf_getString(sb, NULL));
-		jx_strbuf_destroy(sb);
-	}
-
+	
 	return numOpts != 0;
 }
 
