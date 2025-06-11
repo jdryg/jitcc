@@ -2,6 +2,7 @@
 #include "jmir_pass.h"
 #include <jlib/allocator.h>
 #include <jlib/array.h>
+#include <jlib/bitset.h>
 #include <jlib/dbg.h>
 #include <jlib/hashmap.h>
 #include <jlib/logger.h>
@@ -170,8 +171,13 @@ static jx_mir_instruction_t* jmir_instrAlloc(jx_mir_context_t* ctx, uint32_t opc
 static jx_mir_instruction_t* jmir_instrAlloc1(jx_mir_context_t* ctx, uint32_t opcode, jx_mir_operand_t* op1);
 static jx_mir_instruction_t* jmir_instrAlloc2(jx_mir_context_t* ctx, uint32_t opcode, jx_mir_operand_t* op1, jx_mir_operand_t* op2);
 static jx_mir_instruction_t* jmir_instrAlloc3(jx_mir_context_t* ctx, uint32_t opcode, jx_mir_operand_t* op1, jx_mir_operand_t* op2, jx_mir_operand_t* op3);
+static bool jmir_instrUpdateUseDefInfo(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_instruction_t* instr, jx_mir_annotation_instr_usedef_t* annot);
+static bool jmir_instrIsMovRegReg(jx_mir_instruction_t* instr);
+static void jmir_regPrint(jx_mir_context_t* ctx, jx_mir_reg_t reg, jx_mir_type_kind type, jx_string_buffer_t* sb);
 static jx_mir_operand_t* jmir_funcCreateArgument(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb, uint32_t argID, jx_mir_type_kind argType);
 static void jmir_funcFree(jx_mir_context_t* ctx, jx_mir_function_t* func);
+static uint32_t jmir_funcMapRegToBitsetID(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_reg_t reg);
+static jx_mir_reg_t jmir_funcMapBitsetIDToReg(jx_mir_context_t* ctx, jx_mir_function_t* func, uint32_t id);
 static jx_mir_function_pass_t* jmir_funcPassCreate(jx_mir_context_t* ctx, jmirFuncPassCtorFunc ctorFunc, void* passConfig);
 static void jmir_funcPassDestroy(jx_mir_context_t* ctx, jx_mir_function_pass_t* pass);
 static bool jmir_funcPassApply(jx_mir_context_t* ctx, jx_mir_function_pass_t* pass, jx_mir_function_t* func);
@@ -186,6 +192,8 @@ static void jmir_frameFinalize(jx_mir_context_t* ctx, jx_mir_frame_info_t* frame
 static uint64_t jmir_funcProtoHashCallback(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
 static int32_t jmir_funcProtoCompareCallback(const void* a, const void* b, void* udata);
 static void jmir_annotBBCFGDestroy(jx_mir_annotation_t* annotation);
+static void jmir_annotBBLiveDestroy(jx_mir_annotation_t* annotation);
+static void jmir_annotInstrLiveDestroy(jx_mir_annotation_t* annotation);
 
 jx_mir_context_t* jx_mir_createContext(jx_allocator_i* allocator)
 {
@@ -854,10 +862,199 @@ bool jx_mir_funcUpdateCFG(jx_mir_context_t* ctx, jx_mir_function_t* func)
 	return true;
 }
 
+bool jx_mir_funcUpdateLiveness(jx_mir_context_t* ctx, jx_mir_function_t* func)
+{
+//	if ((func->m_Flags & JMIR_FUNC_FLAGS_LIVENESS_VALID_Msk) != 0) {
+//		return true;
+//	}
+
+	if (!jx_mir_funcUpdateCFG(ctx, func)) {
+		return false;
+	}
+
+	// Make sure every basic block has a liveness annotation and reset its bitsets
+	// TODO: Renumber virtual regs to remove dead ones
+	const uint32_t numRegs = 
+		+ 16 // GP regs
+		+ 16 // XMM regs
+		+ func->m_NextVirtualRegID[JMIR_REG_CLASS_GP]
+		+ func->m_NextVirtualRegID[JMIR_REG_CLASS_XMM]
+		;
+	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
+	while (bb) {
+		jx_mir_annotation_bb_liveness_t* bbLiveAnnot = (jx_mir_annotation_bb_liveness_t*)jx_mir_bbGetAnnotation(ctx, bb, JMIR_ANNOT_BB_LIVENESS);
+		if (!bbLiveAnnot) {
+			bbLiveAnnot = (jx_mir_annotation_bb_liveness_t*)jx_mir_annotationAlloc(ctx, JMIR_ANNOT_BB_LIVENESS, jmir_annotBBLiveDestroy, sizeof(jx_mir_annotation_bb_liveness_t));
+			if (!bbLiveAnnot) {
+				return false;
+			}
+
+			bbLiveAnnot->m_Allocator = ctx->m_Allocator;
+			bbLiveAnnot->m_LiveInSet = jx_bitsetCreate(numRegs, ctx->m_Allocator);
+			if (!bbLiveAnnot->m_LiveInSet) {
+				return false;
+			}
+
+			bbLiveAnnot->m_LiveOutSet = jx_bitsetCreate(numRegs, ctx->m_Allocator);
+			if (!bbLiveAnnot->m_LiveInSet) {
+				return false;
+			}
+
+			jx_mir_bbAddAnnotation(ctx, bb, &bbLiveAnnot->super);
+		} 
+
+		jx_bitsetResize(bbLiveAnnot->m_LiveInSet, numRegs, ctx->m_Allocator);
+		jx_bitsetResize(bbLiveAnnot->m_LiveOutSet, numRegs, ctx->m_Allocator);
+
+		jx_bitsetClear(bbLiveAnnot->m_LiveInSet);
+		jx_bitsetClear(bbLiveAnnot->m_LiveOutSet);
+
+		jx_mir_instruction_t* instr = bb->m_InstrListHead;
+		while (instr) {
+			jx_mir_annotation_instr_liveness_t* instrLiveAnnot = (jx_mir_annotation_instr_liveness_t*)jx_mir_instrGetAnnotation(ctx, instr, JMIR_ANNOT_INSTR_LIVENESS);
+			if (!instrLiveAnnot) {
+				instrLiveAnnot = (jx_mir_annotation_instr_liveness_t*)jx_mir_annotationAlloc(ctx, JMIR_ANNOT_INSTR_LIVENESS, jmir_annotInstrLiveDestroy, sizeof(jx_mir_annotation_instr_liveness_t));
+				if (!instrLiveAnnot) {
+					return false;
+				}
+
+				instrLiveAnnot->m_Allocator = ctx->m_Allocator;
+				instrLiveAnnot->m_LiveOutSet = jx_bitsetCreate(numRegs, ctx->m_Allocator);
+				if (!instrLiveAnnot->m_LiveOutSet) {
+					return false;
+				}
+
+				jx_mir_instrAddAnnotation(ctx, instr, &instrLiveAnnot->super);
+			}
+
+			jx_bitsetResize(instrLiveAnnot->m_LiveOutSet, numRegs, ctx->m_Allocator);
+
+			jx_mir_annotation_instr_usedef_t* instrUseDefAnnot = (jx_mir_annotation_instr_usedef_t*)jx_mir_instrGetAnnotation(ctx, instr, JMIR_ANNOT_INSTR_USE_DEF);
+			if (!instrUseDefAnnot) {
+				instrUseDefAnnot = (jx_mir_annotation_instr_usedef_t*)jx_mir_annotationAlloc(ctx, JMIR_ANNOT_INSTR_USE_DEF, NULL, sizeof(jx_mir_annotation_instr_usedef_t));
+				if (!instrUseDefAnnot) {
+					return false;
+				}
+
+				jx_mir_instrAddAnnotation(ctx, instr, &instrUseDefAnnot->super);
+			}
+
+			// Recalculate use/def info
+			jmir_instrUpdateUseDefInfo(ctx, func, instr, instrUseDefAnnot);
+
+			instr = instr->m_Next;
+		}
+
+		bb = bb->m_Next;
+	}
+
+	jx_bitset_t* prevLiveIn = jx_bitsetCreate(numRegs, ctx->m_Allocator);
+	jx_bitset_t* prevLiveOut = jx_bitsetCreate(numRegs, ctx->m_Allocator);
+	jx_bitset_t* instrLive = jx_bitsetCreate(numRegs, ctx->m_Allocator);
+	if (!prevLiveIn || !prevLiveOut || !instrLive) {
+		return false;
+	}
+
+	uint32_t numIterations = 0;
+	// Rebuild live in/out sets
+	bool changed = true;
+	while (changed) {
+		changed = false;
+		++numIterations;
+
+		// TODO: Reverse Postorder walk
+		bb = func->m_BasicBlockListHead;
+		while (bb) {
+			jx_mir_annotation_bb_liveness_t* bbLiveAnnot = (jx_mir_annotation_bb_liveness_t*)jx_mir_bbGetAnnotation(ctx, bb, JMIR_ANNOT_BB_LIVENESS);
+			JX_CHECK(bbLiveAnnot, "Expected liveness annotation to be valid!");
+			jx_mir_annotation_bb_cfg_t* bbCFGAnnot = (jx_mir_annotation_bb_cfg_t*)jx_mir_bbGetAnnotation(ctx, bb, JMIR_ANNOT_BB_CFG);
+			JX_CHECK(bbCFGAnnot, "Expected CFG annotation to be valid!");
+
+			// out'[v] = out[v]
+			// in'[v] = in[v]
+			jx_bitsetCopy(prevLiveIn, bbLiveAnnot->m_LiveInSet);
+			jx_bitsetCopy(prevLiveOut, bbLiveAnnot->m_LiveOutSet);
+
+			// out[v] = Union(w in succ, in[w])
+			const uint32_t numSucc = (uint32_t)jx_array_sizeu(bbCFGAnnot->m_SuccArr);
+			if (numSucc) {
+				jx_mir_basic_block_t* succ = bbCFGAnnot->m_SuccArr[0];
+				jx_mir_annotation_bb_liveness_t* succLiveAnnot = (jx_mir_annotation_bb_liveness_t*)jx_mir_bbGetAnnotation(ctx, succ, JMIR_ANNOT_BB_LIVENESS);
+				JX_CHECK(bbLiveAnnot, "Expected liveness annotation to be valid!");
+
+				jx_bitsetCopy(bbLiveAnnot->m_LiveOutSet, succLiveAnnot->m_LiveInSet);
+				for (uint32_t iSucc = 1; iSucc < numSucc; ++iSucc) {
+					succ = bbCFGAnnot->m_SuccArr[iSucc];
+					succLiveAnnot = (jx_mir_annotation_bb_liveness_t*)jx_mir_bbGetAnnotation(ctx, succ, JMIR_ANNOT_BB_LIVENESS);
+					JX_CHECK(bbLiveAnnot, "Expected liveness annotation to be valid!");
+
+					jx_bitsetUnion(bbLiveAnnot->m_LiveOutSet, succLiveAnnot->m_LiveInSet);
+				}
+			}
+
+			// Calculate live in by walking the basic block's instruction list backwards,
+			// while storing live info for each instruction.
+			{
+				jx_bitsetCopy(instrLive, bbLiveAnnot->m_LiveOutSet);
+
+				jx_mir_instruction_t* instr = bb->m_InstrListTail;
+				while (instr) {
+					jx_mir_annotation_instr_liveness_t* instrLiveAnnot = (jx_mir_annotation_instr_liveness_t*)jx_mir_instrGetAnnotation(ctx, instr, JMIR_ANNOT_INSTR_LIVENESS);
+					JX_CHECK(instrLiveAnnot, "Expected liveness annotation to be valid!");
+					jx_mir_annotation_instr_usedef_t* instrUseDefAnnot = (jx_mir_annotation_instr_usedef_t*)jx_mir_instrGetAnnotation(ctx, instr, JMIR_ANNOT_INSTR_USE_DEF);
+					JX_CHECK(instrUseDefAnnot, "Expected use/def annotation to be valid!");
+
+					if (jmir_instrIsMovRegReg(instr)) {
+						JX_CHECK(instrUseDefAnnot->m_NumUses == 1, "Move instruction expected to have 1 use.");
+						jx_bitsetResetBit(instrLive, jmir_funcMapRegToBitsetID(ctx, func, instrUseDefAnnot->m_Uses[0]));
+					}
+
+					jx_bitsetCopy(instrLiveAnnot->m_LiveOutSet, instrLive);
+
+					const uint32_t numDefs = instrUseDefAnnot->m_NumDefs;
+					for (uint32_t iDef = 0; iDef < numDefs; ++iDef) {
+						jx_bitsetResetBit(instrLive, jmir_funcMapRegToBitsetID(ctx, func, instrUseDefAnnot->m_Defs[iDef]));
+					}
+
+					const uint32_t numUses = instrUseDefAnnot->m_NumUses;
+					for (uint32_t iUse = 0; iUse < numUses; ++iUse) {
+						jx_bitsetSetBit(instrLive, jmir_funcMapRegToBitsetID(ctx, func, instrUseDefAnnot->m_Uses[iUse]));
+					}
+
+					instr = instr->m_Prev;
+				}
+
+				jx_bitsetCopy(bbLiveAnnot->m_LiveInSet, instrLive);
+			}
+
+			// Check if something changed
+			changed = changed
+				|| !jx_bitsetEqual(bbLiveAnnot->m_LiveInSet, prevLiveIn)
+				|| !jx_bitsetEqual(bbLiveAnnot->m_LiveOutSet, prevLiveOut)
+				;
+
+			bb = bb->m_Next;
+		}
+	}
+
+//	JX_TRACE("liveness: Func %s iterations %u", func->m_Name, numIterations);
+
+	jx_bitsetDestroy(instrLive, ctx->m_Allocator);
+	jx_bitsetDestroy(prevLiveIn, ctx->m_Allocator);
+	jx_bitsetDestroy(prevLiveOut, ctx->m_Allocator);
+
+	func->m_Flags |= JMIR_FUNC_FLAGS_LIVENESS_VALID_Msk;
+
+	return true;
+}
+
 void jx_mir_funcPrint(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_string_buffer_t* sb)
 {
-	// TODO: Only update CFG if it's already created by some other code.
-	jx_mir_funcUpdateCFG(ctx, func);
+	if (func->m_BasicBlockListHead) {
+		// TODO: Only update CFG if it's already created by some other code.
+		jx_mir_funcUpdateCFG(ctx, func);
+		jx_mir_funcUpdateLiveness(ctx, func);
+	}
 
 	jx_strbuf_printf(sb, "global %s:\n", func->m_Name);
 
@@ -886,6 +1083,54 @@ void jx_mir_funcPrint(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_string_
 					jx_strbuf_pushCStr(sb, ", ");
 				}
 				jx_strbuf_printf(sb, "bb.%u", succ->m_ID);
+			}
+			jx_strbuf_pushCStr(sb, " }\n");
+		}
+
+		jx_mir_annotation_bb_liveness_t* liveAnnot = (jx_mir_annotation_bb_liveness_t*)jx_mir_bbGetAnnotation(ctx, bb, JMIR_ANNOT_BB_LIVENESS);
+		if (liveAnnot) {
+			// Print live-in and live-out sets
+			jx_strbuf_pushCStr(sb, "  ; liveIn = { ");
+			{
+				const jx_bitset_t* bs = liveAnnot->m_LiveInSet;
+
+				jx_bitset_iterator_t iter;
+				jx_bitsetIterBegin(bs, &iter, 0);
+				
+				bool first = true;
+				uint32_t id = jx_bitsetIterNext(bs, &iter);
+				while (id != UINT32_MAX) {
+					if (!first) {
+						jx_strbuf_pushCStr(sb, ", ");
+					}
+					first = false;
+
+					jx_mir_reg_t reg = jmir_funcMapBitsetIDToReg(ctx, func, id);
+					jmir_regPrint(ctx, reg, reg.m_Class == JMIR_REG_CLASS_GP ? JMIR_TYPE_I64 : JMIR_TYPE_F128, sb);
+					id = jx_bitsetIterNext(bs, &iter);
+				}
+			}
+			jx_strbuf_pushCStr(sb, " }\n");
+
+			jx_strbuf_pushCStr(sb, "  ; liveOut = { ");
+			{
+				const jx_bitset_t* bs = liveAnnot->m_LiveOutSet;
+
+				jx_bitset_iterator_t iter;
+				jx_bitsetIterBegin(bs, &iter, 0);
+
+				bool first = true;
+				uint32_t id = jx_bitsetIterNext(bs, &iter);
+				while (id != UINT32_MAX) {
+					if (!first) {
+						jx_strbuf_pushCStr(sb, ", ");
+					}
+					first = false;
+
+					jx_mir_reg_t reg = jmir_funcMapBitsetIDToReg(ctx, func, id);
+					jmir_regPrint(ctx, reg, reg.m_Class == JMIR_REG_CLASS_GP ? JMIR_TYPE_I64 : JMIR_TYPE_F128, sb);
+					id = jx_bitsetIterNext(bs, &iter);
+				}
 			}
 			jx_strbuf_pushCStr(sb, " }\n");
 		}
@@ -1257,12 +1502,13 @@ static void jmir_regPrint(jx_mir_context_t* ctx, jx_mir_reg_t reg, jx_mir_type_k
 {
 	JX_CHECK(type != JMIR_TYPE_VOID, "Unexpected void register!");
 	static const char* kRegPostfix[] = {
-		[JMIR_TYPE_I8] = "b",
-		[JMIR_TYPE_I16] = "w",
-		[JMIR_TYPE_I32] = "d",
+		[JMIR_TYPE_I8] = ".b",
+		[JMIR_TYPE_I16] = ".w",
+		[JMIR_TYPE_I32] = ".d",
 		[JMIR_TYPE_I64] = "",
-		[JMIR_TYPE_F32] = "f32",
-		[JMIR_TYPE_F64] = "f64",
+		[JMIR_TYPE_F32] = "f.32",
+		[JMIR_TYPE_F64] = "f.64",
+		[JMIR_TYPE_F128] = "f",
 		[JMIR_TYPE_PTR] = "",
 	};
 
@@ -2205,6 +2451,361 @@ static jx_mir_instruction_t* jmir_instrAlloc3(jx_mir_context_t* ctx, uint32_t op
 	return jmir_instrAlloc(ctx, opcode, 3, operands);
 }
 
+static inline void jmir_instrAddUse(jx_mir_annotation_instr_usedef_t* instrAnnot, jx_mir_reg_t reg)
+{
+	if (jx_mir_regIsValid(reg)) {
+		JX_CHECK(instrAnnot->m_NumUses + 1 <= JMIR_MAX_INSTR_USES, "Too many instruction uses");
+		instrAnnot->m_Uses[instrAnnot->m_NumUses++] = reg;
+	}
+}
+
+static inline void jmir_instrAddDef(jx_mir_annotation_instr_usedef_t* instrAnnot, jx_mir_reg_t reg)
+{
+	JX_CHECK(jx_mir_regIsValid(reg), "Invalid register ID");
+	JX_CHECK(instrAnnot->m_NumDefs + 1 <= JMIR_MAX_INSTR_DEFS, "Too many instruction defs");
+	instrAnnot->m_Defs[instrAnnot->m_NumDefs++] = reg;
+}
+
+static bool jmir_instrUpdateUseDefInfo(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_instruction_t* instr, jx_mir_annotation_instr_usedef_t* annot)
+{
+	annot->m_NumDefs = 0;
+	annot->m_NumUses = 0;
+	switch (instr->m_OpCode) {
+	case JMIR_OP_RET: {
+		if (func->m_Prototype->m_RetType != JMIR_TYPE_VOID) {
+			jmir_instrAddUse(annot, kMIRRegGP_A);
+		}
+	} break;
+	case JMIR_OP_CMP:
+	case JMIR_OP_TEST: 
+	case JMIR_OP_COMISS:
+	case JMIR_OP_COMISD:
+	case JMIR_OP_UCOMISS:
+	case JMIR_OP_UCOMISD: {
+		for (uint32_t iOperand = 0; iOperand < 2; ++iOperand) {
+			jx_mir_operand_t* src = instr->m_Operands[iOperand];
+			if (src->m_Kind == JMIR_OPERAND_REGISTER) {
+				jmir_instrAddUse(annot, src->u.m_Reg);
+			} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+				jmir_instrAddUse(annot, src->u.m_MemRef->m_BaseReg);
+				jmir_instrAddUse(annot, src->u.m_MemRef->m_IndexReg);
+			}
+		}
+	} break;
+	case JMIR_OP_MOV:
+	case JMIR_OP_MOVSX:
+	case JMIR_OP_MOVZX: 
+	case JMIR_OP_MOVSS: 
+	case JMIR_OP_MOVSD: 
+	case JMIR_OP_MOVD:
+	case JMIR_OP_MOVQ:
+	case JMIR_OP_MOVAPS:
+	case JMIR_OP_MOVAPD:
+	case JMIR_OP_CVTSI2SS:
+	case JMIR_OP_CVTSI2SD:
+	case JMIR_OP_CVTSS2SI:
+	case JMIR_OP_CVTSD2SI:
+	case JMIR_OP_CVTTSS2SI:
+	case JMIR_OP_CVTTSD2SI:
+	case JMIR_OP_CVTSD2SS:
+	case JMIR_OP_CVTSS2SD: 
+	case JMIR_OP_RCPPS:
+	case JMIR_OP_RCPSS:
+	case JMIR_OP_RSQRTPS:
+	case JMIR_OP_RSQRTSS:
+	case JMIR_OP_SQRTPS:
+	case JMIR_OP_SQRTSS:
+	case JMIR_OP_SQRTPD:
+	case JMIR_OP_SQRTSD: {
+		jx_mir_operand_t* src = instr->m_Operands[1];
+		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
+			jmir_instrAddUse(annot, src->u.m_Reg);
+		} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+			jmir_instrAddUse(annot, src->u.m_MemRef->m_BaseReg);
+			jmir_instrAddUse(annot, src->u.m_MemRef->m_IndexReg);
+		}
+
+		jx_mir_operand_t* dst = instr->m_Operands[0];
+		if (dst->m_Kind == JMIR_OPERAND_REGISTER) {
+			jmir_instrAddDef(annot, dst->u.m_Reg);
+		} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+			jmir_instrAddUse(annot, dst->u.m_MemRef->m_BaseReg);
+			jmir_instrAddUse(annot, dst->u.m_MemRef->m_IndexReg);
+		}
+	} break;
+	case JMIR_OP_IDIV:
+	case JMIR_OP_DIV: {
+		jx_mir_operand_t* op = instr->m_Operands[0];
+
+		jmir_instrAddUse(annot, kMIRRegGP_A);
+		jmir_instrAddUse(annot, kMIRRegGP_D);
+
+		if (op->m_Kind == JMIR_OPERAND_REGISTER) {
+			jmir_instrAddUse(annot, op->u.m_Reg);
+		} else if (op->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+			jmir_instrAddUse(annot, op->u.m_MemRef->m_BaseReg);
+			jmir_instrAddUse(annot, op->u.m_MemRef->m_IndexReg);
+		}
+
+		jmir_instrAddDef(annot, kMIRRegGP_A);
+		jmir_instrAddDef(annot, kMIRRegGP_D);
+	} break;
+	case JMIR_OP_ADD:
+	case JMIR_OP_SUB:
+	case JMIR_OP_IMUL:
+	case JMIR_OP_AND:
+	case JMIR_OP_OR:
+	case JMIR_OP_SAR:
+	case JMIR_OP_SHR:
+	case JMIR_OP_SHL: 
+	case JMIR_OP_ADDPS:
+	case JMIR_OP_ADDSS:
+	case JMIR_OP_ADDPD:
+	case JMIR_OP_ADDSD:
+	case JMIR_OP_ANDNPS:
+	case JMIR_OP_ANDNPD:
+	case JMIR_OP_ANDPS:
+	case JMIR_OP_ANDPD:
+	case JMIR_OP_DIVPS:
+	case JMIR_OP_DIVSS:
+	case JMIR_OP_DIVPD:
+	case JMIR_OP_DIVSD:
+	case JMIR_OP_MAXPS:
+	case JMIR_OP_MAXSS:
+	case JMIR_OP_MAXPD:
+	case JMIR_OP_MAXSD:
+	case JMIR_OP_MINPS:
+	case JMIR_OP_MINSS:
+	case JMIR_OP_MINPD:
+	case JMIR_OP_MINSD:
+	case JMIR_OP_MULPS:
+	case JMIR_OP_MULSS:
+	case JMIR_OP_MULPD:
+	case JMIR_OP_MULSD:
+	case JMIR_OP_ORPS:
+	case JMIR_OP_ORPD:
+	case JMIR_OP_SUBPS:
+	case JMIR_OP_SUBSS:
+	case JMIR_OP_SUBPD:
+	case JMIR_OP_SUBSD:
+	case JMIR_OP_UNPCKHPS:
+	case JMIR_OP_UNPCKHPD:
+	case JMIR_OP_UNPCKLPS:
+	case JMIR_OP_UNPCKLPD:
+	case JMIR_OP_PUNPCKLBW:
+	case JMIR_OP_PUNPCKLWD:
+	case JMIR_OP_PUNPCKLDQ:
+	case JMIR_OP_PUNPCKLQDQ:
+	case JMIR_OP_PUNPCKHBW:
+	case JMIR_OP_PUNPCKHWD:
+	case JMIR_OP_PUNPCKHDQ:
+	case JMIR_OP_PUNPCKHQDQ: {
+		jx_mir_operand_t* src = instr->m_Operands[1];
+		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
+			jmir_instrAddUse(annot, src->u.m_Reg);
+		} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+			jmir_instrAddUse(annot, src->u.m_MemRef->m_BaseReg);
+			jmir_instrAddUse(annot, src->u.m_MemRef->m_IndexReg);
+		}
+
+		jx_mir_operand_t* dst = instr->m_Operands[0];
+		if (dst->m_Kind == JMIR_OPERAND_REGISTER) {
+			jmir_instrAddUse(annot, dst->u.m_Reg); // binary operators use both src and dst operands.
+			jmir_instrAddDef(annot, dst->u.m_Reg);
+		} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+			jmir_instrAddUse(annot, dst->u.m_MemRef->m_BaseReg);
+			jmir_instrAddUse(annot, dst->u.m_MemRef->m_IndexReg);
+		}
+	} break;
+	case JMIR_OP_XOR: 
+	case JMIR_OP_XORPS: 
+	case JMIR_OP_XORPD: {
+		jx_mir_operand_t* src = instr->m_Operands[1];
+		jx_mir_operand_t* dst = instr->m_Operands[0];
+		if (src->m_Kind == JMIR_OPERAND_REGISTER && dst->m_Kind == JMIR_OPERAND_REGISTER && jx_mir_regEqual(src->u.m_Reg, dst->u.m_Reg)) {
+			// Special case: 
+			// xor reg, reg only defines reg and has no uses
+			jmir_instrAddDef(annot, src->u.m_Reg);
+		} else {
+			if (src->m_Kind == JMIR_OPERAND_REGISTER) {
+				jmir_instrAddUse(annot, src->u.m_Reg);
+			} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+				jmir_instrAddUse(annot, src->u.m_MemRef->m_BaseReg);
+				jmir_instrAddUse(annot, src->u.m_MemRef->m_IndexReg);
+			}
+
+			if (dst->m_Kind == JMIR_OPERAND_REGISTER) {
+				jmir_instrAddUse(annot, dst->u.m_Reg); // binary operators use both src and dst operands.
+				jmir_instrAddDef(annot, dst->u.m_Reg);
+			} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+				jmir_instrAddUse(annot, dst->u.m_MemRef->m_BaseReg);
+				jmir_instrAddUse(annot, dst->u.m_MemRef->m_IndexReg);
+			}
+		}
+	} break;
+	case JMIR_OP_LEA: {
+		jx_mir_operand_t* src = instr->m_Operands[1];
+		if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+			jmir_instrAddUse(annot, src->u.m_MemRef->m_BaseReg);
+			jmir_instrAddUse(annot, src->u.m_MemRef->m_IndexReg);
+		} else if (src->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+			// NOTE: External symbols are RIP based so there is no register to use.
+		} else {
+			JX_CHECK(false, "lea source operand expected to be a memory ref or a stack object.");
+		}
+
+		jx_mir_operand_t* dst = instr->m_Operands[0];
+		JX_CHECK(dst->m_Kind == JMIR_OPERAND_REGISTER, "lea destination operand expected to be a register.");
+		jmir_instrAddDef(annot, dst->u.m_Reg);
+	} break;
+	case JMIR_OP_CALL: {
+		jx_mir_operand_t* funcOp = instr->m_Operands[0];
+		if (funcOp->m_Kind == JMIR_OPERAND_REGISTER) {
+			jmir_instrAddUse(annot, funcOp->u.m_Reg);
+		} else {
+			JX_CHECK(funcOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL, "TODO: Handle call [memRef]/[stack object]?");
+		}
+
+		jx_mir_annotation_func_proto_t* funcProtoAnnot = (jx_mir_annotation_func_proto_t*)jx_mir_instrGetAnnotation(ctx, instr, JMIR_ANNOT_INSTR_CALL_FUNC_PROTO);
+		if (!funcProtoAnnot) {
+			for (uint32_t iRegArg = 0; iRegArg < JX_COUNTOF(kMIRFuncArgIReg); ++iRegArg) {
+				jmir_instrAddUse(annot, kMIRFuncArgIReg[iRegArg]);
+			}
+			for (uint32_t iRegArg = 0; iRegArg < JX_COUNTOF(kMIRFuncArgFReg); ++iRegArg) {
+				jmir_instrAddUse(annot, kMIRFuncArgFReg[iRegArg]);
+			}
+		} else {
+			jx_mir_function_proto_t* funcProto = funcProtoAnnot->m_FuncProto;
+			const uint32_t numArgs = jx_min_u32(funcProto->m_NumArgs, JX_COUNTOF(kMIRFuncArgIReg));
+			for (uint32_t iArg = 0; iArg < numArgs; ++iArg) {
+				jx_mir_reg_class argClass = jx_mir_typeGetClass(funcProto->m_Args[iArg]);
+				if (argClass == JMIR_REG_CLASS_GP) {
+					jmir_instrAddUse(annot, kMIRFuncArgIReg[iArg]);
+				} else if (argClass == JMIR_REG_CLASS_XMM) {
+					jmir_instrAddUse(annot, kMIRFuncArgFReg[iArg]);
+				} else {
+					JX_CHECK(false, "Unknown register class");
+				}
+			}
+		}
+
+		{
+			const uint32_t numCallerSavedIRegs = JX_COUNTOF(kMIRFuncCallerSavedIReg);
+			for (uint32_t iReg = 0; iReg < numCallerSavedIRegs; ++iReg) {
+				jmir_instrAddDef(annot, kMIRFuncCallerSavedIReg[iReg]);
+			}
+
+			const uint32_t numCallerSavedFRegs = JX_COUNTOF(kMIRFuncCallerSavedFReg);
+			for (uint32_t iReg = 0; iReg < numCallerSavedFRegs; ++iReg) {
+				jmir_instrAddDef(annot, kMIRFuncCallerSavedFReg[iReg]);
+			}
+		}
+	} break;
+	case JMIR_OP_PUSH: {
+		jx_mir_operand_t* op = instr->m_Operands[0];
+		if (op->m_Kind == JMIR_OPERAND_REGISTER) {
+			jmir_instrAddUse(annot, op->u.m_Reg);
+		} else if (op->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+			jmir_instrAddUse(annot, op->u.m_MemRef->m_BaseReg);
+			jmir_instrAddUse(annot, op->u.m_MemRef->m_IndexReg);
+		}
+	} break;
+	case JMIR_OP_POP: {
+		jx_mir_operand_t* op = instr->m_Operands[0];
+		if (op->m_Kind == JMIR_OPERAND_REGISTER) {
+			jmir_instrAddDef(annot, op->u.m_Reg);
+		} else if (op->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+			jmir_instrAddUse(annot, op->u.m_MemRef->m_BaseReg);
+			jmir_instrAddUse(annot, op->u.m_MemRef->m_IndexReg);
+		}
+	} break;
+	case JMIR_OP_CDQ:
+	case JMIR_OP_CQO: {
+		jmir_instrAddUse(annot, kMIRRegGP_A);
+		jmir_instrAddDef(annot, kMIRRegGP_D);
+	} break;
+	case JMIR_OP_SETO:
+	case JMIR_OP_SETNO:
+	case JMIR_OP_SETB:
+	case JMIR_OP_SETNB:
+	case JMIR_OP_SETE:
+	case JMIR_OP_SETNE:
+	case JMIR_OP_SETBE:
+	case JMIR_OP_SETNBE:
+	case JMIR_OP_SETS:
+	case JMIR_OP_SETNS:
+	case JMIR_OP_SETP:
+	case JMIR_OP_SETNP:
+	case JMIR_OP_SETL:
+	case JMIR_OP_SETNL:
+	case JMIR_OP_SETLE:
+	case JMIR_OP_SETNLE: {
+		jx_mir_operand_t* src = instr->m_Operands[0];
+		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
+			jmir_instrAddDef(annot, src->u.m_Reg);
+		} else if (src->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+			jmir_instrAddUse(annot, src->u.m_MemRef->m_BaseReg);
+			jmir_instrAddUse(annot, src->u.m_MemRef->m_IndexReg);
+		}
+	} break;
+	case JMIR_OP_JO:
+	case JMIR_OP_JNO:
+	case JMIR_OP_JB:
+	case JMIR_OP_JNB:
+	case JMIR_OP_JE:
+	case JMIR_OP_JNE:
+	case JMIR_OP_JBE:
+	case JMIR_OP_JNBE:
+	case JMIR_OP_JS:
+	case JMIR_OP_JNS:
+	case JMIR_OP_JP:
+	case JMIR_OP_JNP:
+	case JMIR_OP_JL:
+	case JMIR_OP_JNL:
+	case JMIR_OP_JLE:
+	case JMIR_OP_JNLE:
+	case JMIR_OP_JMP: {
+		jx_mir_operand_t* src = instr->m_Operands[0];
+		JX_CHECK(src->m_Kind == JMIR_OPERAND_BASIC_BLOCK, "I don't know how to handle non-basic block jump targets atm!");
+	} break;
+	default:
+		JX_CHECK(false, "Unknown mir opcode!");
+		break;
+	}
+
+	for (uint32_t iDef = annot->m_NumDefs; iDef < JMIR_MAX_INSTR_DEFS; ++iDef) {
+		annot->m_Defs[iDef] = kMIRRegGPNone;
+	}
+	for (uint32_t iUse = annot->m_NumUses; iUse < JMIR_MAX_INSTR_USES; ++iUse) {
+		annot->m_Uses[iUse] = kMIRRegGPNone;
+	}
+
+	return true;
+}
+
+static bool jmir_instrIsMovRegReg(jx_mir_instruction_t* instr)
+{
+	const bool isMov = false
+		|| instr->m_OpCode == JMIR_OP_MOV
+//		|| instr->m_OpCode == JMIR_OP_MOVSX // TODO: Is this correct?
+//		|| instr->m_OpCode == JMIR_OP_MOVZX // TODO: Is this correct?
+		|| instr->m_OpCode == JMIR_OP_MOVSS
+		|| instr->m_OpCode == JMIR_OP_MOVSD
+		|| instr->m_OpCode == JMIR_OP_MOVAPS
+		|| instr->m_OpCode == JMIR_OP_MOVAPD
+		;
+	if (!isMov) {
+		return false;
+	}
+
+	jx_mir_operand_t* dst = instr->m_Operands[0];
+	jx_mir_operand_t* src = instr->m_Operands[1];
+	return dst->m_Kind == JMIR_OPERAND_REGISTER
+		&& src->m_Kind == JMIR_OPERAND_REGISTER
+		&& jx_mir_regIsSameClass(dst->u.m_Reg, src->u.m_Reg)
+		;
+}
+
 static jx_mir_operand_t* jmir_funcCreateArgument(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb, uint32_t argID, jx_mir_type_kind argType)
 {
 	jx_mir_operand_t* vReg = jx_mir_opVirtualReg(ctx, func, argType);
@@ -2249,6 +2850,66 @@ static void jmir_funcFree(jx_mir_context_t* ctx, jx_mir_function_t* func)
 		jmir_frameDestroy(ctx, func->m_FrameInfo);
 		func->m_FrameInfo = NULL;
 	}
+}
+
+static uint32_t jmir_funcMapRegToBitsetID(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_reg_t reg)
+{
+	// Registers are laid out as:
+	//  hw_gp, hw_gp, hw_gp, ..., hw_gp, 
+	//  hw_xmm, hw_xmm, ..., hw_xmm, 
+	//  v_gp, v_gp, ..., v_gp, 
+	//  v_xmm, v_xmm, ..., v_xmm
+	uint32_t id = 0;
+	if (reg.m_IsVirtual) {
+		id = (16 + 16); // 16 GP regs + 16 XMM regs
+
+		for (uint32_t iClass = 0; iClass < reg.m_Class; ++iClass) {
+			id += func->m_NextVirtualRegID[iClass];
+		}
+
+		id += reg.m_ID;
+	} else {
+		for (uint32_t iClass = 0; iClass < reg.m_Class; ++iClass) {
+			id += 16;
+		}
+
+		id += reg.m_ID;
+	}
+
+	return id;
+}
+
+static jx_mir_reg_t jmir_funcMapBitsetIDToReg(jx_mir_context_t* ctx, jx_mir_function_t* func, uint32_t id)
+{
+	if (id < 16) {
+		return (jx_mir_reg_t){
+			.m_IsVirtual = 0,
+			.m_ID = id,
+			.m_Class = JMIR_REG_CLASS_GP
+		};
+	} else if (id < 32) {
+		return (jx_mir_reg_t){
+			.m_IsVirtual = 0,
+			.m_ID = id - 16,
+			.m_Class = JMIR_REG_CLASS_XMM
+		};
+	}
+
+	id -= 32;
+	if (id < func->m_NextVirtualRegID[JMIR_REG_CLASS_GP]) {
+		return (jx_mir_reg_t){
+			.m_IsVirtual = 1,
+			.m_ID = id,
+			.m_Class = JMIR_REG_CLASS_GP
+		};
+	}
+
+	id -= func->m_NextVirtualRegID[JMIR_REG_CLASS_GP];
+	return (jx_mir_reg_t){
+		.m_IsVirtual = 1,
+		.m_ID = id,
+		.m_Class = JMIR_REG_CLASS_XMM
+	};
 }
 
 static jx_mir_function_pass_t* jmir_funcPassCreate(jx_mir_context_t* ctx, jmirFuncPassCtorFunc ctorFunc, void* passConfig)
@@ -2440,4 +3101,17 @@ static void jmir_annotBBCFGDestroy(jx_mir_annotation_t* annotation)
 	jx_mir_annotation_bb_cfg_t* cfgAnnot = (jx_mir_annotation_bb_cfg_t*)annotation;
 	jx_array_free(cfgAnnot->m_PredArr);
 	jx_array_free(cfgAnnot->m_SuccArr);
+}
+
+static void jmir_annotBBLiveDestroy(jx_mir_annotation_t* annotation)
+{
+	jx_mir_annotation_bb_liveness_t* liveAnnot = (jx_mir_annotation_bb_liveness_t*)annotation;
+	jx_bitsetDestroy(liveAnnot->m_LiveInSet, liveAnnot->m_Allocator);
+	jx_bitsetDestroy(liveAnnot->m_LiveOutSet, liveAnnot->m_Allocator);
+}
+
+static void jmir_annotInstrLiveDestroy(jx_mir_annotation_t* annotation)
+{
+	jx_mir_annotation_instr_liveness_t* liveAnnot = (jx_mir_annotation_instr_liveness_t*)annotation;
+	jx_bitsetDestroy(liveAnnot->m_LiveOutSet, liveAnnot->m_Allocator);
 }

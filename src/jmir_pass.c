@@ -2,42 +2,12 @@
 #include "jmir.h"
 #include <jlib/allocator.h>
 #include <jlib/array.h>
+#include <jlib/bitset.h>
 #include <jlib/logger.h>
 #include <jlib/hashmap.h>
 #include <jlib/math.h>
 #include <jlib/memory.h>
 #include <jlib/string.h>
-
-// TODO: Move to jlib
-typedef struct jx_bitset_iterator_t
-{
-	uint64_t m_Bits;
-	uint32_t m_WordID;
-	JX_PAD(4);
-} jx_bitset_iterator_t;
-
-typedef struct jx_bitset_t
-{
-	uint64_t* m_Bits;
-	uint32_t m_NumBits;
-	JX_PAD(4);
-} jx_bitset_t;
-
-static jx_bitset_t* jx_bitsetCreate(uint32_t numBits, jx_allocator_i* allocator);
-static void jx_bitsetDestroy(jx_bitset_t* bs, jx_allocator_i* allocator);
-static void jx_bitsetInit(jx_bitset_t* bs, uint64_t* bits, uint32_t numBits);
-static uint64_t jx_bitsetCalcBufferSize(uint32_t numBits);
-static void jx_bitsetSetBit(jx_bitset_t* bs, uint32_t bit);
-static void jx_bitsetResetBit(jx_bitset_t* bs, uint32_t bit);
-static bool jx_bitsetIsBitSet(const jx_bitset_t* bs, uint32_t bit);
-static bool jx_bitsetUnion(jx_bitset_t* dst, const jx_bitset_t* src);         // dst = dst | src
-static bool jx_bitsetIntersection(jx_bitset_t* dst, const jx_bitset_t* src);  // dst = dst & src
-static bool jx_bitsetCopy(jx_bitset_t* dst, const jx_bitset_t* src);          // dst = src
-static bool jx_bitsetSub(jx_bitset_t* dst, const jx_bitset_t* src);           // dst = dst - src
-static bool jx_bitsetEqual(const jx_bitset_t* a, const jx_bitset_t* b);       // dst == src
-static void jx_bitsetClear(jx_bitset_t* bs);
-static void jx_bitsetIterBegin(const jx_bitset_t* bs, jx_bitset_iterator_t* iter, uint32_t firstBit);
-static uint32_t jx_bitsetIterNext(const jx_bitset_t* bs, jx_bitset_iterator_t* iter);
 
 //////////////////////////////////////////////////////////////////////////
 // Remove fallthrough jumps
@@ -371,7 +341,6 @@ typedef struct jmir_regalloc_bb_info_t
 {
 	jx_mir_basic_block_t* m_BB;
 	jmir_regalloc_instr_info_t* m_InstrInfo;
-	jmir_regalloc_bb_info_t** m_SuccArr;
 	jx_bitset_t* m_LiveInSet;
 	jx_bitset_t* m_LiveOutSet;
 	uint32_t m_NumInstructions;
@@ -437,7 +406,6 @@ static bool jmir_regAlloc_initInfo(jmir_func_pass_regalloc_t* pass, jx_mir_funct
 static void jmir_regAlloc_destroyInfo(jmir_func_pass_regalloc_t* pass);
 static bool jmir_regAlloc_initBasicBlockInfo(jmir_func_pass_regalloc_t* pass, jmir_regalloc_bb_info_t* bbInfo, jx_mir_basic_block_t* bb);
 static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_regalloc_instr_info_t* instrInfo, jx_mir_instruction_t* instr);
-static void jmir_regAlloc_buildCFG(jmir_func_pass_regalloc_t* pass, jx_mir_context_t* ctx, jx_mir_function_t* func);
 static bool jmir_regAlloc_livenessAnalysis(jmir_func_pass_regalloc_t* pass, jx_mir_function_t* func);
 static bool jmir_regAlloc_isMoveInstr(jmir_regalloc_instr_info_t* instrInfo, jx_mir_reg_class regClass);
 static jmir_regalloc_bb_info_t* jmir_regAlloc_getBasicBlockInfo(jmir_func_pass_regalloc_t* pass, jx_mir_basic_block_t* bb);
@@ -625,6 +593,9 @@ static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t
 {
 	allocator_api->linearAllocatorReset(pass->m_LinearAllocator);
 
+	jx_mir_funcUpdateCFG(ctx, func);
+	jx_mir_funcUpdateLiveness(ctx, func);
+
 	jx_memset(pass->m_NodeList, 0, sizeof(jmir_graph_node_t*) * JMIR_NODE_STATE_COUNT);
 	jx_memset(pass->m_MoveList, 0, sizeof(jmir_mov_instr_t*) * JMIR_MOV_STATE_COUNT);
 
@@ -664,8 +635,6 @@ static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t
 	if (!jmir_regAlloc_initInfo(pass, func)) {
 		return false;
 	}
-
-	jmir_regAlloc_buildCFG(pass, ctx, func);
 
 	if (!jmir_regAlloc_livenessAnalysis(pass, func)) {
 		return false;
@@ -755,11 +724,6 @@ static bool jmir_regAlloc_initInfo(jmir_func_pass_regalloc_t* pass, jx_mir_funct
 
 static void jmir_regAlloc_destroyInfo(jmir_func_pass_regalloc_t* pass)
 {
-	const uint32_t numBasicBlocks = pass->m_NumBasicBlocks;
-	for (uint32_t iBB = 0; iBB < numBasicBlocks; ++iBB) {
-		jmir_regalloc_bb_info_t* bbInfo = &pass->m_BBInfo[iBB];
-		jx_array_free(bbInfo->m_SuccArr);
-	}
 }
 
 static bool jmir_regAlloc_initBasicBlockInfo(jmir_func_pass_regalloc_t* pass, jmir_regalloc_bb_info_t* bbInfo, jx_mir_basic_block_t* bb)
@@ -798,11 +762,6 @@ static bool jmir_regAlloc_initBasicBlockInfo(jmir_func_pass_regalloc_t* pass, jm
 	}
 
 	bbInfo->m_NumInstructions = numInstr;
-
-	bbInfo->m_SuccArr = (jmir_regalloc_bb_info_t**)jx_array_create(pass->m_Allocator);
-	if (!bbInfo->m_SuccArr) {
-		return false;
-	}
 
 	bbInfo->m_LiveInSet = jx_bitsetCreate(pass->m_NumNodes, pass->m_LinearAllocator);
 	if (!bbInfo->m_LiveInSet) {
@@ -858,6 +817,20 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_re
 		return false;
 	}
 
+#if 1
+	jx_mir_annotation_instr_usedef_t* instrUseDefAnnot = (jx_mir_annotation_instr_usedef_t*)jx_mir_instrGetAnnotation(pass->m_Ctx, instr, JMIR_ANNOT_INSTR_USE_DEF);
+	JX_CHECK(instrUseDefAnnot, "Expected use/def annotation to be valid!");
+
+	const uint32_t numUses = instrUseDefAnnot->m_NumUses;
+	for (uint32_t iUse = 0; iUse < numUses; ++iUse) {
+		jmir_regAlloc_instrAddUse(pass, instrInfo, instrUseDefAnnot->m_Uses[iUse]);
+	}
+
+	const uint32_t numDefs = instrUseDefAnnot->m_NumDefs;
+	for (uint32_t iDef = 0; iDef < numDefs; ++iDef) {
+		jmir_regAlloc_instrAddDef(pass, instrInfo, instrUseDefAnnot->m_Defs[iDef]);
+	}
+#else
 	instrInfo->m_NumDefs = 0;
 	instrInfo->m_NumUses = 0;
 	switch (instr->m_OpCode) {
@@ -1144,70 +1117,9 @@ static bool jmir_regAlloc_initInstrInfo(jmir_func_pass_regalloc_t* pass, jmir_re
 	for (uint32_t iUse = instrInfo->m_NumUses; iUse < JMIR_REGALLOC_MAX_INSTR_USES; ++iUse) {
 		instrInfo->m_Uses[iUse] = UINT32_MAX;
 	}
+#endif
 
 	return true;
-}
-
-static void jmir_regAlloc_buildCFG(jmir_func_pass_regalloc_t* pass, jx_mir_context_t* ctx, jx_mir_function_t* func)
-{
-	// Clear existing CFG
-	const uint32_t numBasicBlocks = pass->m_NumBasicBlocks;
-	for (uint32_t iBB = 0; iBB < numBasicBlocks; ++iBB) {
-		jmir_regalloc_bb_info_t* bbInfo = &pass->m_BBInfo[iBB];
-		jx_array_resize(bbInfo->m_SuccArr, 0);
-	}
-
-	// Rebuild CFG
-	for (uint32_t iBB = 0; iBB < numBasicBlocks; ++iBB) {
-		jmir_regalloc_bb_info_t* bbInfo = &pass->m_BBInfo[iBB];
-		jx_mir_basic_block_t* bb = bbInfo->m_BB;
-
-		jx_mir_instruction_t* instr = jx_mir_bbGetFirstTerminatorInstr(ctx, bb);
-		bool fallthroughToNextBlock = true;
-		bool retFound = false;
-		while (instr) {
-			if (instr->m_OpCode == JMIR_OP_JMP || jx_mir_opcodeIsJcc(instr->m_OpCode)) {
-				JX_CHECK(!retFound && fallthroughToNextBlock, "Already found ret or jmp instruction. Did not expect more instructions!");
-
-				// Conditional or unconditional jump
-				jx_mir_operand_t* targetOperand = instr->m_Operands[0];
-				if (targetOperand->m_Kind == JMIR_OPERAND_BASIC_BLOCK) {
-					jx_mir_basic_block_t* targetBB = targetOperand->u.m_BB;
-					jmir_regalloc_bb_info_t* targetBBInfo = jmir_regAlloc_getBasicBlockInfo(pass, targetBB);
-
-					jx_array_push_back(bbInfo->m_SuccArr, targetBBInfo);
-				} else {
-					// TODO: What should I do in this case? I should probably add all func's basic blocks
-					// as successors to this block, since it's hard (impossible?) to know all potential targets.
-					// 
-					// Alternatively, I can move the pred/succ arrays into jx_mir_basic_block_t and build the CFG
-					// during IR-to-Asm translation (mir_gen).
-					// 
-					// Currently this cannot happen (afair) because mir_gen always uses basic blocks 
-					// as jump targets.
-					JX_NOT_IMPLEMENTED();
-				}
-
-				fallthroughToNextBlock = instr->m_OpCode != JMIR_OP_JMP;
-			} else if (instr->m_OpCode == JMIR_OP_RET) {
-				// Return.
-				fallthroughToNextBlock = false;
-				retFound = true;
-			} else {
-				JX_CHECK(false, "Expected only terminator instructions after first terminator!");
-			}
-
-			instr = instr->m_Next;
-		}
-
-		if (fallthroughToNextBlock) {
-			JX_CHECK(bb->m_Next, "Trying to fallthrough to the next block but there is no next block!");
-
-			jmir_regalloc_bb_info_t* nextBBInfo = jmir_regAlloc_getBasicBlockInfo(pass, bb->m_Next);
-
-			jx_array_push_back(bbInfo->m_SuccArr, nextBBInfo);
-		}
-	}
 }
 
 static bool jmir_regAlloc_livenessAnalysis(jmir_func_pass_regalloc_t* pass, jx_mir_function_t* func)
@@ -1240,19 +1152,22 @@ static bool jmir_regAlloc_livenessAnalysis(jmir_func_pass_regalloc_t* pass, jx_m
 		while (iBB--) {
 			jmir_regalloc_bb_info_t* bbInfo = &pass->m_BBInfo[iBB];
 
+			jx_mir_annotation_bb_cfg_t* bbCFGAnnot = (jx_mir_annotation_bb_cfg_t*)jx_mir_bbGetAnnotation(pass->m_Ctx, bbInfo->m_BB, JMIR_ANNOT_BB_CFG);
+			JX_CHECK(bbCFGAnnot, "CFG annotation missing");
+
 			// out'[v] = out[v]
 			// in'[v] = in[v]
 			jx_bitsetCopy(prevLiveIn, bbInfo->m_LiveInSet);
 			jx_bitsetCopy(prevLiveOut, bbInfo->m_LiveOutSet);
 
 			// out[v] = Union(w in succ, in[w])
-			const uint32_t numSucc = (uint32_t)jx_array_sizeu(bbInfo->m_SuccArr);
+			const uint32_t numSucc = (uint32_t)jx_array_sizeu(bbCFGAnnot->m_SuccArr);
 			if (numSucc) {
-				jmir_regalloc_bb_info_t* succBBInfo = bbInfo->m_SuccArr[0];
+				jmir_regalloc_bb_info_t* succBBInfo = jmir_regAlloc_getBasicBlockInfo(pass, bbCFGAnnot->m_SuccArr[0]);
 
 				jx_bitsetCopy(bbInfo->m_LiveOutSet, succBBInfo->m_LiveInSet);
 				for (uint32_t iSucc = 1; iSucc < numSucc; ++iSucc) {
-					succBBInfo = bbInfo->m_SuccArr[iSucc];
+					succBBInfo = jmir_regAlloc_getBasicBlockInfo(pass, bbCFGAnnot->m_SuccArr[iSucc]);
 					jx_bitsetUnion(bbInfo->m_LiveOutSet, succBBInfo->m_LiveInSet);
 				}
 			}
@@ -5043,190 +4958,4 @@ static bool jmir_funcPass_redundantConstEliminationRun(jx_mir_function_pass_o* i
 	}
 
 	return false;
-}
-
-//////////////////////////////////////////////////////////////////////////
-// Bitset
-//
-static jx_bitset_t* jx_bitsetCreate(uint32_t numBits, jx_allocator_i* allocator)
-{
-	const uint32_t numWords = (numBits + 63) / 64;
-	uint8_t* buffer = (uint8_t*)JX_ALLOC(allocator, sizeof(jx_bitset_t) + sizeof(uint64_t) * numWords);
-	if (!buffer) {
-		return NULL;
-	}
-
-	uint8_t* ptr = buffer;
-	jx_bitset_t* bs = (jx_bitset_t*)ptr;
-	ptr += sizeof(jx_bitset_t);
-
-	bs->m_Bits = (uint64_t*)ptr;
-	bs->m_NumBits = numBits;
-
-	jx_memset(bs->m_Bits, 0, sizeof(uint64_t) * numWords);
-
-	return bs;
-}
-
-static void jx_bitsetDestroy(jx_bitset_t* bs, jx_allocator_i* allocator)
-{
-	JX_FREE(allocator, bs);
-}
-
-static void jx_bitsetInit(jx_bitset_t* bs, uint64_t* bits, uint32_t numBits)
-{
-	JX_CHECK(bits != NULL, "Invalid bit buffer");
-	bs->m_Bits = bits;
-	bs->m_NumBits = numBits;
-
-	const uint32_t numWords = (numBits + 63) / 64;
-	jx_memset(bits, 0, sizeof(uint64_t) * numWords);
-}
-
-static uint64_t jx_bitsetCalcBufferSize(uint32_t numBits)
-{
-	return sizeof(uint64_t) * ((numBits + 63) / 64);
-}
-
-static void jx_bitsetSetBit(jx_bitset_t* bs, uint32_t bit)
-{
-	JX_CHECK(bit < bs->m_NumBits, "Invalid bit index");
-	bs->m_Bits[bit / 64] |= (1ull << (bit & 63));
-}
-
-static void jx_bitsetResetBit(jx_bitset_t* bs, uint32_t bit)
-{
-	JX_CHECK(bit < bs->m_NumBits, "Invalid bit index");
-	bs->m_Bits[bit / 64] &= ~(1ull << (bit & 63));
-}
-
-static bool jx_bitsetIsBitSet(const jx_bitset_t* bs, uint32_t bit)
-{
-	JX_CHECK(bit < bs->m_NumBits, "Invalid bit index");
-	return (bs->m_Bits[bit / 64] & (1ull << (bit & 63))) != 0;
-}
-
-static bool jx_bitsetUnion(jx_bitset_t* dst, const jx_bitset_t* src)
-{
-	if (dst->m_NumBits != src->m_NumBits) {
-		JX_CHECK(false, "Can only perform bitset operation on identically sized sets.");
-		return false;
-	}
-
-	const uint32_t numBits = dst->m_NumBits;
-	const uint32_t numWords = (numBits + 63) / 64;
-	for (uint32_t iWord = 0; iWord < numWords; ++iWord) {
-		dst->m_Bits[iWord] |= src->m_Bits[iWord];
-	}
-
-	return true;
-}
-
-static bool jx_bitsetIntersection(jx_bitset_t* dst, const jx_bitset_t* src)
-{
-	if (dst->m_NumBits != src->m_NumBits) {
-		JX_CHECK(false, "Can only perform bitset operation on identically sized sets.");
-		return false;
-	}
-
-	const uint32_t numBits = dst->m_NumBits;
-	const uint32_t numWords = (numBits + 63) / 64;
-	for (uint32_t iWord = 0; iWord < numWords; ++iWord) {
-		dst->m_Bits[iWord] &= src->m_Bits[iWord];
-	}
-
-	return true;
-}
-
-static bool jx_bitsetCopy(jx_bitset_t* dst, const jx_bitset_t* src)
-{
-	if (dst->m_NumBits != src->m_NumBits) {
-		JX_CHECK(false, "Can only perform bitset operation on identically sized sets.");
-		return false;
-	}
-
-	const uint32_t numBits = dst->m_NumBits;
-	const uint32_t numWords = (numBits + 63) / 64;
-	for (uint32_t iWord = 0; iWord < numWords; ++iWord) {
-		dst->m_Bits[iWord] = src->m_Bits[iWord];
-	}
-
-	return true;
-}
-
-static bool jx_bitsetSub(jx_bitset_t* dst, const jx_bitset_t* src)
-{
-	if (dst->m_NumBits != src->m_NumBits) {
-		JX_CHECK(false, "Can only perform bitset operation on identically sized sets.");
-		return false;
-	}
-
-	jx_bitset_iterator_t iter;
-	jx_bitsetIterBegin(dst, &iter, 0);
-	
-	uint32_t nextSetBit = jx_bitsetIterNext(dst, &iter);
-	while (nextSetBit != UINT32_MAX) {
-		if (jx_bitsetIsBitSet(src, nextSetBit)) {
-			jx_bitsetResetBit(dst, nextSetBit);
-		}
-
-		nextSetBit = jx_bitsetIterNext(dst, &iter);
-	}
-
-	return true;
-}
-
-static bool jx_bitsetEqual(const jx_bitset_t* a, const jx_bitset_t* b)
-{
-	if (a->m_NumBits != b->m_NumBits) {
-		JX_CHECK(false, "Can only perform bitset operation on identically sized sets.");
-		return false;
-	}
-
-	const uint32_t numBits = a->m_NumBits;
-	const uint32_t numWords = (numBits + 63) / 64;
-	for (uint32_t iWord = 0; iWord < numWords; ++iWord) {
-		if (a->m_Bits[iWord] != b->m_Bits[iWord]) {
-			return false;
-		}
-	}
-
-	return true;
-}
-
-static void jx_bitsetClear(jx_bitset_t* bs)
-{
-	const uint32_t numBits = bs->m_NumBits;
-	const uint32_t numWords = (numBits + 63) / 64;
-	jx_memset(bs->m_Bits, 0, sizeof(uint64_t) * numWords);
-}
-
-static void jx_bitsetIterBegin(const jx_bitset_t* bs, jx_bitset_iterator_t* iter, uint32_t firstBit)
-{
-	JX_CHECK(firstBit < bs->m_NumBits, "Invalid bit index");
-	const uint32_t wordID = firstBit / 64;
-	const uint32_t bitID = firstBit & 63;
-	iter->m_WordID = wordID;
-
-	const uint64_t word = bs->m_Bits[wordID];
-	iter->m_Bits = word & (~((1ull << bitID) - 1));
-}
-
-static uint32_t jx_bitsetIterNext(const jx_bitset_t* bs, jx_bitset_iterator_t* iter)
-{
-	const uint32_t numWords = (bs->m_NumBits + 63) / 64;
-	while (iter->m_Bits == 0 && iter->m_WordID < numWords - 1) {
-		iter->m_WordID++;
-		iter->m_Bits = bs->m_Bits[iter->m_WordID];
-	}
-
-	const uint64_t word = iter->m_Bits;
-	if (word) {
-		const uint64_t lsbSetMask = word & ((~word) + 1);
-		const uint32_t lsbSetPos = jx_ctntz_u64(word);
-		iter->m_Bits ^= lsbSetMask; // Toggle (clear) the least significant set bit
-		return iter->m_WordID * 64 + lsbSetPos;
-	}
-
-	return UINT32_MAX;
 }

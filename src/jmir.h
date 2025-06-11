@@ -9,6 +9,7 @@
 
 typedef struct jx_allocator_i jx_allocator_i;
 typedef struct jx_string_buffer_t jx_string_buffer_t;
+typedef struct jx_bitset_t jx_bitset_t;
 
 typedef struct jx_mir_operand_t jx_mir_operand_t;
 typedef struct jx_mir_instruction_t jx_mir_instruction_t;
@@ -396,7 +397,10 @@ typedef struct jx_mir_operand_t
 typedef enum jx_mir_annotation_kind
 {
 	JMIR_ANNOT_INSTR_CALL_FUNC_PROTO = 0,
+	JMIR_ANNOT_INSTR_LIVENESS,
+	JMIR_ANNOT_INSTR_USE_DEF,
 	JMIR_ANNOT_BB_CFG,
+	JMIR_ANNOT_BB_LIVENESS,
 } jx_mir_annotation_kind;
 
 typedef void (*jmirAnnotationDestroyCallback)(jx_mir_annotation_t* annotation);
@@ -423,6 +427,33 @@ typedef struct jx_mir_annotation_bb_cfg_t
 	jx_mir_basic_block_t** m_SuccArr;
 } jx_mir_annotation_bb_cfg_t;
 
+typedef struct jx_mir_annotation_bb_liveness_t
+{
+	JX_INHERITS(jx_mir_annotation_t);
+	jx_allocator_i* m_Allocator;
+	jx_bitset_t* m_LiveInSet;
+	jx_bitset_t* m_LiveOutSet;
+} jx_mir_annotation_bb_liveness_t;
+
+#define JMIR_MAX_INSTR_DEFS 16 // NOTE: Large enough to hold all GP and XMM caller-saved regs
+#define JMIR_MAX_INSTR_USES 16 // NOTE: Large enough to hold all GP and XMM func arg regs + called func in case it's a register.
+
+typedef struct jx_mir_annotation_instr_usedef_t
+{
+	JX_INHERITS(jx_mir_annotation_t);
+	jx_mir_reg_t m_Defs[JMIR_MAX_INSTR_DEFS];
+	jx_mir_reg_t m_Uses[JMIR_MAX_INSTR_USES];
+	uint32_t m_NumDefs;
+	uint32_t m_NumUses;
+} jx_mir_annotation_instr_usedef_t;
+
+typedef struct jx_mir_annotation_instr_liveness_t
+{
+	JX_INHERITS(jx_mir_annotation_t);
+	jx_allocator_i* m_Allocator;
+	jx_bitset_t* m_LiveOutSet;
+} jx_mir_annotation_instr_liveness_t;
+
 typedef struct jx_mir_instruction_t
 {
 	jx_mir_instruction_t* m_Next;
@@ -446,8 +477,10 @@ typedef struct jx_mir_basic_block_t
 	JX_PAD(4);
 } jx_mir_basic_block_t;
 
-#define JMIR_FUNC_FLAGS_CFG_VALID_Pos 0
-#define JMIR_FUNC_FLAGS_CFG_VALID_Msk (1u << JMIR_FUNC_FLAGS_CFG_VALID_Pos)
+#define JMIR_FUNC_FLAGS_CFG_VALID_Pos       0
+#define JMIR_FUNC_FLAGS_CFG_VALID_Msk       (1u << JMIR_FUNC_FLAGS_CFG_VALID_Pos)
+#define JMIR_FUNC_FLAGS_LIVENESS_VALID_Pos  1
+#define JMIR_FUNC_FLAGS_LIVENESS_VALID_Msk  (1u << JMIR_FUNC_FLAGS_LIVENESS_VALID_Pos)
 
 typedef struct jx_mir_function_t
 {
@@ -517,6 +550,7 @@ void jx_mir_funcPrependBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func
 bool jx_mir_funcRemoveBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb);
 void jx_mir_funcAllocStackForCall(jx_mir_context_t* ctx, jx_mir_function_t* func, uint32_t numArguments);
 bool jx_mir_funcUpdateCFG(jx_mir_context_t* ctx, jx_mir_function_t* func);
+bool jx_mir_funcUpdateLiveness(jx_mir_context_t* ctx, jx_mir_function_t* func);
 void jx_mir_funcPrint(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_string_buffer_t* sb);
 
 jx_mir_basic_block_t* jx_mir_bbAlloc(jx_mir_context_t* ctx);
