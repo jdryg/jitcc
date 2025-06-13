@@ -2276,6 +2276,11 @@ static bool jx64_jmp_call_op(jx_x64_context_t* ctx, uint8_t opcode_lbl, uint8_t 
 			return false;
 		}
 
+		const bool needsREX = false
+			|| JX64_REG_IS_HI(reg)
+			;
+
+		jx64_instrEnc_rex(enc, needsREX, 1, 0, 0, JX64_REG_HI(reg));
 		jx64_instrEnc_opcode1(enc, opcode_rm);
 		jx64_instrEnc_modrm(enc, 0b11, modrm_reg, JX64_REG_LO(reg));
 	} else {
