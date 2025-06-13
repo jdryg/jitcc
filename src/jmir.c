@@ -163,6 +163,7 @@ typedef struct jx_mir_context_t
 	jx_mir_function_pass_t* m_FuncPass_removeRedundantMoves;
 	jx_mir_function_pass_t* m_FuncPass_redundantConstElimination;
 	jx_mir_function_pass_t* m_FuncPass_instrCombine;
+	jx_mir_function_pass_t* m_FuncPass_simplifyCFG;
 	jx_hashmap_t* m_FuncProtoMap;
 } jx_mir_context_t;
 
@@ -238,6 +239,7 @@ jx_mir_context_t* jx_mir_createContext(jx_allocator_i* allocator)
 		ctx->m_FuncPass_removeRedundantMoves = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_removeRedundantMoves, NULL);
 		ctx->m_FuncPass_redundantConstElimination = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_redundantConstElimination, NULL);
 		ctx->m_FuncPass_instrCombine = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_instrCombine, NULL);
+		ctx->m_FuncPass_simplifyCFG = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_simplifyCFG, NULL);
 	}
 
 	return ctx;
@@ -297,6 +299,11 @@ void jx_mir_destroyContext(jx_mir_context_t* ctx)
 		if (ctx->m_FuncPass_instrCombine) {
 			jmir_funcPassDestroy(ctx, ctx->m_FuncPass_instrCombine);
 			ctx->m_FuncPass_instrCombine = NULL;
+		}
+
+		if (ctx->m_FuncPass_simplifyCFG) {
+			jmir_funcPassDestroy(ctx, ctx->m_FuncPass_simplifyCFG);
+			ctx->m_FuncPass_simplifyCFG = NULL;
 		}
 	}
 
@@ -565,6 +572,7 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 	{
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_removeFallthroughJmp, func);
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCondJmp, func);
+		jmir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCFG, func);
 
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_instrCombine, func);
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func);
@@ -586,6 +594,9 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 		}
 #endif
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_regAlloc, func);
+		jmir_funcPassApply(ctx, ctx->m_FuncPass_removeRedundantMoves, func);
+		jmir_funcPassApply(ctx, ctx->m_FuncPass_redundantConstElimination, func);
+
 #if 0
 		{
 			jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
@@ -597,11 +608,9 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 		}
 #endif
 
-		jmir_funcPassApply(ctx, ctx->m_FuncPass_removeRedundantMoves, func);
-//		jmir_funcPassApply(ctx, ctx->m_FuncPass_redundantConstElimination, func);
-//		jmir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCondJmp, func);
-//		jmir_funcPassApply(ctx, ctx->m_FuncPass_peephole, func);
-//		jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func);
+		jmir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCondJmp, func);
+		jmir_funcPassApply(ctx, ctx->m_FuncPass_peephole, func);
+		jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func);
 	}
 
 	// Store all callee-saved registers used by the function on the stack.
@@ -1171,11 +1180,10 @@ bool jx_mir_funcSpillVirtualReg(jx_mir_context_t* ctx, jx_mir_function_t* func, 
 				}
 
 				jx_mir_instrAddAnnotation(ctx, instr, &instrUseDefAnnot->super);
-				jmir_instrUpdateUseDefInfo(ctx, func, instr, instrUseDefAnnot);
 			}
 
 			// Recalculate use/def info
-//			jmir_instrUpdateUseDefInfo(ctx, func, instr, instrUseDefAnnot);
+			jmir_instrUpdateUseDefInfo(ctx, func, instr, instrUseDefAnnot);
 
 			bool use = false;
 			bool def = false;

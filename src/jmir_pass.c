@@ -2939,3 +2939,115 @@ static bool jmir_funcPass_redundantConstEliminationRun(jx_mir_function_pass_o* i
 
 	return false;
 }
+
+//////////////////////////////////////////////////////////////////////////
+// Simplify CFG
+//
+typedef struct jmir_func_pass_simplify_cfg_t
+{
+	jx_allocator_i* m_Allocator;
+} jmir_func_pass_simplify_cfg_t;
+
+static void jmir_funcPass_simplifyCFGDestroy(jx_mir_function_pass_o* inst, jx_allocator_i* allocator);
+static bool jmir_funcPass_simplifyCFGRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func);
+
+bool jx_mir_funcPassCreate_simplifyCFG(jx_mir_function_pass_t* pass, jx_allocator_i* allocator)
+{
+	jmir_func_pass_simplify_cfg_t* inst = (jmir_func_pass_simplify_cfg_t*)JX_ALLOC(allocator, sizeof(jmir_func_pass_simplify_cfg_t));
+	if (!inst) {
+		return false;
+	}
+
+	jx_memset(inst, 0, sizeof(jmir_func_pass_simplify_cfg_t));
+	inst->m_Allocator = allocator;
+
+	pass->m_Inst = (jx_mir_function_pass_o*)inst;
+	pass->run = jmir_funcPass_simplifyCFGRun;
+	pass->destroy = jmir_funcPass_simplifyCFGDestroy;
+
+	return true;
+}
+
+static void jmir_funcPass_simplifyCFGDestroy(jx_mir_function_pass_o* inst, jx_allocator_i* allocator)
+{
+	jmir_func_pass_simplify_cfg_t* pass = (jmir_func_pass_simplify_cfg_t*)inst;
+
+	JX_FREE(pass->m_Allocator, pass);
+}
+
+static bool jmir_funcPass_simplifyCFGRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
+{
+	jmir_func_pass_simplify_cfg_t* pass = (jmir_func_pass_simplify_cfg_t*)inst;
+
+	uint32_t numBasicBlocksChanged = 0;
+
+	bool cfgChanged = true;
+	while (cfgChanged) {
+		cfgChanged = false;
+
+		jx_mir_funcUpdateCFG(ctx, func);
+
+		jx_mir_basic_block_t* bb = func->m_BasicBlockListHead->m_Next;
+		while (bb) {
+			jx_mir_basic_block_t* bbNext = bb->m_Next;
+
+			jx_mir_annotation_bb_cfg_t* bbCFGAnnot = (jx_mir_annotation_bb_cfg_t*)jx_mir_bbGetAnnotation(ctx, bb, JMIR_ANNOT_BB_CFG);
+			JX_CHECK(bbCFGAnnot, "Expected valid CFG annotation");
+
+			const uint32_t numPred = (uint32_t)jx_array_sizeu(bbCFGAnnot->m_PredArr);
+			if (numPred == 0 || (numPred == 1 && bbCFGAnnot->m_PredArr[0] == bb)) {
+				// Remove the block if it has no predecessors
+				jx_mir_funcRemoveBasicBlock(ctx, func, bb);
+				jx_mir_bbFree(ctx, bb);
+
+				numBasicBlocksChanged++;
+				cfgChanged = true;
+			} else if (numPred == 1) {
+				jx_mir_basic_block_t* pred = bbCFGAnnot->m_PredArr[0];
+				jx_mir_annotation_bb_cfg_t* predCFGAnnot = (jx_mir_annotation_bb_cfg_t*)jx_mir_bbGetAnnotation(ctx, pred, JMIR_ANNOT_BB_CFG);
+				JX_CHECK(predCFGAnnot, "Expected valid CFG annotation");
+
+				const uint32_t numPredSucc = (uint32_t)jx_array_sizeu(predCFGAnnot->m_SuccArr);
+				if (numPredSucc == 1) {
+					JX_CHECK(predCFGAnnot->m_SuccArr[0] == bb, "Invalid CFG state");
+
+					// Remove the terminator instruction from the predecessor.
+					jx_mir_instruction_t* termInstr = jx_mir_bbGetFirstTerminatorInstr(ctx, pred);
+					if (termInstr) {
+						JX_CHECK(termInstr->m_OpCode == JMIR_OP_JMP, "Expected jmp as terminator instruction");
+						jx_mir_bbRemoveInstr(ctx, pred, termInstr);
+						jx_mir_instrFree(ctx, termInstr);
+					}
+
+					// Remove the basic block from the function
+					jx_mir_funcRemoveBasicBlock(ctx, func, bb);
+
+					// Add all basic block instructions to the predecessor.
+					// Note that this includes the terminator instruction so the 
+					// predecessor will end up as a valid basic block again.
+					jx_mir_instruction_t* bbInstr = bb->m_InstrListHead;
+					while (bbInstr) {
+						jx_mir_instruction_t* bbInstrNext = bbInstr->m_Next;
+
+						jx_mir_bbRemoveInstr(ctx, bb, bbInstr);
+						jx_mir_bbAppendInstr(ctx, pred, bbInstr);
+
+						bbInstr = bbInstrNext;
+					}
+
+					// Free the basic block
+					jx_mir_bbFree(ctx, bb);
+
+					jx_mir_funcUpdateCFG(ctx, func);
+
+					numBasicBlocksChanged++;
+					cfgChanged = true;
+				}
+			}
+
+			bb = bbNext;
+		}
+	}
+
+	return numBasicBlocksChanged != 0;
+}
