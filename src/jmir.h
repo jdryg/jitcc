@@ -551,6 +551,10 @@ bool jx_mir_funcRemoveBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func,
 void jx_mir_funcAllocStackForCall(jx_mir_context_t* ctx, jx_mir_function_t* func, uint32_t numArguments);
 bool jx_mir_funcUpdateCFG(jx_mir_context_t* ctx, jx_mir_function_t* func);
 bool jx_mir_funcUpdateLiveness(jx_mir_context_t* ctx, jx_mir_function_t* func);
+uint32_t jx_mir_funcGetRegBitsetSize(jx_mir_context_t* ctx, jx_mir_function_t* func);
+jx_mir_reg_t jx_mir_funcMapBitsetIDToReg(jx_mir_context_t* ctx, jx_mir_function_t* func, uint32_t id);
+uint32_t jx_mir_funcMapRegToBitsetID(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_reg_t reg);
+bool jx_mir_funcSpillVirtualReg(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_reg_t reg);
 void jx_mir_funcPrint(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_string_buffer_t* sb);
 
 jx_mir_basic_block_t* jx_mir_bbAlloc(jx_mir_context_t* ctx);
@@ -580,6 +584,7 @@ void jx_mir_instrFree(jx_mir_context_t* ctx, jx_mir_instruction_t* instr);
 void jx_mir_instrPrint(jx_mir_context_t* ctx, jx_mir_instruction_t* instr, jx_string_buffer_t* sb);
 jx_mir_annotation_t* jx_mir_instrGetAnnotation(jx_mir_context_t* ctx, jx_mir_instruction_t* instr, uint32_t annotationKind);
 void jx_mir_instrAddAnnotation(jx_mir_context_t* ctx, jx_mir_instruction_t* instr, jx_mir_annotation_t* annotation);
+bool jx_mir_instrIsMovRegReg(jx_mir_instruction_t* instr);
 jx_mir_instruction_t* jx_mir_mov(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_movsx(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_movzx(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);

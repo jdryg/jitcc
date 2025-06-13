@@ -172,12 +172,9 @@ static jx_mir_instruction_t* jmir_instrAlloc1(jx_mir_context_t* ctx, uint32_t op
 static jx_mir_instruction_t* jmir_instrAlloc2(jx_mir_context_t* ctx, uint32_t opcode, jx_mir_operand_t* op1, jx_mir_operand_t* op2);
 static jx_mir_instruction_t* jmir_instrAlloc3(jx_mir_context_t* ctx, uint32_t opcode, jx_mir_operand_t* op1, jx_mir_operand_t* op2, jx_mir_operand_t* op3);
 static bool jmir_instrUpdateUseDefInfo(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_instruction_t* instr, jx_mir_annotation_instr_usedef_t* annot);
-static bool jmir_instrIsMovRegReg(jx_mir_instruction_t* instr);
 static void jmir_regPrint(jx_mir_context_t* ctx, jx_mir_reg_t reg, jx_mir_type_kind type, jx_string_buffer_t* sb);
 static jx_mir_operand_t* jmir_funcCreateArgument(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb, uint32_t argID, jx_mir_type_kind argType);
 static void jmir_funcFree(jx_mir_context_t* ctx, jx_mir_function_t* func);
-static uint32_t jmir_funcMapRegToBitsetID(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_reg_t reg);
-static jx_mir_reg_t jmir_funcMapBitsetIDToReg(jx_mir_context_t* ctx, jx_mir_function_t* func, uint32_t id);
 static jx_mir_function_pass_t* jmir_funcPassCreate(jx_mir_context_t* ctx, jmirFuncPassCtorFunc ctorFunc, void* passConfig);
 static void jmir_funcPassDestroy(jx_mir_context_t* ctx, jx_mir_function_pass_t* pass);
 static bool jmir_funcPassApply(jx_mir_context_t* ctx, jx_mir_function_pass_t* pass, jx_mir_function_t* func);
@@ -581,6 +578,7 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 #if 0
 		{
 			jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
+			jx_strbuf_printf(sb, "%s pre-RA\n", func->m_Name);
 			jx_mir_funcPrint(ctx, func, sb);
 			jx_strbuf_nullTerminate(sb);
 			JX_SYS_LOG_INFO(NULL, "\n%s", jx_strbuf_getString(sb, NULL));
@@ -588,10 +586,22 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 		}
 #endif
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_regAlloc, func);
+#if 0
+		{
+			jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
+			jx_strbuf_printf(sb, "%s post-RA\n", func->m_Name);
+			jx_mir_funcPrint(ctx, func, sb);
+			jx_strbuf_nullTerminate(sb);
+			JX_SYS_LOG_INFO(NULL, "\n%s", jx_strbuf_getString(sb, NULL));
+			jx_strbuf_destroy(sb);
+		}
+#endif
+
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_removeRedundantMoves, func);
 //		jmir_funcPassApply(ctx, ctx->m_FuncPass_redundantConstElimination, func);
 //		jmir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCondJmp, func);
 //		jmir_funcPassApply(ctx, ctx->m_FuncPass_peephole, func);
+//		jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func);
 	}
 
 	// Store all callee-saved registers used by the function on the stack.
@@ -874,12 +884,7 @@ bool jx_mir_funcUpdateLiveness(jx_mir_context_t* ctx, jx_mir_function_t* func)
 
 	// Make sure every basic block has a liveness annotation and reset its bitsets
 	// TODO: Renumber virtual regs to remove dead ones
-	const uint32_t numRegs = 
-		+ 16 // GP regs
-		+ 16 // XMM regs
-		+ func->m_NextVirtualRegID[JMIR_REG_CLASS_GP]
-		+ func->m_NextVirtualRegID[JMIR_REG_CLASS_XMM]
-		;
+	const uint32_t numRegs = jx_mir_funcGetRegBitsetSize(ctx, func);
 	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
 	while (bb) {
 		jx_mir_annotation_bb_liveness_t* bbLiveAnnot = (jx_mir_annotation_bb_liveness_t*)jx_mir_bbGetAnnotation(ctx, bb, JMIR_ANNOT_BB_LIVENESS);
@@ -1004,21 +1009,21 @@ bool jx_mir_funcUpdateLiveness(jx_mir_context_t* ctx, jx_mir_function_t* func)
 					jx_mir_annotation_instr_usedef_t* instrUseDefAnnot = (jx_mir_annotation_instr_usedef_t*)jx_mir_instrGetAnnotation(ctx, instr, JMIR_ANNOT_INSTR_USE_DEF);
 					JX_CHECK(instrUseDefAnnot, "Expected use/def annotation to be valid!");
 
-					if (jmir_instrIsMovRegReg(instr)) {
+					if (jx_mir_instrIsMovRegReg(instr)) {
 						JX_CHECK(instrUseDefAnnot->m_NumUses == 1, "Move instruction expected to have 1 use.");
-						jx_bitsetResetBit(instrLive, jmir_funcMapRegToBitsetID(ctx, func, instrUseDefAnnot->m_Uses[0]));
+						jx_bitsetResetBit(instrLive, jx_mir_funcMapRegToBitsetID(ctx, func, instrUseDefAnnot->m_Uses[0]));
 					}
 
 					jx_bitsetCopy(instrLiveAnnot->m_LiveOutSet, instrLive);
 
 					const uint32_t numDefs = instrUseDefAnnot->m_NumDefs;
 					for (uint32_t iDef = 0; iDef < numDefs; ++iDef) {
-						jx_bitsetResetBit(instrLive, jmir_funcMapRegToBitsetID(ctx, func, instrUseDefAnnot->m_Defs[iDef]));
+						jx_bitsetResetBit(instrLive, jx_mir_funcMapRegToBitsetID(ctx, func, instrUseDefAnnot->m_Defs[iDef]));
 					}
 
 					const uint32_t numUses = instrUseDefAnnot->m_NumUses;
 					for (uint32_t iUse = 0; iUse < numUses; ++iUse) {
-						jx_bitsetSetBit(instrLive, jmir_funcMapRegToBitsetID(ctx, func, instrUseDefAnnot->m_Uses[iUse]));
+						jx_bitsetSetBit(instrLive, jx_mir_funcMapRegToBitsetID(ctx, func, instrUseDefAnnot->m_Uses[iUse]));
 					}
 
 					instr = instr->m_Prev;
@@ -1044,6 +1049,233 @@ bool jx_mir_funcUpdateLiveness(jx_mir_context_t* ctx, jx_mir_function_t* func)
 	jx_bitsetDestroy(prevLiveOut, ctx->m_Allocator);
 
 	func->m_Flags |= JMIR_FUNC_FLAGS_LIVENESS_VALID_Msk;
+
+	return true;
+}
+
+uint32_t jx_mir_funcGetRegBitsetSize(jx_mir_context_t* ctx, jx_mir_function_t* func)
+{
+	return 0
+		+ 16 // Max GP regs
+		+ 16 // Max XMM regs
+		+ func->m_NextVirtualRegID[JMIR_REG_CLASS_GP]
+		+ func->m_NextVirtualRegID[JMIR_REG_CLASS_XMM]
+		;
+}
+
+jx_mir_reg_t jx_mir_funcMapBitsetIDToReg(jx_mir_context_t* ctx, jx_mir_function_t* func, uint32_t id)
+{
+	if (id < 16) {
+		return (jx_mir_reg_t){
+			.m_IsVirtual = 0,
+			.m_ID = id,
+			.m_Class = JMIR_REG_CLASS_GP
+		};
+	} else if (id < 32) {
+		return (jx_mir_reg_t){
+			.m_IsVirtual = 0,
+			.m_ID = id - 16,
+			.m_Class = JMIR_REG_CLASS_XMM
+		};
+	}
+
+	id -= 32;
+	if (id < func->m_NextVirtualRegID[JMIR_REG_CLASS_GP]) {
+		return (jx_mir_reg_t){
+			.m_IsVirtual = 1,
+			.m_ID = id,
+			.m_Class = JMIR_REG_CLASS_GP
+		};
+	}
+
+	id -= func->m_NextVirtualRegID[JMIR_REG_CLASS_GP];
+	return (jx_mir_reg_t){
+		.m_IsVirtual = 1,
+		.m_ID = id,
+		.m_Class = JMIR_REG_CLASS_XMM
+	};
+}
+
+uint32_t jx_mir_funcMapRegToBitsetID(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_reg_t reg)
+{
+	// Registers are laid out as:
+	//  hw_gp, hw_gp, hw_gp, ..., hw_gp, 
+	//  hw_xmm, hw_xmm, ..., hw_xmm, 
+	//  v_gp, v_gp, ..., v_gp, 
+	//  v_xmm, v_xmm, ..., v_xmm
+	uint32_t id = 0;
+	if (reg.m_IsVirtual) {
+		id = (16 + 16); // 16 GP regs + 16 XMM regs
+
+		for (uint32_t iClass = 0; iClass < reg.m_Class; ++iClass) {
+			id += func->m_NextVirtualRegID[iClass];
+		}
+
+		id += reg.m_ID;
+	} else {
+		for (uint32_t iClass = 0; iClass < reg.m_Class; ++iClass) {
+			id += 16;
+		}
+
+		id += reg.m_ID;
+	}
+
+	return id;
+}
+
+static void jmir_funcReplaceInstrVirtualReg(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_instruction_t* instr, jx_mir_reg_t oldReg, jx_mir_reg_t newReg)
+{
+	const uint32_t numOperands = instr->m_NumOperands;
+	for (uint32_t iOperand = 0; iOperand < numOperands; ++iOperand) {
+		jx_mir_operand_t* operand = instr->m_Operands[iOperand];
+
+		if (operand->m_Kind == JMIR_OPERAND_REGISTER) {
+			if (jx_mir_regEqual(operand->u.m_Reg, oldReg)) {
+				instr->m_Operands[iOperand] = jx_mir_opRegAlias(ctx, func, operand->m_Type, newReg);
+			}
+		} else if (operand->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+			jx_mir_memory_ref_t memRef = *operand->u.m_MemRef;
+
+			if (jx_mir_regEqual(memRef.m_BaseReg, oldReg)) {
+				memRef.m_BaseReg = newReg;
+			}
+			if (jx_mir_regEqual(memRef.m_IndexReg, oldReg)) {
+				memRef.m_IndexReg = newReg;
+			}
+
+			if (!jx_mir_memRefEqual(&memRef, operand->u.m_MemRef)) {
+				instr->m_Operands[iOperand] = jx_mir_opMemoryRef(ctx, func, operand->m_Type, memRef.m_BaseReg, memRef.m_IndexReg, memRef.m_Scale, memRef.m_Displacement);
+			}
+		}
+	}
+}
+
+bool jx_mir_funcSpillVirtualReg(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_reg_t reg)
+{
+	JX_CHECK(jx_mir_regIsValid(reg) && jx_mir_regIsVirtual(reg), "Trying to spill an invalid or a hw register!");
+
+	jx_mir_type_kind regType = reg.m_Class == JMIR_REG_CLASS_GP ? JMIR_TYPE_I64 : JMIR_TYPE_F128;
+	jx_mir_operand_t* stackSlot = jx_mir_opStackObj(ctx, func, regType, jx_mir_typeGetSize(regType), jx_mir_typeGetAlignment(regType));
+
+	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
+	while (bb) {
+		jx_mir_instruction_t* instr = bb->m_InstrListHead;
+		while (instr) {
+			jx_mir_instruction_t* instrNext = instr->m_Next;
+
+			jx_mir_annotation_instr_usedef_t* instrUseDefAnnot = (jx_mir_annotation_instr_usedef_t*)jx_mir_instrGetAnnotation(ctx, instr, JMIR_ANNOT_INSTR_USE_DEF);
+			if (!instrUseDefAnnot) {
+				instrUseDefAnnot = (jx_mir_annotation_instr_usedef_t*)jx_mir_annotationAlloc(ctx, JMIR_ANNOT_INSTR_USE_DEF, NULL, sizeof(jx_mir_annotation_instr_usedef_t));
+				if (!instrUseDefAnnot) {
+					return false;
+				}
+
+				jx_mir_instrAddAnnotation(ctx, instr, &instrUseDefAnnot->super);
+				jmir_instrUpdateUseDefInfo(ctx, func, instr, instrUseDefAnnot);
+			}
+
+			// Recalculate use/def info
+//			jmir_instrUpdateUseDefInfo(ctx, func, instr, instrUseDefAnnot);
+
+			bool use = false;
+			bool def = false;
+
+			const uint32_t numUses = instrUseDefAnnot->m_NumUses;
+			for (uint32_t iUse = 0; iUse < numUses; ++iUse) {
+				if (jx_mir_regEqual(instrUseDefAnnot->m_Uses[iUse], reg)) {
+					use = true;
+					break;
+				}
+			}
+
+			const uint32_t numDefs = instrUseDefAnnot->m_NumDefs;
+			for (uint32_t iDef = 0; iDef < numDefs; ++iDef) {
+				if (jx_mir_regEqual(instrUseDefAnnot->m_Defs[iDef], reg)) {
+					def = true;
+					break;
+				}
+			}
+
+			if (use || def) {
+				// instr uses this register. Find the register in the operand list and figure out its type
+				// TODO: Find a better way to figure out the register type
+				jx_mir_type_kind regType = JMIR_TYPE_VOID;
+				const uint32_t numOperands = instr->m_NumOperands;
+				for (uint32_t iOperand = 0; iOperand < numOperands; ++iOperand) {
+					jx_mir_operand_t* operand = instr->m_Operands[iOperand];
+					if (operand->m_Kind == JMIR_OPERAND_REGISTER) {
+						if (jx_mir_regEqual(operand->u.m_Reg, reg)) {
+							regType = operand->m_Type;
+							break;
+						}
+					} else if (operand->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+						if (jx_mir_regEqual(operand->u.m_MemRef->m_BaseReg, reg) || jx_mir_regEqual(operand->u.m_MemRef->m_IndexReg, reg)) {
+							regType = JMIR_TYPE_I64;
+							break;
+						}
+					}
+				}
+
+				JX_CHECK(regType != JMIR_TYPE_VOID, "Use/def info says the register is referenced by the instruction but it was not found in its operands!");
+
+				jx_mir_operand_t* temp = jx_mir_opVirtualReg(ctx, func, regType);
+				jx_mir_operand_t* stackSlotTyped = jx_mir_opStackObjRel(ctx, func, regType, stackSlot->u.m_MemRef, 0);
+
+				if (use && def) {
+					if (temp->m_Type == JMIR_TYPE_F32) {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movss(ctx, temp, stackSlotTyped));
+					} else if (temp->m_Type == JMIR_TYPE_F64) {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movsd(ctx, temp, stackSlotTyped));
+					} else if (temp->m_Type == JMIR_TYPE_F128) {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movaps(ctx, temp, stackSlotTyped));
+					} else {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, temp, stackSlotTyped));
+					}
+
+					jmir_funcReplaceInstrVirtualReg(ctx, func, instr, reg, temp->u.m_Reg);
+
+					if (temp->m_Type == JMIR_TYPE_F32) {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movss(ctx, stackSlotTyped, temp));
+					} else if (temp->m_Type == JMIR_TYPE_F64) {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movsd(ctx, stackSlotTyped, temp));
+					} else if (temp->m_Type == JMIR_TYPE_F128) {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movaps(ctx, stackSlotTyped, temp));
+					} else {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_mov(ctx, stackSlotTyped, temp));
+					}
+				} else if (use) {
+					// Load from stack into new temporary
+					if (temp->m_Type == JMIR_TYPE_F32) {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movss(ctx, temp, stackSlotTyped));
+					} else if (temp->m_Type == JMIR_TYPE_F64) {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movsd(ctx, temp, stackSlotTyped));
+					} else if (temp->m_Type == JMIR_TYPE_F128) {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_movaps(ctx, temp, stackSlotTyped));
+					} else {
+						jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_mov(ctx, temp, stackSlotTyped));
+					}
+
+					jmir_funcReplaceInstrVirtualReg(ctx, func, instr, reg, temp->u.m_Reg);
+				} else if (def) {
+					jmir_funcReplaceInstrVirtualReg(ctx, func, instr, reg, temp->u.m_Reg);
+
+					if (temp->m_Type == JMIR_TYPE_F32) {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movss(ctx, stackSlotTyped, temp));
+					} else if (temp->m_Type == JMIR_TYPE_F64) {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movsd(ctx, stackSlotTyped, temp));
+					} else if (temp->m_Type == JMIR_TYPE_F128) {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_movaps(ctx, stackSlotTyped, temp));
+					} else {
+						jx_mir_bbInsertInstrAfter(ctx, bb, instr, jx_mir_mov(ctx, stackSlotTyped, temp));
+					}
+				}
+			}
+
+			instr = instrNext;
+		}
+
+		bb = bb->m_Next;
+	}
 
 	return true;
 }
@@ -1105,7 +1337,7 @@ void jx_mir_funcPrint(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_string_
 					}
 					first = false;
 
-					jx_mir_reg_t reg = jmir_funcMapBitsetIDToReg(ctx, func, id);
+					jx_mir_reg_t reg = jx_mir_funcMapBitsetIDToReg(ctx, func, id);
 					jmir_regPrint(ctx, reg, reg.m_Class == JMIR_REG_CLASS_GP ? JMIR_TYPE_I64 : JMIR_TYPE_F128, sb);
 					id = jx_bitsetIterNext(bs, &iter);
 				}
@@ -1127,7 +1359,7 @@ void jx_mir_funcPrint(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_string_
 					}
 					first = false;
 
-					jx_mir_reg_t reg = jmir_funcMapBitsetIDToReg(ctx, func, id);
+					jx_mir_reg_t reg = jx_mir_funcMapBitsetIDToReg(ctx, func, id);
 					jmir_regPrint(ctx, reg, reg.m_Class == JMIR_REG_CLASS_GP ? JMIR_TYPE_I64 : JMIR_TYPE_F128, sb);
 					id = jx_bitsetIterNext(bs, &iter);
 				}
@@ -2550,6 +2782,21 @@ static bool jmir_instrUpdateUseDefInfo(jx_mir_context_t* ctx, jx_mir_function_t*
 		jmir_instrAddDef(annot, kMIRRegGP_A);
 		jmir_instrAddDef(annot, kMIRRegGP_D);
 	} break;
+	case JMIR_OP_IMUL3: {
+		jx_mir_operand_t* dst = instr->m_Operands[0];
+		JX_CHECK(dst->m_Kind == JMIR_OPERAND_REGISTER, "Expected register operand.");
+		jmir_instrAddDef(annot, dst->u.m_Reg);
+
+		jx_mir_operand_t* src1 = instr->m_Operands[1];
+		if (src1->m_Kind == JMIR_OPERAND_REGISTER) {
+			jmir_instrAddUse(annot, src1->u.m_Reg);
+		} else if (src1->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+			jmir_instrAddUse(annot, src1->u.m_MemRef->m_BaseReg);
+			jmir_instrAddUse(annot, src1->u.m_MemRef->m_IndexReg);
+		}
+
+		JX_CHECK(instr->m_Operands[2]->m_Kind == JMIR_OPERAND_CONST, "Expected constant operand.");
+	} break;
 	case JMIR_OP_ADD:
 	case JMIR_OP_SUB:
 	case JMIR_OP_IMUL:
@@ -2783,12 +3030,10 @@ static bool jmir_instrUpdateUseDefInfo(jx_mir_context_t* ctx, jx_mir_function_t*
 	return true;
 }
 
-static bool jmir_instrIsMovRegReg(jx_mir_instruction_t* instr)
+bool jx_mir_instrIsMovRegReg(jx_mir_instruction_t* instr)
 {
 	const bool isMov = false
 		|| instr->m_OpCode == JMIR_OP_MOV
-//		|| instr->m_OpCode == JMIR_OP_MOVSX // TODO: Is this correct?
-//		|| instr->m_OpCode == JMIR_OP_MOVZX // TODO: Is this correct?
 		|| instr->m_OpCode == JMIR_OP_MOVSS
 		|| instr->m_OpCode == JMIR_OP_MOVSD
 		|| instr->m_OpCode == JMIR_OP_MOVAPS
@@ -2850,66 +3095,6 @@ static void jmir_funcFree(jx_mir_context_t* ctx, jx_mir_function_t* func)
 		jmir_frameDestroy(ctx, func->m_FrameInfo);
 		func->m_FrameInfo = NULL;
 	}
-}
-
-static uint32_t jmir_funcMapRegToBitsetID(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_reg_t reg)
-{
-	// Registers are laid out as:
-	//  hw_gp, hw_gp, hw_gp, ..., hw_gp, 
-	//  hw_xmm, hw_xmm, ..., hw_xmm, 
-	//  v_gp, v_gp, ..., v_gp, 
-	//  v_xmm, v_xmm, ..., v_xmm
-	uint32_t id = 0;
-	if (reg.m_IsVirtual) {
-		id = (16 + 16); // 16 GP regs + 16 XMM regs
-
-		for (uint32_t iClass = 0; iClass < reg.m_Class; ++iClass) {
-			id += func->m_NextVirtualRegID[iClass];
-		}
-
-		id += reg.m_ID;
-	} else {
-		for (uint32_t iClass = 0; iClass < reg.m_Class; ++iClass) {
-			id += 16;
-		}
-
-		id += reg.m_ID;
-	}
-
-	return id;
-}
-
-static jx_mir_reg_t jmir_funcMapBitsetIDToReg(jx_mir_context_t* ctx, jx_mir_function_t* func, uint32_t id)
-{
-	if (id < 16) {
-		return (jx_mir_reg_t){
-			.m_IsVirtual = 0,
-			.m_ID = id,
-			.m_Class = JMIR_REG_CLASS_GP
-		};
-	} else if (id < 32) {
-		return (jx_mir_reg_t){
-			.m_IsVirtual = 0,
-			.m_ID = id - 16,
-			.m_Class = JMIR_REG_CLASS_XMM
-		};
-	}
-
-	id -= 32;
-	if (id < func->m_NextVirtualRegID[JMIR_REG_CLASS_GP]) {
-		return (jx_mir_reg_t){
-			.m_IsVirtual = 1,
-			.m_ID = id,
-			.m_Class = JMIR_REG_CLASS_GP
-		};
-	}
-
-	id -= func->m_NextVirtualRegID[JMIR_REG_CLASS_GP];
-	return (jx_mir_reg_t){
-		.m_IsVirtual = 1,
-		.m_ID = id,
-		.m_Class = JMIR_REG_CLASS_XMM
-	};
 }
 
 static jx_mir_function_pass_t* jmir_funcPassCreate(jx_mir_context_t* ctx, jmirFuncPassCtorFunc ctorFunc, void* passConfig)
