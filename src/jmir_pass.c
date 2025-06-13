@@ -349,6 +349,13 @@ typedef struct jmir_mov_instr_t
 	JX_PAD(4);
 } jmir_mov_instr_t;
 
+typedef struct jmir_hw_reg_desc_t
+{
+	uint32_t m_Color;
+	bool m_Available;
+	JX_PAD(3);
+} jmir_hw_reg_desc_t;
+
 typedef struct jmir_func_pass_regalloc_t
 {
 	jx_allocator_i* m_Allocator;
@@ -371,7 +378,7 @@ typedef struct jmir_func_pass_regalloc_t
 static void jmir_funcPass_regAllocDestroy(jx_mir_function_pass_o* inst, jx_allocator_i* allocator);
 static bool jmir_funcPass_regAllocRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func);
 
-static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t* ctx, jx_mir_function_t* func, uint64_t availRegs_GP, uint64_t availRegs_XMM);
+static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t* ctx, jx_mir_function_t* func, const jmir_hw_reg_desc_t* gpRegDesc, const jmir_hw_reg_desc_t* xmmRegDesc);
 static void jmir_regAlloc_shutdown(jmir_func_pass_regalloc_t* pass);
 
 static void jmir_regAlloc_makeWorklist(jmir_func_pass_regalloc_t* pass);
@@ -446,11 +453,107 @@ static bool jmir_funcPass_regAllocRun(jx_mir_function_pass_o* inst, jx_mir_conte
 	pass->m_Ctx = ctx;
 	pass->m_Func = func;
 
-	const uint64_t availRegs_GP = ((1ull << 16) - 1)
-		& (~(1ull << JMIR_HWREGID_BP))
-		& (~(1ull << JMIR_HWREGID_SP))
-		;
-	const uint64_t availRegs_XMM = ((1ull << 16) - 1);
+#if 0
+	// Color == hw reg ID
+	static const jmir_hw_reg_desc_t gpRegDesc[] = {
+		[JMIR_HWREGID_A]   = { .m_Color = 0,  .m_Available = true },
+		[JMIR_HWREGID_C]   = { .m_Color = 1,  .m_Available = true },
+		[JMIR_HWREGID_D]   = { .m_Color = 2,  .m_Available = true },
+		[JMIR_HWREGID_B]   = { .m_Color = 3,  .m_Available = true },
+		[JMIR_HWREGID_SP]  = { .m_Color = 4,  .m_Available = false },
+		[JMIR_HWREGID_BP]  = { .m_Color = 5,  .m_Available = false },
+		[JMIR_HWREGID_SI]  = { .m_Color = 6,  .m_Available = true },
+		[JMIR_HWREGID_DI]  = { .m_Color = 7,  .m_Available = true },
+		[JMIR_HWREGID_R8]  = { .m_Color = 8,  .m_Available = true },
+		[JMIR_HWREGID_R9]  = { .m_Color = 9,  .m_Available = true },
+		[JMIR_HWREGID_R10] = { .m_Color = 10, .m_Available = true },
+		[JMIR_HWREGID_R11] = { .m_Color = 11, .m_Available = true },
+		[JMIR_HWREGID_R12] = { .m_Color = 12, .m_Available = true },
+		[JMIR_HWREGID_R13] = { .m_Color = 13, .m_Available = true },
+		[JMIR_HWREGID_R14] = { .m_Color = 14, .m_Available = true },
+		[JMIR_HWREGID_R15] = { .m_Color = 15, .m_Available = true },
+	};
+#elif 0
+	// Prioritize calle-saved regs
+	static const jmir_hw_reg_desc_t gpRegDesc[] = {
+		[JMIR_HWREGID_A]   = { .m_Color = 7,  .m_Available = true },
+		[JMIR_HWREGID_C]   = { .m_Color = 8,  .m_Available = true },
+		[JMIR_HWREGID_D]   = { .m_Color = 9,  .m_Available = true },
+		[JMIR_HWREGID_B]   = { .m_Color = 0,  .m_Available = true },
+		[JMIR_HWREGID_SP]  = { .m_Color = 14, .m_Available = false },
+		[JMIR_HWREGID_BP]  = { .m_Color = 15, .m_Available = false },
+		[JMIR_HWREGID_SI]  = { .m_Color = 1,  .m_Available = true },
+		[JMIR_HWREGID_DI]  = { .m_Color = 2,  .m_Available = true },
+		[JMIR_HWREGID_R8]  = { .m_Color = 10, .m_Available = true },
+		[JMIR_HWREGID_R9]  = { .m_Color = 11, .m_Available = true },
+		[JMIR_HWREGID_R10] = { .m_Color = 12, .m_Available = true },
+		[JMIR_HWREGID_R11] = { .m_Color = 13, .m_Available = true },
+		[JMIR_HWREGID_R12] = { .m_Color = 3,  .m_Available = true },
+		[JMIR_HWREGID_R13] = { .m_Color = 4,  .m_Available = true },
+		[JMIR_HWREGID_R14] = { .m_Color = 5,  .m_Available = true },
+		[JMIR_HWREGID_R15] = { .m_Color = 6,  .m_Available = true },
+	};
+#else
+	// Prioritize caller-saved regs except RAX is last
+	static const jmir_hw_reg_desc_t gpRegDesc[] = {
+		[JMIR_HWREGID_C]   = { .m_Color = 0,   .m_Available = true },
+		[JMIR_HWREGID_D]   = { .m_Color = 1,   .m_Available = true },
+		[JMIR_HWREGID_R8]  = { .m_Color = 2,   .m_Available = true },
+		[JMIR_HWREGID_R9]  = { .m_Color = 3,   .m_Available = true },
+		[JMIR_HWREGID_R10] = { .m_Color = 4,   .m_Available = true },
+		[JMIR_HWREGID_R11] = { .m_Color = 5,   .m_Available = true },
+		[JMIR_HWREGID_A]   = { .m_Color = 6,   .m_Available = true },
+		[JMIR_HWREGID_B]   = { .m_Color = 7,   .m_Available = true },
+		[JMIR_HWREGID_SI]  = { .m_Color = 8,   .m_Available = true },
+		[JMIR_HWREGID_DI]  = { .m_Color = 9,   .m_Available = true },
+		[JMIR_HWREGID_R12] = { .m_Color = 10,  .m_Available = true },
+		[JMIR_HWREGID_R13] = { .m_Color = 11,  .m_Available = true },
+		[JMIR_HWREGID_R14] = { .m_Color = 12,  .m_Available = true },
+		[JMIR_HWREGID_R15] = { .m_Color = 13,  .m_Available = true },
+		[JMIR_HWREGID_SP]  = { .m_Color = 14,  .m_Available = false },
+		[JMIR_HWREGID_BP]  = { .m_Color = 15,  .m_Available = false },
+	};
+#endif
+
+#if 0
+	static const jmir_hw_reg_desc_t xmmRegDesc[] = {
+		[0]  = { .m_Color = 0,  .m_Available = true },
+		[1]  = { .m_Color = 1,  .m_Available = true },
+		[2]  = { .m_Color = 2,  .m_Available = true },
+		[3]  = { .m_Color = 3,  .m_Available = true },
+		[4]  = { .m_Color = 4,  .m_Available = true },
+		[5]  = { .m_Color = 5,  .m_Available = true },
+		[6]  = { .m_Color = 6,  .m_Available = true },
+		[7]  = { .m_Color = 7,  .m_Available = true },
+		[8]  = { .m_Color = 8,  .m_Available = true },
+		[9]  = { .m_Color = 9,  .m_Available = true },
+		[10] = { .m_Color = 10, .m_Available = true },
+		[11] = { .m_Color = 11, .m_Available = true },
+		[12] = { .m_Color = 12, .m_Available = true },
+		[13] = { .m_Color = 13, .m_Available = true },
+		[14] = { .m_Color = 14, .m_Available = true },
+		[15] = { .m_Color = 15, .m_Available = true },
+	};
+#else
+	static const jmir_hw_reg_desc_t xmmRegDesc[] = {
+		[1]  = { .m_Color = 0,  .m_Available = true },
+		[2]  = { .m_Color = 1,  .m_Available = true },
+		[3]  = { .m_Color = 2,  .m_Available = true },
+		[4]  = { .m_Color = 3,  .m_Available = true },
+		[5]  = { .m_Color = 4,  .m_Available = true },
+		[0]  = { .m_Color = 5,  .m_Available = true },
+		[6]  = { .m_Color = 6,  .m_Available = true },
+		[7]  = { .m_Color = 7,  .m_Available = true },
+		[8]  = { .m_Color = 8,  .m_Available = true },
+		[9]  = { .m_Color = 9,  .m_Available = true },
+		[10] = { .m_Color = 10, .m_Available = true },
+		[11] = { .m_Color = 11, .m_Available = true },
+		[12] = { .m_Color = 12, .m_Available = true },
+		[13] = { .m_Color = 13, .m_Available = true },
+		[14] = { .m_Color = 14, .m_Available = true },
+		[15] = { .m_Color = 15, .m_Available = true },
+	};
+#endif
 
 	uint32_t iter = 0;
 	bool changed = true;
@@ -458,7 +561,7 @@ static bool jmir_funcPass_regAllocRun(jx_mir_function_pass_o* inst, jx_mir_conte
 		changed = false;
 
 		// Liveness analysis + build
-		if (!jmir_regAlloc_init(pass, ctx, func, availRegs_GP, availRegs_XMM)) {
+		if (!jmir_regAlloc_init(pass, ctx, func, gpRegDesc, xmmRegDesc)) {
 			break;
 		}
 
@@ -494,7 +597,7 @@ static bool jmir_funcPass_regAllocRun(jx_mir_function_pass_o* inst, jx_mir_conte
 	return false;
 }
 
-static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t* ctx, jx_mir_function_t* func, uint64_t availRegs_GP, uint64_t availRegs_XMM)
+static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t* ctx, jx_mir_function_t* func, const jmir_hw_reg_desc_t* gpRegs, const jmir_hw_reg_desc_t* xmmRegs)
 {
 	allocator_api->linearAllocatorReset(pass->m_LinearAllocator);
 
@@ -502,10 +605,21 @@ static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t
 	jx_memset(pass->m_MoveList, 0, sizeof(jmir_mov_instr_t*) * JMIR_MOV_STATE_COUNT);
 	pass->m_TotalHWRegs[JMIR_REG_CLASS_GP] = 16;
 	pass->m_TotalHWRegs[JMIR_REG_CLASS_XMM] = 16;
-	pass->m_AvailHWRegs[JMIR_REG_CLASS_GP] = availRegs_GP;
-	pass->m_AvailHWRegs[JMIR_REG_CLASS_XMM] = availRegs_XMM;
-	pass->m_NumAvailHWRegs[JMIR_REG_CLASS_GP] = jx_bitcount_u64(availRegs_GP);
-	pass->m_NumAvailHWRegs[JMIR_REG_CLASS_XMM] = jx_bitcount_u64(availRegs_XMM);
+
+	pass->m_AvailHWRegs[JMIR_REG_CLASS_GP] = 0;
+	for (uint32_t i = 0; i < 16; ++i) {
+		if (gpRegs[i].m_Available) {
+			pass->m_AvailHWRegs[JMIR_REG_CLASS_GP] |= (1ull << gpRegs[i].m_Color);
+		}
+	}
+	pass->m_AvailHWRegs[JMIR_REG_CLASS_XMM] = 0;
+	for (uint32_t i = 0; i < 16; ++i) {
+		if (xmmRegs[i].m_Available) {
+			pass->m_AvailHWRegs[JMIR_REG_CLASS_XMM] |= (1ull << xmmRegs[i].m_Color);
+		}
+	}
+	pass->m_NumAvailHWRegs[JMIR_REG_CLASS_GP] = jx_bitcount_u64(pass->m_AvailHWRegs[JMIR_REG_CLASS_GP]);
+	pass->m_NumAvailHWRegs[JMIR_REG_CLASS_XMM] = jx_bitcount_u64(pass->m_AvailHWRegs[JMIR_REG_CLASS_XMM]);
 	
 	jx_mir_funcUpdateLiveness(ctx, func);
 
@@ -520,7 +634,19 @@ static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t
 	for (uint32_t iNode = 0; iNode < numNodes; ++iNode) {
 		jmir_graph_node_t* node = &pass->m_Nodes[iNode];
 		jx_mir_reg_t reg = jx_mir_funcMapBitsetIDToReg(ctx, func, iNode);
-		if (!jmir_regAlloc_nodeInit(pass, node, iNode, reg.m_Class, jx_mir_regIsHW(reg) ? reg.m_ID : UINT32_MAX)) {
+		uint32_t color = UINT32_MAX;
+		if (jx_mir_regIsHW(reg)) {
+			if (reg.m_Class == JMIR_REG_CLASS_GP) {
+				JX_CHECK(reg.m_ID < 16, "Invalid reg id");
+				color = gpRegs[reg.m_ID].m_Color;
+			} else {
+				JX_CHECK(reg.m_Class == JMIR_REG_CLASS_XMM, "Expected XMM register");
+				JX_CHECK(reg.m_ID < 16, "Invalid reg id");
+				color = xmmRegs[reg.m_ID].m_Color;
+			}
+		}
+
+		if (!jmir_regAlloc_nodeInit(pass, node, iNode, reg.m_Class, color)) {
 			return false;
 		}
 	}
@@ -771,11 +897,10 @@ static jx_mir_reg_t jmir_regAlloc_getHWRegWithColor(jmir_func_pass_regalloc_t* p
 		if (node->m_Color == color) {
 			JX_CHECK(jmir_nodeIs(node, JMIR_NODE_STATE_PRECOLORED), "Expected precolored hw register!");
 			JX_CHECK(node->m_RegClass == regClass, "Invalid register class");
-			return (jx_mir_reg_t){
-				.m_ID = node->m_Color,
-				.m_Class = regClass,
-				.m_IsVirtual = false
-			};
+
+			jx_mir_reg_t hwReg = jx_mir_funcMapBitsetIDToReg(pass->m_Ctx, pass->m_Func, node->m_ID);
+			JX_CHECK(jx_mir_regIsClass(hwReg, regClass), "Invalid register class");
+			return hwReg;
 		}
 	}
 

@@ -636,7 +636,8 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 	// Insert prologue/epilogue
 	jx_mir_frame_info_t* frameInfo = func->m_FrameInfo;
 	jmir_frameFinalize(ctx, frameInfo);
-	if (frameInfo->m_Size != 0) {
+
+	{
 		// NOTE: Prepend prologue instructions in reverse order.
 		jx_mir_basic_block_t* entryBlock = func->m_BasicBlockListHead;
 		if ((func->m_Prototype->m_Flags & JMIR_FUNC_PROTO_FLAGS_VARARG_Msk) != 0) {
@@ -652,7 +653,9 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 			}
 		}
 
-		jx_mir_bbPrependInstr(ctx, entryBlock, jx_mir_sub(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, kMIRRegGP_SP), jx_mir_opIConst(ctx, func, JMIR_TYPE_I32, (int64_t)frameInfo->m_Size)));
+		if (frameInfo->m_Size != 0) {
+			jx_mir_bbPrependInstr(ctx, entryBlock, jx_mir_sub(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, kMIRRegGP_SP), jx_mir_opIConst(ctx, func, JMIR_TYPE_I32, (int64_t)frameInfo->m_Size)));
+		}
 		jx_mir_bbPrependInstr(ctx, entryBlock, jx_mir_mov(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, kMIRRegGP_BP), jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, kMIRRegGP_SP)));
 		jx_mir_bbPrependInstr(ctx, entryBlock, jx_mir_push(ctx, jx_mir_opHWReg(ctx, func, JMIR_TYPE_PTR, kMIRRegGP_BP)));
 
@@ -1686,6 +1689,9 @@ jx_mir_operand_t* jx_mir_opBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* 
 
 jx_mir_operand_t* jx_mir_opMemoryRef(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, jx_mir_reg_t baseReg, jx_mir_reg_t indexReg, uint32_t scale, int32_t displacement)
 {
+	JX_CHECK(!jx_mir_regIsValid(baseReg) || jx_mir_regIsClass(baseReg, JMIR_REG_CLASS_GP), "Invalid base register");
+	JX_CHECK(!jx_mir_regIsValid(indexReg) || jx_mir_regIsClass(indexReg, JMIR_REG_CLASS_GP), "Invalid base register");
+
 	jx_mir_operand_t* operand = jmir_operandAlloc(ctx, JMIR_OPERAND_MEMORY_REF, type);
 	if (!operand) {
 		return NULL;
@@ -1697,6 +1703,13 @@ jx_mir_operand_t* jx_mir_opMemoryRef(jx_mir_context_t* ctx, jx_mir_function_t* f
 	}
 
 	operand->u.m_MemRef = memRef;
+
+	if (jx_mir_regIsValid(baseReg) && jx_mir_regIsHW(baseReg)) {
+		func->m_UsedHWRegs[baseReg.m_Class] |= 1u << baseReg.m_ID;
+	}
+	if (jx_mir_regIsValid(indexReg) && jx_mir_regIsHW(indexReg)) {
+		func->m_UsedHWRegs[indexReg.m_Class] |= 1u << indexReg.m_ID;
+	}
 
 	return operand;
 }
