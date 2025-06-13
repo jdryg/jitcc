@@ -146,6 +146,7 @@
     <ClInclude Include="3rdparty\jlib\include\jlib\application.h" />
     <ClInclude Include="3rdparty\jlib\include\jlib\array.h" />
     <ClInclude Include="3rdparty\jlib\include\jlib\atomic.h" />
+    <ClInclude Include="3rdparty\jlib\include\jlib\bitset.h" />
     <ClInclude Include="3rdparty\jlib\include\jlib\config.h" />
     <ClInclude Include="3rdparty\jlib\include\jlib\cpu.h" />
     <ClInclude Include="3rdparty\jlib\include\jlib\dbg.h" />
@@ -189,6 +190,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="3rdparty\jlib\src\allocator.c" />
+    <ClCompile Include="3rdparty\jlib\src\bitset.c" />
     <ClCompile Include="3rdparty\jlib\src\config.c" />
     <ClCompile Include="3rdparty\jlib\src\cpu.c" />
     <ClCompile Include="3rdparty\jlib\src\dbg.c" />
@@ -1158,6 +1160,7 @@
     </ClCompile>
     <ClCompile Include="bin\test\stb_truetype_test.c">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="bin\test\struct_as_arg.c">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
@@ -1188,6 +1191,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="3rdparty\jlib\include\jlib\inline\atomic_win32.inl" />
+    <None Include="3rdparty\jlib\include\jlib\inline\bitset.inl" />
     <None Include="3rdparty\jlib\include\jlib\inline\config.inl" />
     <None Include="3rdparty\jlib\include\jlib\inline\cpu.inl" />
     <None Include="3rdparty\jlib\include\jlib\inline\dbg.inl" />

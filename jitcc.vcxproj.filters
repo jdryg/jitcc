@@ -189,6 +189,9 @@
     <ClInclude Include="bin\test\stb\stb_truetype.h">
       <Filter>bin\test\stb</Filter>
     </ClInclude>
+    <ClInclude Include="3rdparty\jlib\include\jlib\bitset.h">
+      <Filter>3rdparty\jlib\include\jlib</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\jcc.c">
@@ -998,6 +1001,9 @@
     <ClCompile Include="bin\test\stb_truetype_test.c">
       <Filter>bin\test</Filter>
     </ClCompile>
+    <ClCompile Include="3rdparty\jlib\src\bitset.c">
+      <Filter>3rdparty\jlib\src</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="3rdparty\jlib\include\jlib\inline\atomic_win32.inl">
@@ -1049,6 +1055,9 @@
       <Filter>3rdparty\jlib\include\jlib\inline</Filter>
     </None>
     <None Include="README.md" />
+    <None Include="3rdparty\jlib\include\jlib\inline\bitset.inl">
+      <Filter>3rdparty\jlib\include\jlib\inline</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <NASM Include="3rdparty\jlib\src\asm\memset_win64.asm">

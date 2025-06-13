@@ -16,7 +16,9 @@ bool jx_mir_funcPassCreate_fixMemMemOps(jx_mir_function_pass_t* pass, jx_allocat
 bool jx_mir_funcPassCreate_regAlloc(jx_mir_function_pass_t* pass, jx_allocator_i* allocator);
 bool jx_mir_funcPassCreate_peephole(jx_mir_function_pass_t* pass, jx_allocator_i* allocator);
 bool jx_mir_funcPassCreate_combineLEAs(jx_mir_function_pass_t* pass, jx_allocator_i* allocator);
+bool jx_mir_funcPassCreate_instrCombine(jx_mir_function_pass_t* pass, jx_allocator_i* allocator);
 bool jx_mir_funcPassCreate_deadCodeElimination(jx_mir_function_pass_t* pass, jx_allocator_i* allocator);
 bool jx_mir_funcPassCreate_redundantConstElimination(jx_mir_function_pass_t* pass, jx_allocator_i* allocator);
+bool jx_mir_funcPassCreate_simplifyCFG(jx_mir_function_pass_t* pass, jx_allocator_i* allocator);
 
 #endif // JX_MIR_PASS_H

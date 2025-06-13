@@ -151,6 +151,8 @@ static double jx_powd(double x, double e);
 static double jx_atan2d(double y, double x);
 static double jx_wrapd(double a, double wrap);
 
+static uint32_t jx_pow_u32(uint32_t x, uint32_t e);
+
 static void jx_doubleToFloat(float* dst, const double* src, uint32_t n);
 static void jx_floatToDouble(double* dst, const float* src, uint32_t n);
 
@@ -209,6 +211,7 @@ static const float* jx_movAvgfGetValues(const jx_moving_averagef_t* ma);
 static uint32_t jx_movAvgfGetNumValues(const jx_moving_averagef_t* ma);
 
 static uint32_t jx_bitcount_u32(uint32_t x);
+static uint32_t jx_bitcount_u64(uint64_t x);
 static uint32_t jx_ctntz_u64(uint64_t x);
 
 static jx_vec2f_t jx_vec2f_add(jx_vec2f_t a, jx_vec2f_t b);

@@ -374,8 +374,8 @@ static bool jmirgen_funcBuild(jx_mirgen_context_t* ctx, const char* namePrefix, 
 
 	const bool isExternal = irFunc->m_BasicBlockListHead == NULL;
 	const uint32_t flags = 0
-		| (isVarArg ? JMIR_FUNC_FLAGS_VARARG_Msk : 0)
-		| (isExternal ? JMIR_FUNC_FLAGS_EXTERNAL_Msk : 0)
+		| (isVarArg ? JMIR_FUNC_PROTO_FLAGS_VARARG_Msk : 0)
+		| (isExternal ? JMIR_FUNC_PROTO_FLAGS_EXTERNAL_Msk : 0)
 		;
 	jx_mir_function_proto_t* funcProto = jx_mir_funcProto(mirctx, retType, numArgs, args, flags);
 	jx_mir_function_t* func = jx_mir_funcBegin(mirctx, funcName, funcProto);
@@ -1029,6 +1029,8 @@ static jx_mir_operand_t* jmirgen_instrBuild_gep(jx_mirgen_context_t* ctx, jx_ir_
 				JX_CHECK(displacement <= INT32_MAX, "Displacement too large");
 				if (displacement != 0) {
 					jx_mir_operand_t* memRef = jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, dstReg->u.m_Reg, kMIRRegGPNone, 1, (int32_t)displacement);
+
+					dstReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
 					jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstReg, memRef));
 				}
 				dstRegType = ptrType->m_BaseType;
@@ -1039,6 +1041,8 @@ static jx_mir_operand_t* jmirgen_instrBuild_gep(jx_mirgen_context_t* ctx, jx_ir_
 				JX_CHECK(displacement <= INT32_MAX, "Displacement too large");
 				if (displacement != 0) {
 					jx_mir_operand_t* memRef = jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, dstReg->u.m_Reg, kMIRRegGPNone, 1, (int32_t)displacement);
+
+					dstReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
 					jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstReg, memRef));
 				}
 				dstRegType = arrType->m_BaseType;
@@ -1050,6 +1054,8 @@ static jx_mir_operand_t* jmirgen_instrBuild_gep(jx_mirgen_context_t* ctx, jx_ir_
 				JX_CHECK(memberOffset <= INT32_MAX, "Displacement too large");
 				if (memberOffset != 0) {
 					jx_mir_operand_t* memRef = jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, dstReg->u.m_Reg, kMIRRegGPNone, 1, (int32_t)memberOffset);
+
+					dstReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
 					jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstReg, memRef));
 				}
 				dstRegType = memberType;
@@ -1090,6 +1096,8 @@ static jx_mir_operand_t* jmirgen_instrBuild_gep(jx_mirgen_context_t* ctx, jx_ir_
 			const uint32_t itemSize = (uint32_t)jx_ir_typeGetSize(baseType);
 			if (itemSize <= 8 && jx_isPow2_u32(itemSize)) {
 				jx_mir_operand_t* memRef = jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, dstReg->u.m_Reg, indexOperand->u.m_Reg, itemSize, 0);
+
+				dstReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
 				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstReg, memRef));
 			} else {
 				jx_mir_operand_t* tmp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64);
@@ -2073,7 +2081,7 @@ static jx_mir_function_proto_t* jmirgen_funcTypeToProto(jx_mirgen_context_t* ctx
 		}
 	}
 
-	jx_mir_function_proto_t* funcProto = jx_mir_funcProto(ctx->m_MIRCtx, jmirgen_convertType(funcType->m_RetType), numArgs, args, funcType->m_IsVarArg ? JMIR_FUNC_FLAGS_VARARG_Msk : 0);
+	jx_mir_function_proto_t* funcProto = jx_mir_funcProto(ctx->m_MIRCtx, jmirgen_convertType(funcType->m_RetType), numArgs, args, funcType->m_IsVarArg ? JMIR_FUNC_PROTO_FLAGS_VARARG_Msk : 0);
 
 	JX_FREE(ctx->m_Allocator, args);
 

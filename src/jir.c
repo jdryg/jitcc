@@ -512,6 +512,7 @@ void jx_ir_moduleEnd(jx_ir_context_t* ctx, jx_ir_module_t* mod)
 					changed = false;
 
 					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_constantFolding, func);
+					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_canonicalizeOperands, func) || changed;
 					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_peephole, func) || changed;
 					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_removeRedundantPhis, func) || changed;
 					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCFG, func) || changed;
@@ -806,12 +807,21 @@ static void jir_bbDFWalk(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, uint32_t
 	bb->super.m_Flags |= JIR_BB_FLAGS_VISITED_Msk;
 
 	const uint32_t numSucc = (uint32_t)jx_array_sizeu(bb->m_SuccArr);
+#if 1
+	for (uint32_t iSucc = numSucc; iSucc > 0; --iSucc) {
+		jx_ir_basic_block_t* succ = bb->m_SuccArr[iSucc - 1];
+		if ((succ->super.m_Flags & JIR_BB_FLAGS_VISITED_Msk) == 0) {
+			jir_bbDFWalk(ctx, succ, c);
+		}
+	}
+#else
 	for (uint32_t iSucc = 0; iSucc < numSucc; ++iSucc) {
 		jx_ir_basic_block_t* succ = bb->m_SuccArr[iSucc];
 		if ((succ->super.m_Flags & JIR_BB_FLAGS_VISITED_Msk) == 0) {
 			jir_bbDFWalk(ctx, succ, c);
 		}
 	}
+#endif
 
 	bb->m_RevPostOrderID = *c;
 	*c = *c - 1;
@@ -2603,40 +2613,6 @@ jx_ir_user_t* jx_ir_funcToUser(jx_ir_function_t* func)
 jx_ir_user_t* jx_ir_instrToUser(jx_ir_instruction_t* instr)
 {
 	return &instr->super;
-}
-
-bool jx_ir_opcodeIsAssociative(jx_ir_opcode opcode, jx_ir_type_t* type)
-{
-	return !jx_ir_typeIsFloatingPoint(type)
-		&& (false 
-			|| opcode == JIR_OP_ADD 
-			|| opcode == JIR_OP_MUL 
-			|| opcode == JIR_OP_AND 
-			|| opcode == JIR_OP_OR 
-			|| opcode == JIR_OP_XOR
-			)
-		;
-}
-
-bool jx_ir_opcodeIsCommutative(jx_ir_opcode opcode)
-{
-	return (false
-		|| opcode == JIR_OP_ADD
-		|| opcode == JIR_OP_MUL
-		|| opcode == JIR_OP_AND
-		|| opcode == JIR_OP_OR
-		|| opcode == JIR_OP_XOR
-		|| opcode == JIR_OP_SET_EQ
-		|| opcode == JIR_OP_SET_NE
-		);
-}
-
-bool jx_ir_opcodeIsTerminator(jx_ir_opcode opcode)
-{
-	return false
-		|| opcode == JIR_OP_RET
-		|| opcode == JIR_OP_BRANCH
-		;
 }
 
 static bool jir_moduleCtor(jx_ir_context_t* ctx, jx_ir_module_t* mod, const char* name)

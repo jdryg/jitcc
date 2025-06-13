@@ -280,6 +280,15 @@ static inline double jx_wrapd(double a, double wrap)
 		;
 }
 
+static inline uint32_t jx_pow_u32(uint32_t x, uint32_t e)
+{
+	uint32_t res = 1;
+	while (e--) {
+		res *= x;
+	}
+	return res;
+}
+
 static inline void jx_doubleToFloat(float* dst, const double* src, uint32_t n)
 {
 	math_api->doubleToFloat(dst, src, n);
@@ -475,6 +484,16 @@ static inline uint32_t jx_bitcount_u32(uint32_t x)
 	}
 	return c;
 }
+
+static inline uint32_t jx_bitcount_u64(uint64_t x)
+{
+	uint32_t c;
+	for (c = 0; x; c++) {
+		x &= x - 1;
+	}
+	return c;
+}
+
 
 static uint32_t jx_ctntz_u64(uint64_t x)
 {

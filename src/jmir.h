@@ -9,6 +9,7 @@
 
 typedef struct jx_allocator_i jx_allocator_i;
 typedef struct jx_string_buffer_t jx_string_buffer_t;
+typedef struct jx_bitset_t jx_bitset_t;
 
 typedef struct jx_mir_operand_t jx_mir_operand_t;
 typedef struct jx_mir_instruction_t jx_mir_instruction_t;
@@ -357,12 +358,17 @@ typedef struct jx_mir_memory_ref_t
 	int32_t m_Displacement;
 } jx_mir_memory_ref_t;
 
+#define JMIR_FUNC_PROTO_FLAGS_VARARG_Pos   0
+#define JMIR_FUNC_PROTO_FLAGS_VARARG_Msk   (1u << JMIR_FUNC_PROTO_FLAGS_VARARG_Pos)
+#define JMIR_FUNC_PROTO_FLAGS_EXTERNAL_Pos 1
+#define JMIR_FUNC_PROTO_FLAGS_EXTERNAL_Msk (1u << JMIR_FUNC_PROTO_FLAGS_EXTERNAL_Pos)
+
 typedef struct jx_mir_function_proto_t
 {
 	jx_mir_type_kind* m_Args;
 	uint32_t m_NumArgs;
 	jx_mir_type_kind m_RetType;
-	uint32_t m_Flags;
+	uint32_t m_Flags; // JMIR_FUNC_PROTO_FLAGS_xxx
 	JX_PAD(4);
 } jx_mir_function_proto_t;
 
@@ -391,6 +397,10 @@ typedef struct jx_mir_operand_t
 typedef enum jx_mir_annotation_kind
 {
 	JMIR_ANNOT_INSTR_CALL_FUNC_PROTO = 0,
+	JMIR_ANNOT_INSTR_LIVENESS,
+	JMIR_ANNOT_INSTR_USE_DEF,
+	JMIR_ANNOT_BB_CFG,
+	JMIR_ANNOT_BB_LIVENESS,
 } jx_mir_annotation_kind;
 
 typedef void (*jmirAnnotationDestroyCallback)(jx_mir_annotation_t* annotation);
@@ -410,6 +420,40 @@ typedef struct jx_mir_annotation_func_proto_t
 	jx_mir_function_proto_t* m_FuncProto;
 } jx_mir_annotation_func_proto_t;
 
+typedef struct jx_mir_annotation_bb_cfg_t
+{
+	JX_INHERITS(jx_mir_annotation_t);
+	jx_mir_basic_block_t** m_PredArr;
+	jx_mir_basic_block_t** m_SuccArr;
+} jx_mir_annotation_bb_cfg_t;
+
+typedef struct jx_mir_annotation_bb_liveness_t
+{
+	JX_INHERITS(jx_mir_annotation_t);
+	jx_allocator_i* m_Allocator;
+	jx_bitset_t* m_LiveInSet;
+	jx_bitset_t* m_LiveOutSet;
+} jx_mir_annotation_bb_liveness_t;
+
+#define JMIR_MAX_INSTR_DEFS 16 // NOTE: Large enough to hold all GP and XMM caller-saved regs
+#define JMIR_MAX_INSTR_USES 16 // NOTE: Large enough to hold all GP and XMM func arg regs + called func in case it's a register.
+
+typedef struct jx_mir_annotation_instr_usedef_t
+{
+	JX_INHERITS(jx_mir_annotation_t);
+	jx_mir_reg_t m_Defs[JMIR_MAX_INSTR_DEFS];
+	jx_mir_reg_t m_Uses[JMIR_MAX_INSTR_USES];
+	uint32_t m_NumDefs;
+	uint32_t m_NumUses;
+} jx_mir_annotation_instr_usedef_t;
+
+typedef struct jx_mir_annotation_instr_liveness_t
+{
+	JX_INHERITS(jx_mir_annotation_t);
+	jx_allocator_i* m_Allocator;
+	jx_bitset_t* m_LiveOutSet;
+} jx_mir_annotation_instr_liveness_t;
+
 typedef struct jx_mir_instruction_t
 {
 	jx_mir_instruction_t* m_Next;
@@ -425,16 +469,18 @@ typedef struct jx_mir_basic_block_t
 {
 	jx_mir_basic_block_t* m_Next;
 	jx_mir_basic_block_t* m_Prev;
+	jx_mir_annotation_t* m_AnnotationListHead;
 	jx_mir_function_t* m_ParentFunc;
 	jx_mir_instruction_t* m_InstrListHead;
+	jx_mir_instruction_t* m_InstrListTail;
 	uint32_t m_ID;
 	JX_PAD(4);
 } jx_mir_basic_block_t;
 
-#define JMIR_FUNC_FLAGS_VARARG_Pos   0
-#define JMIR_FUNC_FLAGS_VARARG_Msk   (1u << JMIR_FUNC_FLAGS_VARARG_Pos)
-#define JMIR_FUNC_FLAGS_EXTERNAL_Pos 1
-#define JMIR_FUNC_FLAGS_EXTERNAL_Msk (1u << JMIR_FUNC_FLAGS_EXTERNAL_Pos)
+#define JMIR_FUNC_FLAGS_CFG_VALID_Pos       0
+#define JMIR_FUNC_FLAGS_CFG_VALID_Msk       (1u << JMIR_FUNC_FLAGS_CFG_VALID_Pos)
+#define JMIR_FUNC_FLAGS_LIVENESS_VALID_Pos  1
+#define JMIR_FUNC_FLAGS_LIVENESS_VALID_Msk  (1u << JMIR_FUNC_FLAGS_LIVENESS_VALID_Pos)
 
 typedef struct jx_mir_function_t
 {
@@ -444,6 +490,7 @@ typedef struct jx_mir_function_t
 	jx_mir_frame_info_t* m_FrameInfo;
 	jx_mir_operand_t** m_Args;
 	uint32_t m_NextBasicBlockID;
+	uint32_t m_Flags; // JMIR_FUNC_FLAGS_xxx
 	uint32_t m_NextVirtualRegID[JMIR_REG_CLASS_COUNT];
 	uint32_t m_UsedHWRegs[JMIR_REG_CLASS_COUNT];
 } jx_mir_function_t;
@@ -502,6 +549,12 @@ void jx_mir_funcAppendBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func,
 void jx_mir_funcPrependBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb);
 bool jx_mir_funcRemoveBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb);
 void jx_mir_funcAllocStackForCall(jx_mir_context_t* ctx, jx_mir_function_t* func, uint32_t numArguments);
+bool jx_mir_funcUpdateCFG(jx_mir_context_t* ctx, jx_mir_function_t* func);
+bool jx_mir_funcUpdateLiveness(jx_mir_context_t* ctx, jx_mir_function_t* func);
+uint32_t jx_mir_funcGetRegBitsetSize(jx_mir_context_t* ctx, jx_mir_function_t* func);
+jx_mir_reg_t jx_mir_funcMapBitsetIDToReg(jx_mir_context_t* ctx, jx_mir_function_t* func, uint32_t id);
+uint32_t jx_mir_funcMapRegToBitsetID(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_reg_t reg);
+bool jx_mir_funcSpillVirtualReg(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_reg_t reg);
 void jx_mir_funcPrint(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_string_buffer_t* sb);
 
 jx_mir_basic_block_t* jx_mir_bbAlloc(jx_mir_context_t* ctx);
@@ -512,6 +565,8 @@ bool jx_mir_bbInsertInstrBefore(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb,
 bool jx_mir_bbInsertInstrAfter(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb, jx_mir_instruction_t* anchor, jx_mir_instruction_t* instr);
 bool jx_mir_bbRemoveInstr(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb, jx_mir_instruction_t* instr);
 jx_mir_instruction_t* jx_mir_bbGetFirstTerminatorInstr(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb);
+jx_mir_annotation_t* jx_mir_bbGetAnnotation(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb, uint32_t annotationKind);
+void jx_mir_bbAddAnnotation(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb, jx_mir_annotation_t* annotation);
 
 jx_mir_operand_t* jx_mir_opVirtualReg(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type);
 jx_mir_operand_t* jx_mir_opHWReg(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_type_kind type, jx_mir_reg_t reg);
@@ -529,6 +584,7 @@ void jx_mir_instrFree(jx_mir_context_t* ctx, jx_mir_instruction_t* instr);
 void jx_mir_instrPrint(jx_mir_context_t* ctx, jx_mir_instruction_t* instr, jx_string_buffer_t* sb);
 jx_mir_annotation_t* jx_mir_instrGetAnnotation(jx_mir_context_t* ctx, jx_mir_instruction_t* instr, uint32_t annotationKind);
 void jx_mir_instrAddAnnotation(jx_mir_context_t* ctx, jx_mir_instruction_t* instr, jx_mir_annotation_t* annotation);
+bool jx_mir_instrIsMovRegReg(jx_mir_instruction_t* instr);
 jx_mir_instruction_t* jx_mir_mov(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_movsx(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_movzx(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
@@ -739,6 +795,16 @@ static inline uint32_t jx_mir_regGetArgID(jx_mir_reg_t reg)
 	return UINT32_MAX;
 }
 
+static inline bool jx_mir_memRefEqual(const jx_mir_memory_ref_t* a, const jx_mir_memory_ref_t* b)
+{
+	return true
+		&& jx_mir_regEqual(a->m_BaseReg, b->m_BaseReg)
+		&& jx_mir_regEqual(a->m_IndexReg, b->m_IndexReg)
+		&& a->m_Scale == b->m_Scale
+		&& a->m_Displacement == b->m_Displacement
+		;
+}
+
 static inline bool jx_mir_opIsReg(jx_mir_operand_t* op, jx_mir_reg_t reg)
 {
 	return true
@@ -875,6 +941,15 @@ static inline bool jx_mir_opcodeIsComparison(uint32_t opcode)
 		|| opcode == JMIR_OP_UCOMISD
 		|| opcode == JMIR_OP_COMISS
 		|| opcode == JMIR_OP_COMISD
+		;
+}
+
+static inline bool jx_mir_opcodeIsTerminator(uint32_t opcode)
+{
+	return false
+		|| opcode == JMIR_OP_RET
+		|| opcode == JMIR_OP_JMP
+		|| jx_mir_opcodeIsJcc(opcode)
 		;
 }
 

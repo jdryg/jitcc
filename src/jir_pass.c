@@ -1792,13 +1792,24 @@ static jx_ir_constant_t* jir_constFold_ptrtoint(jx_ir_context_t* ctx, jx_ir_cons
 typedef struct jir_func_pass_peephole_t
 {
 	jx_allocator_i* m_Allocator;
+	jx_ir_context_t* m_Ctx;
+	jx_ir_function_t* m_Func;
 } jir_func_pass_peephole_t;
 
 static void jir_funcPass_peepholeDestroy(jx_ir_function_pass_o* inst, jx_allocator_i* allocator);
 static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func);
 
-static bool jir_peephole_isSetcc(jx_ir_opcode opcode);
-static bool jir_peephole_isUnusedInstr(jx_ir_instruction_t* instr);
+static bool jir_peephole_setcc(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr);
+static bool jir_peephole_div(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr);
+static bool jir_peephole_mul(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr);
+static bool jir_peephole_add(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr);
+static bool jir_peephole_sub(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr);
+static bool jir_peephole_and(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr);
+static bool jir_peephole_or(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr);
+static bool jir_peephole_xor(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr);
+static bool jir_peephole_getElementPtr(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr);
+static bool jir_peephole_phi(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr);
+static bool jir_peephole_branch(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr);
 
 bool jx_ir_funcPassCreate_peephole(jx_ir_function_pass_t* pass, jx_allocator_i* allocator)
 {
@@ -1827,6 +1838,9 @@ static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_
 {
 	jir_func_pass_peephole_t* pass = (jir_func_pass_peephole_t*)inst;
 
+	pass->m_Ctx = ctx;
+	pass->m_Func = func;
+
 	uint32_t numOpts = 0;
 	bool changed = true;
 	while (changed) {
@@ -1840,266 +1854,28 @@ static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_
 			while (instr) {
 				jx_ir_instruction_t* instrNext = instr->m_Next;
 
-				if (instr->m_OpCode == JIR_OP_SET_EQ || instr->m_OpCode == JIR_OP_SET_NE) {
-					jx_ir_instruction_t* instrOp0 = jx_ir_valueToInstr(jx_ir_instrGetOperandVal(instr, 0));
-					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(jx_ir_instrGetOperandVal(instr, 1));
-					if (instrOp0 && constOp1) {
-						if (jir_peephole_isSetcc(instrOp0->m_OpCode)) {
-							// %res = setcc bool, %a, %b
-							// %cmp = seteq/setne bool, %res, true/false
-							//   =>
-							// %cmp = setcc bool, %a, %b // cc might be different than original cc
-							if (instr->m_OpCode == JIR_OP_SET_EQ) {
-								if (constOp1->u.m_Bool) {
-									JX_CHECK(false, "Should be the same as SetNE/false. Implement when assert is hit.");
-								} else {
-									JX_CHECK(false, "Should probably invert cc. Implement when assert is hit.");
-								}
-							} else if (instr->m_OpCode == JIR_OP_SET_NE) {
-								if (constOp1->u.m_Bool) {
-									JX_CHECK(false, "Should probably invert cc. Implement when assert is hit.");
-								} else {
-									// %res = setcc bool, %a, %b
-									// %cmp = setne bool %res, false
-									//  =>
-									// %cmp = setcc bool, %a, %b
-									// 
-									// Create new setcc instruction with the same opcode as the 
-									// original instruction.
-									jx_ir_condition_code cc = instrOp0->m_OpCode - JIR_OP_SET_CC_BASE;
-									jx_ir_instruction_t* newSetcc = jx_ir_instrSetCC(ctx, cc, jx_ir_instrGetOperandVal(instrOp0, 0), jx_ir_instrGetOperandVal(instrOp0, 1));
-									jx_ir_bbInsertInstrBefore(ctx, bb, instr, newSetcc);
-
-									// Replace existing value with new instruction
-									jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(newSetcc));
-
-									// Remove old instruction
-									jx_ir_bbRemoveInstr(ctx, bb, instr);
-									jx_ir_instrFree(ctx, instr);
-
-									++numOpts;
-								}
-							}
-						} else if ((instrOp0->m_OpCode == JIR_OP_SEXT || instrOp0->m_OpCode == JIR_OP_ZEXT) && jx_ir_instrGetOperandVal(instrOp0, 0)->m_Type->m_Kind == JIR_TYPE_BOOL && jx_ir_constIsZero(constOp1)) {
-							// %extVal = zext i32, bool %val
-							// %res = setne bool, i32 %extVal, i32 0
-							//  =>
-							// replace %res with %val and remove instruction
-							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instrOp0, 0));
-							jx_ir_bbRemoveInstr(ctx, bb, instr);
-							jx_ir_instrFree(ctx, instr);
-
-							++numOpts;
-						}
-					}
+				if (jx_ir_opcodeIsSetcc(instr->m_OpCode)) {
+					numOpts += jir_peephole_setcc(pass, instr) ? 1 : 0;
 				} else if (instr->m_OpCode == JIR_OP_DIV) {
-					jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
-					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
-					const bool isInteger = jx_ir_typeIsInteger(valOp1->m_Type);
-					if (constOp1) {
-						if ((isInteger && constOp1->u.m_I64 == 1) || (!isInteger && constOp1->u.m_F64 == 1.0)) {
-							// %res = div %val, 1 
-							//  => 
-							// replace %res with %val and remove instruction
-							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
-							jx_ir_bbRemoveInstr(ctx, bb, instr);
-							jx_ir_instrFree(ctx, instr);
-
-							++numOpts;
-						} else if (isInteger && constOp1->u.m_I64 > 0 && constOp1->u.m_I64 < 256 && jx_isPow2_u32((uint32_t)constOp1->u.m_I64)) {
-							// %res = div %val, imm8_pow2
-							//  =>
-							// %res = shr %val, log2(imm8_pow2)
-							jx_ir_constant_t* constI8 = jx_ir_constGetI8(ctx, jx_log2_u32((uint32_t)constOp1->u.m_I64));
-							jx_ir_instruction_t* shrInstr = jx_ir_instrShr(ctx, jx_ir_instrGetOperandVal(instr, 0), jx_ir_constToValue(constI8));
-							jx_ir_bbInsertInstrBefore(ctx, bb, instr, shrInstr);
-							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(shrInstr));
-							jx_ir_bbRemoveInstr(ctx, bb, instr);
-							jx_ir_instrFree(ctx, instr);
-
-							++numOpts;
-						}
-					}
+					numOpts += jir_peephole_div(pass, instr) ? 1 : 0;
 				} else if (instr->m_OpCode == JIR_OP_MUL) {
-					jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
-					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
-					const bool isInteger = jx_ir_typeIsInteger(valOp1->m_Type);
-					if (constOp1) {
-						if ((isInteger && constOp1->u.m_I64 == 1) || (!isInteger && constOp1->u.m_F64 == 1.0)) {
-							// %res = mul %val, 1 
-							//  => 
-							// replace %res with %val and remove instruction
-							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
-							jx_ir_bbRemoveInstr(ctx, bb, instr);
-							jx_ir_instrFree(ctx, instr);
-
-							++numOpts;
-						} else if (isInteger && constOp1->u.m_I64 > 0 && constOp1->u.m_I64 < 256 && jx_isPow2_u32((uint32_t)constOp1->u.m_I64)) {
-							// %res = mul %val, imm8_pow2
-							//  =>
-							// %res = shl %val, log2(imm8_pow2)
-							jx_ir_constant_t* constI8 = jx_ir_constGetI8(ctx, jx_log2_u32((uint32_t)constOp1->u.m_I64));
-							jx_ir_instruction_t* shlInstr = jx_ir_instrShl(ctx, jx_ir_instrGetOperandVal(instr, 0), jx_ir_constToValue(constI8));
-							jx_ir_bbInsertInstrBefore(ctx, bb, instr, shlInstr);
-							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(shlInstr));
-							jx_ir_bbRemoveInstr(ctx, bb, instr);
-							jx_ir_instrFree(ctx, instr);
-
-							++numOpts;
-						}
-					}
+					numOpts += jir_peephole_mul(pass, instr) ? 1 : 0;
 				} else if (instr->m_OpCode == JIR_OP_ADD) {
-					jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
-					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
-					const bool isInteger = jx_ir_typeIsInteger(valOp1->m_Type);
-					if (constOp1) {
-						if ((isInteger && constOp1->u.m_I64 == 0) || (!isInteger && constOp1->u.m_F64 == 0.0)) {
-							// %res = add %val, 0
-							//  => 
-							// replace %res with %val and remove instruction
-							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
-							jx_ir_bbRemoveInstr(ctx, bb, instr);
-							jx_ir_instrFree(ctx, instr);
-
-							++numOpts;
-						}
-					}
+					numOpts += jir_peephole_add(pass, instr) ? 1 : 0;
 				} else if (instr->m_OpCode == JIR_OP_SUB) {
-					jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
-					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
-					const bool isInteger = jx_ir_typeIsInteger(valOp1->m_Type);
-					if (constOp1) {
-						if ((isInteger && constOp1->u.m_I64 == 0) || (!isInteger && constOp1->u.m_F64 == 0.0)) {
-							// %res = sub %val, 0
-							//  => 
-							// replace %res with %val and remove instruction
-							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
-							jx_ir_bbRemoveInstr(ctx, bb, instr);
-							jx_ir_instrFree(ctx, instr);
-
-							++numOpts;
-						}
-					}
+					numOpts += jir_peephole_sub(pass, instr) ? 1 : 0;
 				} else if (instr->m_OpCode == JIR_OP_AND) {
-					jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
-					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
-					JX_CHECK(jx_ir_typeIsIntegral(valOp1->m_Type), "Expected integer type");
-					if (constOp1) {
-						if (jx_ir_constIsZero(constOp1)) {
-							// %res = and %val, 0
-							//  =>
-							// replace %res with 0 and remove instruction
-							jx_ir_constant_t* zero = jx_ir_constGetZero(ctx, instr->super.super.m_Type);
-							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(zero));
-							jx_ir_bbRemoveInstr(ctx, bb, instr);
-							jx_ir_instrFree(ctx, instr);
-
-							++numOpts;
-						} else if (jx_ir_constIsOnes(constOp1)) {
-							// %res = and %val, all_ones 
-							//  => 
-							// replace %res with %val and remove instruction
-							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
-							jx_ir_bbRemoveInstr(ctx, bb, instr);
-							jx_ir_instrFree(ctx, instr);
-						}
-					} else if (jx_ir_instrGetOperandVal(instr, 0) == jx_ir_instrGetOperandVal(instr, 1)) {
-						// %res = and %x, %x => %res = %x
-						JX_NOT_IMPLEMENTED();
-					}
+					numOpts += jir_peephole_and(pass, instr) ? 1 : 0;
 				} else if (instr->m_OpCode == JIR_OP_OR) {
-					jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
-					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
-					JX_CHECK(jx_ir_typeIsIntegral(valOp1->m_Type), "Expected integer type");
-					if (constOp1) {
-						if (jx_ir_constIsZero(constOp1)) {
-							// %res = or %val, 0
-							//  =>
-							// replace %res with %val and remove instruction
-							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
-							jx_ir_bbRemoveInstr(ctx, bb, instr);
-							jx_ir_instrFree(ctx, instr);
-
-							++numOpts;
-						} else if (jx_ir_constIsOnes(constOp1)) {
-							// %res = or %val, all_ones 
-							//  => 
-							// replace %res with all ones and remove instruction
-							jx_ir_constant_t* ones = jx_ir_constGetOnes(ctx, instr->super.super.m_Type);
-							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(ones));
-							jx_ir_bbRemoveInstr(ctx, bb, instr);
-							jx_ir_instrFree(ctx, instr);
-						}
-					} else if (jx_ir_instrGetOperandVal(instr, 0) == jx_ir_instrGetOperandVal(instr, 1)) {
-						// %res = or %x, %x => %res = %x
-						JX_NOT_IMPLEMENTED();
-					}
+					numOpts += jir_peephole_or(pass, instr) ? 1 : 0;
 				} else if (instr->m_OpCode == JIR_OP_XOR) {
-					jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
-					jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
-					JX_CHECK(jx_ir_typeIsIntegral(valOp1->m_Type), "Expected integer type");
-					if (constOp1) {
-						if (jx_ir_constIsZero(constOp1)) {
-							// %res = xor %val, 0
-							//  =>
-							// replace %res with %val and remove instruction
-							jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
-							jx_ir_bbRemoveInstr(ctx, bb, instr);
-							jx_ir_instrFree(ctx, instr);
-
-							++numOpts;
-						} else if (jx_ir_constIsOnes(constOp1)) {
-							// If it's a boolean check if the conditional that generated the boolean can be inverted.
-							if (jx_ir_instrToValue(instr)->m_Type->m_Kind == JIR_TYPE_BOOL) {
-								jx_ir_value_t* valOp0 = jx_ir_instrGetOperandVal(instr, 0);
-								jx_ir_instruction_t* instrOp0 = jx_ir_valueToInstr(valOp0);
-								if (jir_peephole_isSetcc(instrOp0->m_OpCode)) {
-									// Insert a new setcc instruction before the xor with inverted cc and remove the xor.
-									// Dead Instruction Elimination below will remove the original setcc if it's unused.
-									jx_ir_condition_code cc = instrOp0->m_OpCode - JIR_OP_SET_CC_BASE;
-									jx_ir_instruction_t* newSetcc = jx_ir_instrSetCC(ctx, jx_ir_ccInvert(cc), jx_ir_instrGetOperandVal(instrOp0, 0), jx_ir_instrGetOperandVal(instrOp0, 1));
-									jx_ir_bbInsertInstrBefore(ctx, bb, instr, newSetcc);
-
-									// Replace existing value with new instruction
-									jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(newSetcc));
-
-									// Remove old instruction
-									jx_ir_bbRemoveInstr(ctx, bb, instr);
-									jx_ir_instrFree(ctx, instr);
-
-									++numOpts;
-								}
-							}
-						}
-					}
+					numOpts += jir_peephole_xor(pass, instr) ? 1 : 0;
 				} else if (instr->m_OpCode == JIR_OP_GET_ELEMENT_PTR) {
-					if (jx_array_sizeu(instr->super.m_OperandArr) == 2) {
-						jx_ir_constant_t* constOp1 = jx_ir_valueToConst(jx_ir_instrGetOperandVal(instr, 1));
-						if (constOp1) {
-							if (constOp1->u.m_I64 < 0) {
-								// %addr1 = getelementptr %ptr, const
-								// %addr2 = getelementptr %addr1, -const
-								//  =>
-								// Replace %addr2 with %ptr
-								// 
-								// Check if the first operand (the pointer) is the result of another GEP with the same
-								// positive constant.
-								jx_ir_instruction_t* instrOp0 = jx_ir_valueToInstr(jx_ir_instrGetOperandVal(instr, 0));
-								if (instrOp0 && instrOp0->m_OpCode == JIR_OP_GET_ELEMENT_PTR && jx_array_sizeu(instrOp0->super.m_OperandArr) == 2) {
-									jx_ir_constant_t* instrOp0_constOp1 = jx_ir_valueToConst(jx_ir_instrGetOperandVal(instrOp0, 1));
-									if (instrOp0_constOp1 && instrOp0_constOp1->u.m_I64 == -constOp1->u.m_I64) {
-										jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instrOp0, 0));
-									}
-								}
-							} else if (constOp1->u.m_I64 == 0) {
-								// TODO: Can I do the same if there are more than 1 indices and they are all 0?
-								// %addr = getelementptr %ptr, 0
-								//  =>
-								// Replace %addr with %ptr
-								jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
-							}
-						}
-					}
+					numOpts += jir_peephole_getElementPtr(pass, instr) ? 1 : 0;
+				} else if (instr->m_OpCode == JIR_OP_PHI) {
+					numOpts += jir_peephole_phi(pass, instr) ? 1 : 0;
+				} else if (instr->m_OpCode == JIR_OP_BRANCH) {
+					numOpts += jir_peephole_branch(pass, instr) ? 1 : 0;
 				}
 
 				instr = instrNext;
@@ -2111,7 +1887,6 @@ static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_
 		changed = prevIterNumOpts != numOpts;
 	}
 
-#if 1
 	// Remove dead instructions...
 	// TODO: Turn into a function?
 	{
@@ -2121,7 +1896,7 @@ static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_
 			while (instr) {
 				jx_ir_instruction_t* instrNext = instr->m_Next;
 
-				if (jir_peephole_isUnusedInstr(instr)) {
+				if (jx_ir_instrIsDead(instr)) {
 					jx_ir_bbRemoveInstr(ctx, bb, instr);
 					jx_ir_instrFree(ctx, instr);
 					++numOpts;
@@ -2133,34 +1908,754 @@ static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_
 			bb = bb->m_Next;
 		}
 	}
-#endif
 
 	return numOpts != 0;
 }
 
-static bool jir_peephole_isSetcc(jx_ir_opcode opcode)
+static bool jir_peephole_setcc(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr)
 {
-	return false
-		|| opcode == JIR_OP_SET_LE
-		|| opcode == JIR_OP_SET_GE
-		|| opcode == JIR_OP_SET_LT
-		|| opcode == JIR_OP_SET_GT
-		|| opcode == JIR_OP_SET_EQ
-		|| opcode == JIR_OP_SET_NE
-		;
+	jx_ir_context_t* ctx = pass->m_Ctx;
+	jx_ir_basic_block_t* bb = instr->m_ParentBB;
+
+	jx_ir_constant_t* constOp1 = jx_ir_valueToConst(jx_ir_instrGetOperandVal(instr, 1));
+	if (!constOp1) {
+		return false;
+	}
+
+	jx_ir_value_t* valOp0 = jx_ir_instrGetOperandVal(instr, 0);
+
+	bool res = false;
+	if (instr->m_OpCode == JIR_OP_SET_EQ || instr->m_OpCode == JIR_OP_SET_NE) {
+		jx_ir_instruction_t* instrOp0 = jx_ir_valueToInstr(valOp0);
+		if (valOp0->m_Type->m_Kind == JIR_TYPE_BOOL) {
+			if ((instr->m_OpCode == JIR_OP_SET_EQ && constOp1->u.m_Bool) || (instr->m_OpCode == JIR_OP_SET_NE && !constOp1->u.m_Bool)) {
+				// %cmp = seteq bool, %bool_val, true 
+				//  or
+				// %cmp = setne bool, %bool_val, false
+				//  => 
+				// replace %cmp with %bool_val
+				jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), valOp0);
+				jx_ir_bbRemoveInstr(ctx, bb, instr);
+				jx_ir_instrFree(ctx, instr);
+			} else {
+				// TODO: 
+				// %cmp = seteq bool, %bool_val, false 
+				//  or
+				// %cmp = setne bool, %bool_val, true
+				//  => 
+				// if %bool_val is a setcc instruction, invert the cc, otherwise xor with true to invert the boolean.
+				JX_NOT_IMPLEMENTED();
+			}
+		} else if (instrOp0 && constOp1) {
+#if 0
+			if (jx_ir_opcodeIsSetcc(instrOp0->m_OpCode)) {
+				// TODO: Remove. The case above handles this as well.
+				// %res = setcc bool, %a, %b
+				// %cmp = seteq/setne bool, %res, true/false
+				//   =>
+				// %cmp = setcc bool, %a, %b // cc might be different than original cc
+				if (instr->m_OpCode == JIR_OP_SET_EQ) {
+					if (constOp1->u.m_Bool) {
+						JX_CHECK(false, "Should be the same as SetNE/false. Implement when assert is hit.");
+					} else {
+						JX_CHECK(false, "Should probably invert cc. Implement when assert is hit.");
+					}
+				} else if (instr->m_OpCode == JIR_OP_SET_NE) {
+					if (constOp1->u.m_Bool) {
+						JX_CHECK(false, "Should probably invert cc. Implement when assert is hit.");
+					} else {
+						// %res = setcc bool, %a, %b
+						// %cmp = setne bool %res, false
+						//  =>
+						// %cmp = setcc bool, %a, %b
+						// 
+						// Create new setcc instruction with the same opcode as the 
+						// original instruction.
+						jx_ir_condition_code cc = instrOp0->m_OpCode - JIR_OP_SET_CC_BASE;
+						jx_ir_instruction_t* newSetcc = jx_ir_instrSetCC(ctx, cc, jx_ir_instrGetOperandVal(instrOp0, 0), jx_ir_instrGetOperandVal(instrOp0, 1));
+						jx_ir_bbInsertInstrBefore(ctx, bb, instr, newSetcc);
+
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(newSetcc));
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+
+						res = true;
+					}
+				}
+			} else 
+#endif
+			if ((instrOp0->m_OpCode == JIR_OP_SEXT || instrOp0->m_OpCode == JIR_OP_ZEXT) && jx_ir_instrGetOperandVal(instrOp0, 0)->m_Type->m_Kind == JIR_TYPE_BOOL && jx_ir_constIsZero(constOp1)) {
+				// %extVal = zext i32, bool %val
+				// %res = setne bool, i32 %extVal, i32 0
+				//  =>
+				// replace %res with %val and remove instruction
+				jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instrOp0, 0));
+				jx_ir_bbRemoveInstr(ctx, bb, instr);
+				jx_ir_instrFree(ctx, instr);
+
+				res = true;
+			}
+		}
+	} else {
+		// TODO: setlt unsigned, 0 => false, setge unsigned, 0 => true
+	}
+
+	return res;
 }
 
-static bool jir_peephole_isUnusedInstr(jx_ir_instruction_t* instr)
+static bool jir_peephole_div(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr)
 {
-	if (instr->super.super.m_UsesListHead) {
-		return false;
+	jx_ir_context_t* ctx = pass->m_Ctx;
+	jx_ir_basic_block_t* bb = instr->m_ParentBB;
+
+	bool res = false;
+	jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
+	jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
+	const bool isInteger = jx_ir_typeIsInteger(valOp1->m_Type);
+	if (constOp1) {
+		if ((isInteger && constOp1->u.m_I64 == 1) || (!isInteger && constOp1->u.m_F64 == 1.0)) {
+			// %res = div %val, 1 
+			//  => 
+			// replace %res with %val and remove instruction
+			jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
+			jx_ir_bbRemoveInstr(ctx, bb, instr);
+			jx_ir_instrFree(ctx, instr);
+
+			res = true;
+		} else if (isInteger && constOp1->u.m_I64 > 0 && jx_isPow2_u32((uint32_t)constOp1->u.m_I64)) {
+			// %res = div %val, imm_pow2
+			//  =>
+			// %res = shr %val, log2(imm_pow2)
+			jx_ir_constant_t* constI8 = jx_ir_constGetI8(ctx, jx_log2_u32((uint32_t)constOp1->u.m_I64));
+			jx_ir_instruction_t* shrInstr = jx_ir_instrShr(ctx, jx_ir_instrGetOperandVal(instr, 0), jx_ir_constToValue(constI8));
+			jx_ir_bbInsertInstrBefore(ctx, bb, instr, shrInstr);
+			jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(shrInstr));
+			jx_ir_bbRemoveInstr(ctx, bb, instr);
+			jx_ir_instrFree(ctx, instr);
+
+			res = true;
+		}
 	}
 
-	if (instr->m_OpCode == JIR_OP_BRANCH || instr->m_OpCode == JIR_OP_CALL || instr->m_OpCode == JIR_OP_RET || instr->m_OpCode == JIR_OP_STORE) {
-		return false;
+	return res;
+}
+
+static bool jir_peephole_mul(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr)
+{
+	jx_ir_context_t* ctx = pass->m_Ctx;
+	jx_ir_basic_block_t* bb = instr->m_ParentBB;
+
+	bool res = false;
+	jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
+	jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
+	const bool isInteger = jx_ir_typeIsInteger(valOp1->m_Type);
+	if (constOp1) {
+		if ((isInteger && constOp1->u.m_I64 == 1) || (!isInteger && constOp1->u.m_F64 == 1.0)) {
+			// %res = mul %val, 1 
+			//  => 
+			// replace %res with %val and remove instruction
+			jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
+			jx_ir_bbRemoveInstr(ctx, bb, instr);
+			jx_ir_instrFree(ctx, instr);
+
+			res = true;
+		} else if (isInteger && constOp1->u.m_I64 > 0 && jx_isPow2_u32((uint32_t)constOp1->u.m_I64)) {
+			// %res = mul %val, imm_pow2
+			//  =>
+			// %res = shl %val, log2(imm_pow2)
+			jx_ir_constant_t* constI8 = jx_ir_constGetI8(ctx, jx_log2_u32((uint32_t)constOp1->u.m_I64));
+			jx_ir_instruction_t* shlInstr = jx_ir_instrShl(ctx, jx_ir_instrGetOperandVal(instr, 0), jx_ir_constToValue(constI8));
+			jx_ir_bbInsertInstrBefore(ctx, bb, instr, shlInstr);
+			jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(shlInstr));
+			jx_ir_bbRemoveInstr(ctx, bb, instr);
+			jx_ir_instrFree(ctx, instr);
+
+			res = true;
+		}
 	}
 
-	return true;
+	return res;
+}
+
+static bool jir_peephole_add(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr)
+{
+	jx_ir_context_t* ctx = pass->m_Ctx;
+	jx_ir_basic_block_t* bb = instr->m_ParentBB;
+
+	bool res = false;
+	jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
+	jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
+	if (constOp1) {
+		if (jx_ir_constIsZero(constOp1)) {
+			// %res = add %val, 0
+			//  => 
+			// replace %res with %val and remove instruction
+			jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
+			jx_ir_bbRemoveInstr(ctx, bb, instr);
+			jx_ir_instrFree(ctx, instr);
+
+			res = true;
+		} else if (jx_ir_typeIsInteger(valOp1->m_Type)) {
+			// Check if we are subtracting the same constant we added in a previous instruction.
+			// E.g. 
+			//   %344 = add i32, i32 %1566, i32 1
+			//   %346 = add i32, i32 %344, i32 -1
+			// => 
+			// replace %346 with %1566
+			//
+			// NOTE: Only do this for integer addition.
+			jx_ir_instruction_t* instrOp0 = jx_ir_valueToInstr(jx_ir_instrGetOperandVal(instr, 0));
+			if (instrOp0 && instrOp0->m_OpCode == JIR_OP_ADD) {
+				jx_ir_constant_t* instrOp0_constOp1 = jx_ir_valueToConst(jx_ir_instrGetOperandVal(instrOp0, 1));
+				if (instrOp0_constOp1 && instrOp0_constOp1->u.m_I64 == -constOp1->u.m_I64) {
+					jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instrOp0, 0));
+					jx_ir_bbRemoveInstr(ctx, bb, instr);
+					jx_ir_instrFree(ctx, instr);
+				}
+			}
+		}
+	}
+
+	return res;
+}
+
+static bool jir_peephole_sub(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr)
+{
+	jx_ir_context_t* ctx = pass->m_Ctx;
+	jx_ir_basic_block_t* bb = instr->m_ParentBB;
+
+	bool res = false;
+	jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
+	jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
+	const bool isInteger = jx_ir_typeIsInteger(valOp1->m_Type);
+	if (constOp1) {
+		if ((isInteger && constOp1->u.m_I64 == 0) || (!isInteger && constOp1->u.m_F64 == 0.0)) {
+			// %res = sub %val, 0
+			//  => 
+			// replace %res with %val and remove instruction
+			jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
+			jx_ir_bbRemoveInstr(ctx, bb, instr);
+			jx_ir_instrFree(ctx, instr);
+
+			res = true;
+		}
+	}
+
+	return res;
+}
+
+static bool jir_peephole_and(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr)
+{
+	jx_ir_context_t* ctx = pass->m_Ctx;
+	jx_ir_basic_block_t* bb = instr->m_ParentBB;
+
+	bool res = false;
+	jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
+	jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
+	JX_CHECK(jx_ir_typeIsIntegral(valOp1->m_Type), "Expected integer type");
+	if (constOp1) {
+		if (jx_ir_constIsZero(constOp1)) {
+			// %res = and %val, 0
+			//  =>
+			// replace %res with 0 and remove instruction
+			jx_ir_constant_t* zero = jx_ir_constGetZero(ctx, instr->super.super.m_Type);
+			jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(zero));
+			jx_ir_bbRemoveInstr(ctx, bb, instr);
+			jx_ir_instrFree(ctx, instr);
+
+			res = true;
+		} else if (jx_ir_constIsOnes(constOp1)) {
+			// %res = and %val, all_ones 
+			//  => 
+			// replace %res with %val and remove instruction
+			jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
+			jx_ir_bbRemoveInstr(ctx, bb, instr);
+			jx_ir_instrFree(ctx, instr);
+
+			res = true;
+		}
+	} else if (jx_ir_instrGetOperandVal(instr, 0) == jx_ir_instrGetOperandVal(instr, 1)) {
+		// %res = and %x, %x => %res = %x
+		JX_NOT_IMPLEMENTED();
+	}
+
+	return res;
+}
+
+static bool jir_peephole_or(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr)
+{
+	jx_ir_context_t* ctx = pass->m_Ctx;
+	jx_ir_basic_block_t* bb = instr->m_ParentBB;
+
+	bool res = false;
+	jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
+	jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
+	JX_CHECK(jx_ir_typeIsIntegral(valOp1->m_Type), "Expected integer type");
+	if (constOp1) {
+		if (jx_ir_constIsZero(constOp1)) {
+			// %res = or %val, 0
+			//  =>
+			// replace %res with %val and remove instruction
+			jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
+			jx_ir_bbRemoveInstr(ctx, bb, instr);
+			jx_ir_instrFree(ctx, instr);
+
+			res = true;
+		} else if (jx_ir_constIsOnes(constOp1)) {
+			// %res = or %val, all_ones 
+			//  => 
+			// replace %res with all ones and remove instruction
+			jx_ir_constant_t* ones = jx_ir_constGetOnes(ctx, instr->super.super.m_Type);
+			jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_constToValue(ones));
+			jx_ir_bbRemoveInstr(ctx, bb, instr);
+			jx_ir_instrFree(ctx, instr);
+			
+			res = true;
+		}
+	} else if (jx_ir_instrGetOperandVal(instr, 0) == jx_ir_instrGetOperandVal(instr, 1)) {
+		// %res = or %x, %x => %res = %x
+		JX_NOT_IMPLEMENTED();
+	}
+
+	return res;
+}
+
+static bool jir_peephole_xor(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr)
+{
+	jx_ir_context_t* ctx = pass->m_Ctx;
+	jx_ir_basic_block_t* bb = instr->m_ParentBB;
+
+	bool res = false;
+	jx_ir_value_t* valOp1 = jx_ir_instrGetOperandVal(instr, 1);
+	jx_ir_constant_t* constOp1 = jx_ir_valueToConst(valOp1);
+	JX_CHECK(jx_ir_typeIsIntegral(valOp1->m_Type), "Expected integer type");
+	if (constOp1) {
+		if (jx_ir_constIsZero(constOp1)) {
+			// %res = xor %val, 0
+			//  =>
+			// replace %res with %val and remove instruction
+			jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
+			jx_ir_bbRemoveInstr(ctx, bb, instr);
+			jx_ir_instrFree(ctx, instr);
+
+			res = true;
+		} else if (jx_ir_constIsOnes(constOp1)) {
+			// If it's a boolean check if the conditional that generated the boolean can be inverted.
+			if (jx_ir_instrToValue(instr)->m_Type->m_Kind == JIR_TYPE_BOOL) {
+				jx_ir_value_t* valOp0 = jx_ir_instrGetOperandVal(instr, 0);
+				jx_ir_instruction_t* instrOp0 = jx_ir_valueToInstr(valOp0);
+				if (jx_ir_opcodeIsSetcc(instrOp0->m_OpCode)) {
+					// Insert a new setcc instruction before the xor with inverted cc and remove the xor.
+					// Dead Instruction Elimination below will remove the original setcc if it's unused.
+					jx_ir_condition_code cc = instrOp0->m_OpCode - JIR_OP_SET_CC_BASE;
+					jx_ir_instruction_t* newSetcc = jx_ir_instrSetCC(ctx, jx_ir_ccInvert(cc), jx_ir_instrGetOperandVal(instrOp0, 0), jx_ir_instrGetOperandVal(instrOp0, 1));
+					jx_ir_bbInsertInstrBefore(ctx, bb, instr, newSetcc);
+
+					// Replace existing value with new instruction
+					jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(newSetcc));
+
+					// Remove old instruction
+					jx_ir_bbRemoveInstr(ctx, bb, instr);
+					jx_ir_instrFree(ctx, instr);
+
+					res = true;
+				}
+			}
+		}
+	}
+
+	return res;
+}
+
+static bool jir_peephole_getElementPtr(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr)
+{
+	jx_ir_context_t* ctx = pass->m_Ctx;
+	jx_ir_basic_block_t* bb = instr->m_ParentBB;
+
+	jx_ir_instruction_t* instrOp0 = jx_ir_valueToInstr(jx_ir_instrGetOperandVal(instr, 0));
+	jx_ir_constant_t* constOp1 = jx_ir_valueToConst(jx_ir_instrGetOperandVal(instr, 1));
+
+	bool res = false;
+	if (jx_array_sizeu(instr->super.m_OperandArr) == 2 && constOp1) {
+		if (constOp1->u.m_I64 < 0) {
+			// %addr1 = getelementptr %ptr, const
+			// %addr2 = getelementptr %addr1, -const
+			//  =>
+			// Replace %addr2 with %ptr
+			// 
+			// Check if the first operand (the pointer) is the result of another GEP with the same
+			// positive constant.
+			if (instrOp0 && instrOp0->m_OpCode == JIR_OP_GET_ELEMENT_PTR && jx_array_sizeu(instrOp0->super.m_OperandArr) == 2) {
+				jx_ir_constant_t* instrOp0_constOp1 = jx_ir_valueToConst(jx_ir_instrGetOperandVal(instrOp0, 1));
+				if (instrOp0_constOp1 && instrOp0_constOp1->u.m_I64 == -constOp1->u.m_I64) {
+					jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instrOp0, 0));
+					jx_ir_bbRemoveInstr(ctx, bb, instr);
+					jx_ir_instrFree(ctx, instr);
+					res = true;
+				}
+			}
+		} else if (constOp1->u.m_I64 == 0) {
+			// TODO: Can I do the same if there are more than 1 indices and they are all 0?
+			// %addr = getelementptr %ptr, 0
+			//  =>
+			// Replace %addr with %ptr
+			jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrGetOperandVal(instr, 0));
+			jx_ir_bbRemoveInstr(ctx, bb, instr);
+			jx_ir_instrFree(ctx, instr);
+			res = true;
+		}
+	}
+
+#if 0
+	if (!res) {
+		// Try to merge getelementptrs 
+		// TODO: If constant is not 0 it might be beneficial to insert an add instruction to the first 
+		// index and merge GEPs either way.
+		if (constOp1 && constOp1->u.m_I64 == 0 && instrOp0 && instrOp0->m_OpCode == JIR_OP_GET_ELEMENT_PTR) {
+			jx_ir_value_t* ptr = jx_ir_instrGetOperandVal(instrOp0, 0);
+
+			const uint32_t instrOp0_numOperands = (uint32_t)jx_array_sizeu(instrOp0->super.m_OperandArr);
+			const uint32_t instr_numOperands = (uint32_t)jx_array_sizeu(instr->super.m_OperandArr);
+			uint32_t numIndices = 0
+				+ (instrOp0_numOperands - 1)
+				+ (instr_numOperands - 2)
+				;
+			jx_ir_value_t** indices = (jx_ir_value_t**)JX_ALLOC(pass->m_Allocator, sizeof(jx_ir_value_t*) * numIndices);
+			if (!indices) {
+				return false;
+			}
+
+			for (uint32_t iOperand = 1; iOperand < instrOp0_numOperands; ++iOperand) {
+				indices[iOperand - 1] = jx_ir_instrGetOperandVal(instrOp0, iOperand);
+			}
+			for (uint32_t iOperand = 2; iOperand < instr_numOperands; ++iOperand) {
+				indices[instrOp0_numOperands + iOperand - 3] = jx_ir_instrGetOperandVal(instr, iOperand);
+			}
+
+			jx_ir_instruction_t* newGEPInstr = jx_ir_instrGetElementPtr(ctx, ptr, numIndices, indices);
+			jx_ir_bbInsertInstrBefore(ctx, bb, instr, newGEPInstr);
+			jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(newGEPInstr));
+			jx_ir_bbRemoveInstr(ctx, bb, instr);
+			jx_ir_instrFree(ctx, instr);
+
+			JX_FREE(pass->m_Allocator, indices);
+
+			res = true;
+		}
+	}
+#endif
+
+	return res;
+}
+
+static bool jir_peephole_isOnlyPhiInBlock(jx_ir_basic_block_t* bb, jx_ir_instruction_t* instr)
+{
+	JX_CHECK(instr->m_OpCode == JIR_OP_PHI, "Not a phi instruction.");
+	bool hasOtherPhi = false;
+	jx_ir_instruction_t* bbInstr = bb->m_InstrListHead;
+	while (bbInstr->m_OpCode == JIR_OP_PHI) {
+		if (bbInstr != instr) {
+			hasOtherPhi = true;
+			break;
+		}
+		bbInstr = bbInstr->m_Next;
+	}
+
+	return !hasOtherPhi;
+}
+
+static bool jir_peephole_phi(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr)
+{
+	jx_ir_context_t* ctx = pass->m_Ctx;
+	jx_ir_function_t* func = pass->m_Func;
+	jx_ir_basic_block_t* bb = instr->m_ParentBB;
+
+	bool res = false;
+
+	if (jx_ir_instrToValue(instr)->m_Type->m_Kind == JIR_TYPE_BOOL && (uint32_t)jx_array_sizeu(instr->super.m_OperandArr) == 4 && jir_peephole_isOnlyPhiInBlock(bb, instr)) {
+		// Try to simplify the logic around 
+		//   %cmp = phi bool [true, %BB1], [false, %BB2]
+		// by rewriting branches on predecessors.
+		JX_CHECK(jx_array_sizeu(bb->m_PredArr) == 2, "Invalid phi instruction?");
+		jx_ir_constant_t* constTrue = jx_ir_valueToConst(jx_ir_instrGetOperandVal(instr, 0));
+		jx_ir_constant_t* constFalse = jx_ir_valueToConst(jx_ir_instrGetOperandVal(instr, 2));
+		jx_ir_basic_block_t* bbTrue = jx_ir_valueToBasicBlock(jx_ir_instrGetOperandVal(instr, 1));
+		jx_ir_basic_block_t* bbFalse = jx_ir_valueToBasicBlock(jx_ir_instrGetOperandVal(instr, 3));
+
+		// NOTE: If both constants are the same it will be handled by the constant folding pass
+		if (constTrue && constFalse && constTrue->u.m_Bool != constFalse->u.m_Bool) {
+			JX_CHECK(bbTrue && bbFalse, "Invalid phi operands?");
+			if (constFalse->u.m_Bool) {
+				// Swap consts and basic blocks so that cTrue/bbTrue is always the true case
+				// and cFalse/bbFalse is the false case.
+				{ jx_ir_constant_t* tmp = constFalse; constFalse = constTrue; constTrue = tmp; }
+				{ jx_ir_basic_block_t* tmp = bbFalse; bbFalse = bbTrue; bbTrue = tmp; }
+			}
+
+			// Both basic blocks should have a single unconditional jump instruction.
+			if (jx_ir_instrIsUncondBranch(bbTrue->m_InstrListHead) && jx_ir_instrIsUncondBranch(bbFalse->m_InstrListHead)) {
+				JX_CHECK(!bbTrue->m_InstrListHead->m_Next && !bbFalse->m_InstrListHead->m_Next, "Expected branch to be the last bb instruction");
+
+				jx_ir_basic_block_t* trueBlockSources[2] = { 0 };
+				jx_ir_basic_block_t* falseBlockSources[2] = { 0 };
+				uint32_t numTrueBlockSources = 0;
+				uint32_t numFalseBlockSources = 0;
+
+				jx_ir_use_t* bbTrueUse = bbTrue->super.m_UsesListHead;
+				while (bbTrueUse) {
+					jx_ir_instruction_t* userInstr = jx_ir_valueToInstr(jx_ir_userToValue(bbTrueUse->m_User));
+					if (userInstr && jx_ir_instrIsCondBranch(userInstr)) {
+						if (numTrueBlockSources < 2) {
+							trueBlockSources[numTrueBlockSources++] = userInstr->m_ParentBB;
+						} else {
+							++numTrueBlockSources;
+							break;
+						}
+					}
+
+					bbTrueUse = bbTrueUse->m_Next;
+				}
+
+				jx_ir_use_t* bbFalseUse = bbFalse->super.m_UsesListHead;
+				while (bbFalseUse) {
+					jx_ir_instruction_t* userInstr = jx_ir_valueToInstr(jx_ir_userToValue(bbFalseUse->m_User));
+					if (userInstr && jx_ir_instrIsCondBranch(userInstr)) {
+						if (numFalseBlockSources < 2) {
+							falseBlockSources[numFalseBlockSources++] = userInstr->m_ParentBB;
+						} else {
+							++numFalseBlockSources;
+							break;
+						}
+					}
+
+					bbFalseUse = bbFalseUse->m_Next;
+				}
+
+				if (numTrueBlockSources == 2 && numFalseBlockSources == 1) {
+					// bb0:
+					//   ...
+					//   %cmp1 = setne bool, ...
+					//   br bool %cmp1, label %bbTrue, label %bb1
+					// bb1:
+					//   ...
+					//   %cmp2 = setne bool, ...
+					//   br bool %cmp2, label %bbTrue, label %bbFalse
+					// bbFalse:
+					//   br label %bbJoin
+					// bbTrue:
+					//   br label %bbJoin
+					// bbJoin:
+					//   %cmpOr = phi bool [true, %bbTrue], [false, %bbFalse]
+					//   ...
+					//   br bool %cmpOr, ...
+					// 
+					//  =>
+					// 
+					// bb0:
+					//   ...
+					//   %cmp1 = setne bool, ...
+					//   br bool %cmp1, label %bbJoin, label %bb1
+					// bb1:
+					//   ...
+					//   %cmp2 = setne bool, ...
+					//   br label %bbJoin
+					// bbJoin:
+					//   %cmpOr = phi bool [true, %bb0], [%cmp2, %bb1]
+					//   ...
+					//   br bool %cmpOr, ...
+					// 
+					jx_ir_basic_block_t* secondBB = falseBlockSources[0];
+					jx_ir_basic_block_t* firstBB = trueBlockSources[0] == secondBB
+						? trueBlockSources[1]
+						: trueBlockSources[0]
+						;
+
+					jx_ir_instruction_t* firstBBLastInstr = jx_ir_bbGetLastInstr(ctx, firstBB);
+					JX_CHECK(jx_ir_instrIsCondBranch(firstBBLastInstr), "!!!");
+					jx_ir_instruction_t* secondBBLastInstr = jx_ir_bbGetLastInstr(ctx, secondBB);
+					JX_CHECK(jx_ir_instrIsCondBranch(secondBBLastInstr), "!!!");
+
+					const bool operandsOK = true
+						&& jx_ir_instrGetOperandVal(firstBBLastInstr, 1) == jx_ir_bbToValue(bbTrue)
+						&& jx_ir_instrGetOperandVal(secondBBLastInstr, 1) == jx_ir_bbToValue(bbTrue)
+						&& jx_ir_instrGetOperandVal(secondBBLastInstr, 2) == jx_ir_bbToValue(bbFalse)
+						;
+					if (operandsOK) {
+						// Replace conditional branch of first block
+						jx_ir_instruction_t* firstBBNewBranch = jx_ir_instrBranchIf(ctx, jx_ir_instrGetOperandVal(firstBBLastInstr, 0), bb, jx_ir_valueToBasicBlock(jx_ir_instrGetOperandVal(firstBBLastInstr, 2)));
+						jx_ir_bbRemoveInstr(ctx, firstBB, firstBBLastInstr);
+						jx_ir_bbAppendInstr(ctx, firstBB, firstBBNewBranch);
+						jx_ir_instrFree(ctx, firstBBLastInstr);
+
+						// Replace conditional branch of second block.
+						jx_ir_value_t* secondBBCondVal = jx_ir_instrGetOperandVal(secondBBLastInstr, 0);
+						jx_ir_instruction_t* secondBBNewBranch = jx_ir_instrBranch(ctx, bb);
+						jx_ir_bbRemoveInstr(ctx, secondBB, secondBBLastInstr);
+						jx_ir_bbAppendInstr(ctx, secondBB, secondBBNewBranch);
+						jx_ir_instrFree(ctx, secondBBLastInstr);
+
+						// Replace phi with new phi
+						jx_ir_instruction_t* newPhi = jx_ir_instrPhi(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_BOOL));
+						jx_ir_instrPhiAddValue(ctx, newPhi, firstBB, jx_ir_constToValue(jx_ir_constGetBool(ctx, true)));
+						jx_ir_instrPhiAddValue(ctx, newPhi, secondBB, secondBBCondVal);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(newPhi));
+						jx_ir_bbPrependInstr(ctx, bb, newPhi);
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+
+						// Remove basic true/false blocks in order to update the CFG
+						JX_CHECK(!bbTrue->super.m_UsesListHead, "!!!");
+						JX_CHECK(!bbFalse->super.m_UsesListHead, "!!!");
+						jx_ir_funcRemoveBasicBlock(ctx, func, bbTrue);
+						jx_ir_funcRemoveBasicBlock(ctx, func, bbFalse);
+						jx_ir_bbFree(ctx, bbTrue);
+						jx_ir_bbFree(ctx, bbFalse);
+
+						res = true;
+					}
+				} else if (numTrueBlockSources == 1 && numFalseBlockSources == 2) {
+					// bb0:
+					//   ...
+					//   %cmp1 = setlt bool, ...
+					//   br bool %cmp1, label %bb1, label %bbFalse
+					// bb1:
+					//   ...
+					//   %cmp2 = setlt bool, ...
+					//   br bool %cmp2, label %bbTrue, label %bbFalse
+					// bbFalse:
+					//   br label %bbJoin
+					// bbTrue:
+					//   br label %bbJoin
+					// bbJoin:
+					//   %cmpAnd = phi bool [true, %bbTrue], [false, %bbFalse]
+					//   ...
+					//   br bool %cmpAnd, ...
+					// 
+					//  =>
+					// 
+					// bb0:
+					//   ...
+					//   %cmp1 = setlt bool, ...
+					//   br bool %cmp1, label %bb1, label %bbJoin
+					// bb1:
+					//   ...
+					//   %cmp2 = setlt bool, ...
+					//   br label %bbJoin
+					// bbJoin:
+					//   %cmpAnd = phi bool [%cmp2, %bb1], [false, %bb0]
+					//   ...
+					//   br bool %cmpAnd, ...
+					// 
+					jx_ir_basic_block_t* secondBB = trueBlockSources[0];
+					jx_ir_basic_block_t* firstBB = falseBlockSources[0] == secondBB
+						? falseBlockSources[1]
+						: falseBlockSources[0]
+						;
+
+					jx_ir_instruction_t* firstBBLastInstr = jx_ir_bbGetLastInstr(ctx, firstBB);
+					JX_CHECK(jx_ir_instrIsCondBranch(firstBBLastInstr), "!!!");
+					jx_ir_instruction_t* secondBBLastInstr = jx_ir_bbGetLastInstr(ctx, secondBB);
+					JX_CHECK(jx_ir_instrIsCondBranch(secondBBLastInstr), "!!!");
+
+					const bool operandsOK = true
+						&& jx_ir_instrGetOperandVal(firstBBLastInstr, 2) == jx_ir_bbToValue(bbFalse)
+						&& jx_ir_instrGetOperandVal(secondBBLastInstr, 1) == jx_ir_bbToValue(bbTrue)
+						&& jx_ir_instrGetOperandVal(secondBBLastInstr, 2) == jx_ir_bbToValue(bbFalse)
+						;
+					if (operandsOK) {
+						// Replace conditional branch of first block
+						jx_ir_instruction_t* firstBBNewBranch = jx_ir_instrBranchIf(ctx, jx_ir_instrGetOperandVal(firstBBLastInstr, 0), jx_ir_valueToBasicBlock(jx_ir_instrGetOperandVal(firstBBLastInstr, 1)), bb);
+						jx_ir_bbRemoveInstr(ctx, firstBB, firstBBLastInstr);
+						jx_ir_bbAppendInstr(ctx, firstBB, firstBBNewBranch);
+						jx_ir_instrFree(ctx, firstBBLastInstr);
+
+						// Replace conditional branch of second block.
+						jx_ir_value_t* secondBBCondVal = jx_ir_instrGetOperandVal(secondBBLastInstr, 0);
+						jx_ir_instruction_t* secondBBNewBranch = jx_ir_instrBranch(ctx, bb);
+						jx_ir_bbRemoveInstr(ctx, secondBB, secondBBLastInstr);
+						jx_ir_bbAppendInstr(ctx, secondBB, secondBBNewBranch);
+						jx_ir_instrFree(ctx, secondBBLastInstr);
+
+						// Replace phi with new phi
+						jx_ir_instruction_t* newPhi = jx_ir_instrPhi(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_BOOL));
+						jx_ir_instrPhiAddValue(ctx, newPhi, firstBB, jx_ir_constToValue(jx_ir_constGetBool(ctx, false)));
+						jx_ir_instrPhiAddValue(ctx, newPhi, secondBB, secondBBCondVal);
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), jx_ir_instrToValue(newPhi));
+						jx_ir_bbPrependInstr(ctx, bb, newPhi);
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+
+						// Remove basic true/false blocks in order to update the CFG
+						JX_CHECK(!bbTrue->super.m_UsesListHead, "!!!");
+						JX_CHECK(!bbFalse->super.m_UsesListHead, "!!!");
+						jx_ir_funcRemoveBasicBlock(ctx, func, bbTrue);
+						jx_ir_funcRemoveBasicBlock(ctx, func, bbFalse);
+						jx_ir_bbFree(ctx, bbTrue);
+						jx_ir_bbFree(ctx, bbFalse);
+
+						res = true;
+					}
+				} else {
+					// Don't know what to do.
+					// TODO: DEBUG: Triggers on c-testsuite/00033.c
+//					JX_NOT_IMPLEMENTED();
+				}
+			}
+		}
+	}
+
+	// TODO: 
+	// 2. phi type, [val, BB1], [val, BB2], [val, BB3], ..., [other_val, BBN] => Simplify conditionals
+
+	return res;
+}
+
+static bool jir_peephole_branch(jir_func_pass_peephole_t* pass, jx_ir_instruction_t* instr)
+{
+	jx_ir_context_t* ctx = pass->m_Ctx;
+	jx_ir_basic_block_t* bb = instr->m_ParentBB;
+	
+	bool res = false;
+	if (jx_ir_instrIsCondBranch(instr)) {
+		// Try to remove unneeded conditional branches (usually appear from dead code, like asserts in release builds).
+		// E.g. 
+		//   br %bool_val, %bb1, %bb2;
+		// bb1:
+		//   br %bbJoin;
+		// bb2:
+		//   br %bbJoin;
+		// bbJoin:
+		//   No phi instructions here.
+		//
+		// In the example above the conditional branch on %bool_val can safely be turned into an unconditional
+		// branch to bbJoin, since there are no phi instructions which depend on the control flow.
+		jx_ir_value_t* condVal = jx_ir_instrGetOperandVal(instr, 0);
+		jx_ir_basic_block_t* bbTrue = jx_ir_valueToBasicBlock(jx_ir_instrGetOperandVal(instr, 1));
+		jx_ir_basic_block_t* bbFalse = jx_ir_valueToBasicBlock(jx_ir_instrGetOperandVal(instr, 2));
+		if (jx_ir_instrIsUncondBranch(bbTrue->m_InstrListHead) && jx_ir_instrIsUncondBranch(bbFalse->m_InstrListHead)) {
+			jx_ir_basic_block_t* bbTrueTarget = jx_ir_valueToBasicBlock(jx_ir_instrGetOperandVal(bbTrue->m_InstrListHead, 0));
+			jx_ir_basic_block_t* bbFalseTarget = jx_ir_valueToBasicBlock(jx_ir_instrGetOperandVal(bbFalse->m_InstrListHead, 0));
+			if (bbTrueTarget == bbFalseTarget) {
+				jx_ir_basic_block_t* bbJoin = bbTrueTarget;
+				if (bbJoin->m_InstrListHead->m_OpCode != JIR_OP_PHI) {
+					jx_ir_instruction_t* newBranchInstr = jx_ir_instrBranch(ctx, bbJoin);
+					jx_ir_bbRemoveInstr(ctx, bb, instr);
+					jx_ir_instrFree(ctx, instr);
+					jx_ir_bbAppendInstr(ctx, bb, newBranchInstr);
+
+					// If the conditional val was an instruction and it's now dead, remove it
+					// in order to allow further such simplifications in the next pass.
+					jx_ir_instruction_t* condValInstr = jx_ir_valueToInstr(condVal);
+					if (condValInstr && jx_ir_instrIsDead(condValInstr)) {
+						jx_ir_bbRemoveInstr(ctx, bb, condValInstr);
+						jx_ir_instrFree(ctx, condValInstr);
+					}
+				}
+			}
+		}
+	}
+
+	return res;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -2936,7 +3431,6 @@ static void jir_funcPass_deadCodeEliminationDestroy(jx_ir_function_pass_o* inst,
 static bool jir_funcPass_deadCodeEliminationRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func);
 
 static uint32_t jir_dce_bbVisit(jir_func_pass_dce_t* pass, jx_ir_basic_block_t* bb);
-static bool jir_dce_instrIsDead(jx_ir_instruction_t* instr);
 
 bool jx_ir_funcPassCreate_deadCodeElimination(jx_ir_function_pass_t* pass, jx_allocator_i* allocator)
 {
@@ -3039,7 +3533,7 @@ static uint32_t jir_dce_bbVisit(jir_func_pass_dce_t* pass, jx_ir_basic_block_t* 
 	while (instr->m_Next) {
 		jx_ir_instruction_t* instrNext = instr->m_Next;
 
-		if (jir_dce_instrIsDead(instr)) {
+		if (jx_ir_instrIsDead(instr)) {
 			jx_ir_bbRemoveInstr(pass->m_Ctx, bb, instr);
 			jx_ir_instrFree(pass->m_Ctx, instr);
 			++numInstrRemoved;
@@ -3073,19 +3567,6 @@ static uint32_t jir_dce_bbVisit(jir_func_pass_dce_t* pass, jx_ir_basic_block_t* 
 	}
 
 	return numInstrRemoved;
-}
-
-static bool jir_dce_instrIsDead(jx_ir_instruction_t* instr)
-{
-	if (instr->super.super.m_UsesListHead) {
-		return false;
-	}
-
-	if (instr->m_OpCode == JIR_OP_BRANCH || instr->m_OpCode == JIR_OP_CALL || instr->m_OpCode == JIR_OP_RET || instr->m_OpCode == JIR_OP_STORE) {
-		return false;
-	}
-
-	return true;
 }
 
 //////////////////////////////////////////////////////////////////////////
