@@ -1761,7 +1761,7 @@ static void jmir_regPrint(jx_mir_context_t* ctx, jx_mir_reg_t reg, jx_mir_type_k
 	}
 }
 
-void jx_mir_opPrint(jx_mir_context_t* ctx, jx_mir_operand_t* op, jx_string_buffer_t* sb)
+void jx_mir_opPrint(jx_mir_context_t* ctx, jx_mir_operand_t* op, bool memRefSkipSize, jx_string_buffer_t* sb)
 {
 	switch (op->m_Kind) {
 	case JMIR_OPERAND_REGISTER: {
@@ -1800,33 +1800,37 @@ void jx_mir_opPrint(jx_mir_context_t* ctx, jx_mir_operand_t* op, jx_string_buffe
 		jx_strbuf_printf(sb, "bb.%u", op->u.m_BB->m_ID);
 	} break;
 	case JMIR_OPERAND_MEMORY_REF: {
-		switch (op->m_Type) {
-		case JMIR_TYPE_I8:
-			jx_strbuf_pushCStr(sb, "byte ptr");
-			break;
-		case JMIR_TYPE_I16:
-			jx_strbuf_pushCStr(sb, "word ptr");
-			break;
-		case JMIR_TYPE_I32:
-		case JMIR_TYPE_F32:
-			jx_strbuf_pushCStr(sb, "dword ptr");
-			break;
-		case JMIR_TYPE_I64:
-		case JMIR_TYPE_PTR:
-		case JMIR_TYPE_F64:
-			jx_strbuf_pushCStr(sb, "qword ptr");
-			break;
-		case JMIR_TYPE_F128:
-			jx_strbuf_pushCStr(sb, "xmmword ptr");
-			break;
-		case JMIR_TYPE_VOID:
-			JX_NOT_IMPLEMENTED();
-			break;
-		default:
-			JX_CHECK(false, "Unknown kind of type!");
-			break;
+		if (!memRefSkipSize) {
+			switch (op->m_Type) {
+			case JMIR_TYPE_I8:
+				jx_strbuf_pushCStr(sb, "byte ptr");
+				break;
+			case JMIR_TYPE_I16:
+				jx_strbuf_pushCStr(sb, "word ptr");
+				break;
+			case JMIR_TYPE_I32:
+			case JMIR_TYPE_F32:
+				jx_strbuf_pushCStr(sb, "dword ptr");
+				break;
+			case JMIR_TYPE_I64:
+			case JMIR_TYPE_PTR:
+			case JMIR_TYPE_F64:
+				jx_strbuf_pushCStr(sb, "qword ptr");
+				break;
+			case JMIR_TYPE_F128:
+				jx_strbuf_pushCStr(sb, "xmmword ptr");
+				break;
+			case JMIR_TYPE_VOID:
+				JX_NOT_IMPLEMENTED();
+				break;
+			default:
+				JX_CHECK(false, "Unknown kind of type!");
+				break;
+			}
+			jx_strbuf_push(sb, " ", 1);
 		}
-		jx_strbuf_pushCStr(sb, " [");
+
+		jx_strbuf_pushCStr(sb, "[");
 		bool insertOp = false;
 		if (op->u.m_MemRef->m_BaseReg.m_ID != JMIR_HWREGID_NONE) {
 			jmir_regPrint(ctx, op->u.m_MemRef->m_BaseReg, JMIR_TYPE_PTR, sb);
@@ -1886,7 +1890,7 @@ void jx_mir_instrPrint(jx_mir_context_t* ctx, jx_mir_instruction_t* instr, jx_st
 		if (iOperand != 0) {
 			jx_strbuf_pushCStr(sb, ", ");
 		}
-		jx_mir_opPrint(ctx, instr->m_Operands[iOperand], sb);
+		jx_mir_opPrint(ctx, instr->m_Operands[iOperand], instr->m_OpCode == JMIR_OP_LEA, sb);
 	}
 
 	jx_strbuf_pushCStr(sb, ";\n");
