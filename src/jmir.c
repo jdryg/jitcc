@@ -189,6 +189,8 @@ static void jmir_frameMakeRoomForCall(jx_mir_context_t* ctx, jx_mir_frame_info_t
 static void jmir_frameFinalize(jx_mir_context_t* ctx, jx_mir_frame_info_t* frameInfo);
 static uint64_t jmir_funcProtoHashCallback(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
 static int32_t jmir_funcProtoCompareCallback(const void* a, const void* b, void* udata);
+static jx_mir_scc_t* jmir_sccAlloc(jx_mir_context_t* ctx);
+static void jmir_sccFree(jx_mir_context_t* ctx, jx_mir_scc_t* scc);
 
 jx_mir_context_t* jx_mir_createContext(jx_allocator_i* allocator)
 {
@@ -706,7 +708,7 @@ void jx_mir_funcAppendBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func,
 		bb->m_Prev = tail;
 	}
 
-	func->m_Flags &= ~JMIR_FUNC_FLAGS_CFG_VALID_Msk;
+	func->m_Flags &= ~(JMIR_FUNC_FLAGS_CFG_VALID_Msk | JMIR_FUNC_FLAGS_SCC_VALID_Msk);
 }
 
 void jx_mir_funcPrependBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb)
@@ -723,7 +725,7 @@ void jx_mir_funcPrependBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func
 	}
 	func->m_BasicBlockListHead = bb;
 
-	func->m_Flags &= ~JMIR_FUNC_FLAGS_CFG_VALID_Msk;
+	func->m_Flags &= ~(JMIR_FUNC_FLAGS_CFG_VALID_Msk | JMIR_FUNC_FLAGS_SCC_VALID_Msk);
 }
 
 bool jx_mir_funcRemoveBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb)
@@ -751,7 +753,7 @@ bool jx_mir_funcRemoveBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func,
 	bb->m_Next = NULL;
 	bb->m_ID = UINT32_MAX;
 
-	func->m_Flags &= ~JMIR_FUNC_FLAGS_CFG_VALID_Msk;
+	func->m_Flags &= ~(JMIR_FUNC_FLAGS_CFG_VALID_Msk | JMIR_FUNC_FLAGS_SCC_VALID_Msk);
 
 	return true;
 }
@@ -968,6 +970,180 @@ bool jx_mir_funcUpdateLiveness(jx_mir_context_t* ctx, jx_mir_function_t* func)
 	jx_bitsetDestroy(prevLiveOut, ctx->m_Allocator);
 
 	func->m_Flags |= JMIR_FUNC_FLAGS_LIVENESS_VALID_Msk;
+
+	return true;
+}
+
+typedef struct jmir_scc_list_t
+{
+	jx_mir_scc_t* m_Head;
+	jx_mir_scc_t* m_Tail;
+} jmir_scc_list_t;
+
+typedef struct jmir_scc_tarjan_state_t
+{
+	jx_mir_basic_block_t** m_Stack;
+	uint32_t m_NextIndex;
+	JX_PAD(4);
+} jmir_scc_tarjan_state_t;
+
+static bool jmir_funcStrongConnect(jx_mir_context_t* ctx, jmir_scc_list_t* sccList, jmir_scc_tarjan_state_t* sccState, jx_mir_basic_block_t* bb)
+{
+	const uint32_t id = sccState->m_NextIndex++;
+	bb->m_SCCInfo.m_ID = id;
+	bb->m_SCCInfo.m_LowLink = id;
+
+	jx_array_push_back(sccState->m_Stack, bb);
+	bb->m_SCCInfo.m_OnStack = true;
+
+	const uint32_t numSucc = (uint32_t)jx_array_sizeu(bb->m_SuccArr);
+	for (uint32_t iSucc = 0; iSucc < numSucc; ++iSucc) {
+		jx_mir_basic_block_t* succ = bb->m_SuccArr[iSucc];
+		if (succ->m_SCCInfo.m_ID == UINT32_MAX) {
+			// Successor w has not yet been visited; recurse on it
+			jmir_funcStrongConnect(ctx, sccList, sccState, succ);
+			bb->m_SCCInfo.m_LowLink = jx_min_u32(bb->m_SCCInfo.m_LowLink, succ->m_SCCInfo.m_LowLink);
+		} else if (succ->m_SCCInfo.m_OnStack) {
+			// Successor w is in stack S and hence in the current SCC
+			bb->m_SCCInfo.m_LowLink = jx_min_u32(bb->m_SCCInfo.m_LowLink, succ->m_SCCInfo.m_ID);
+		} else {
+			// If w is not on stack, then (v, w) is an edge pointing to 
+			// an SCC already found and must be ignored
+		}
+	}
+
+	// If v is a root node, pop the stack and generate an SCC
+	if (bb->m_SCCInfo.m_LowLink == bb->m_SCCInfo.m_ID) {
+		jx_mir_scc_t* scc = jmir_sccAlloc(ctx);
+		if (!scc) {
+			return false;
+		}
+
+		jx_mir_basic_block_t* stackBB = NULL;
+		do {
+			stackBB = jx_array_pop_back(sccState->m_Stack);
+			stackBB->m_SCCInfo.m_OnStack = false;
+			stackBB->m_SCCInfo.m_SCC = scc;
+			jx_array_push_back(scc->m_BasicBlockArr, stackBB);
+		} while (stackBB != bb);
+
+		if (!sccList->m_Head) {
+			sccList->m_Head = scc;
+			sccList->m_Tail = scc;
+		} else {
+			scc->m_Prev = sccList->m_Tail;
+			sccList->m_Tail->m_Next = scc;
+			sccList->m_Tail = scc;
+		}
+	}
+
+	return true;
+}
+
+static void jmir_funcFindSCCs(jx_mir_context_t* ctx, jmir_scc_list_t* sccList, uint32_t depth, jx_mir_basic_block_t** bbList, uint32_t numBasicBlocks)
+{
+	// Reset SCC state of all basic blocks
+	for (uint32_t iBB = 0; iBB < numBasicBlocks; ++iBB) {
+		jx_mir_bb_scc_info_t* sccInfo = &bbList[iBB]->m_SCCInfo;
+		sccInfo->m_ID = UINT32_MAX;
+		sccInfo->m_LowLink = UINT32_MAX;
+		sccInfo->m_OnStack = false;
+		sccInfo->m_SCC = NULL;
+	}
+
+	// https://en.wikipedia.org/wiki/Tarjan%27s_strongly_connected_components_algorithm
+	jmir_scc_tarjan_state_t* sccState = &(jmir_scc_tarjan_state_t){ 0 };
+	sccState->m_Stack = (jx_mir_basic_block_t**)jx_array_create(ctx->m_Allocator);
+	jx_array_reserve(sccState->m_Stack, numBasicBlocks);
+
+	for (uint32_t iBB = 0; iBB < numBasicBlocks; ++iBB) {
+		jx_mir_bb_scc_info_t* sccInfo = &bbList[iBB]->m_SCCInfo;
+		if (sccInfo->m_ID == UINT32_MAX) {
+			jmir_funcStrongConnect(ctx, sccList, sccState, bbList[iBB]);
+		}
+	}
+
+	jx_array_free(sccState->m_Stack);
+
+	jx_mir_scc_t* scc = sccList->m_Head;
+	while (scc) {
+		scc->m_Depth = depth;
+
+		const uint32_t numSCCNodes = (uint32_t)jx_array_sizeu(scc->m_BasicBlockArr);
+		if (numSCCNodes != 1) {
+			// Check if this a natural loop (single entry into the SCC).
+			// If it is "remove" the entry node from the node list and recursively
+			// find all sub-SCCs.
+			// 
+			// For a node to be the entry node it must be the only node with a predecessor
+			// from another SCC.
+			uint32_t entryNodeID = UINT32_MAX;
+			uint32_t numEntries = 0;
+			for (uint32_t iNode = 0; iNode < numSCCNodes && numEntries <= 1; ++iNode) {
+				jx_mir_basic_block_t* bb = scc->m_BasicBlockArr[iNode];
+				const uint32_t numPreds = (uint32_t)jx_array_sizeu(bb->m_PredArr);
+				for (uint32_t iPred = 0; iPred < numPreds; ++iPred) {
+					jx_mir_basic_block_t* pred = bb->m_PredArr[iPred];
+					if (pred->m_SCCInfo.m_SCC != scc) {
+						entryNodeID = iNode;
+						++numEntries;
+					}
+				}
+			}
+
+			JX_CHECK(numEntries != 0 && entryNodeID != UINT32_MAX, "Unconnected SCC?");
+			if (numEntries == 1) {
+				// This is a single-entry SCC.
+				scc->m_EntryNode = scc->m_BasicBlockArr[entryNodeID];
+				jx_array_del(scc->m_BasicBlockArr, entryNodeID);
+
+				jmir_scc_list_t subList = { 0 };
+				jmir_funcFindSCCs(ctx, &subList, depth + 1, scc->m_BasicBlockArr, (uint32_t)jx_array_sizeu(scc->m_BasicBlockArr));
+				scc->m_FirstChild = subList.m_Head;
+			} else {
+				// This is an irreducible SCC. Cannot dive deeper.
+			}
+		}
+
+		scc = scc->m_Next;
+	}
+}
+
+bool jx_mir_funcUpdateSCCs(jx_mir_context_t* ctx, jx_mir_function_t* func)
+{
+	if ((func->m_Flags & JMIR_FUNC_FLAGS_SCC_VALID_Msk) != 0) {
+		return true;
+	}
+
+	jx_mir_scc_t* scc = func->m_SCCListHead;
+	while (scc) {
+		jx_mir_scc_t* sccNext = scc->m_Next;
+		jmir_sccFree(ctx, scc);
+		scc = sccNext;
+	}
+	func->m_SCCListHead = NULL;
+	func->m_SCCListTail = NULL;
+
+	if (!jx_mir_funcUpdateCFG(ctx, func)) {
+		return false;
+	}
+
+	jx_mir_basic_block_t** bbArr = (jx_mir_basic_block_t**)jx_array_create(ctx->m_Allocator);
+
+	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
+	while (bb) {
+		jx_array_push_back(bbArr, bb);
+		bb = bb->m_Next;
+	}
+
+	jmir_scc_list_t sccList = { 0 };
+	jmir_funcFindSCCs(ctx, &sccList, 0, bbArr, (uint32_t)jx_array_sizeu(bbArr));
+	func->m_SCCListHead = sccList.m_Head;
+	func->m_SCCListTail = sccList.m_Tail;
+	
+	jx_array_free(bbArr);
+
+	func->m_Flags |= JMIR_FUNC_FLAGS_SCC_VALID_Msk;
 
 	return true;
 }
@@ -1194,6 +1370,7 @@ void jx_mir_funcPrint(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_string_
 	if (func->m_BasicBlockListHead) {
 		// TODO: Only update CFG if it's already created by some other code.
 		jx_mir_funcUpdateCFG(ctx, func);
+		jx_mir_funcUpdateSCCs(ctx, func);
 		jx_mir_funcUpdateLiveness(ctx, func);
 	}
 
@@ -1203,6 +1380,12 @@ void jx_mir_funcPrint(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_string_
 	while (bb) {
 		jx_strbuf_printf(sb, "bb.%u:\n", bb->m_ID);
 
+		// Loop depth
+		{
+			jx_strbuf_printf(sb, "  ; loopDepth = %u\n", bb->m_SCCInfo.m_SCC->m_Depth);
+		}
+
+		// CFG
 		{
 			const uint32_t numPred = (uint32_t)jx_array_sizeu(bb->m_PredArr);
 			jx_strbuf_printf(sb, "  ; pred[%u] = { ", numPred);
@@ -1227,6 +1410,7 @@ void jx_mir_funcPrint(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_string_
 			jx_strbuf_pushCStr(sb, " }\n");
 		}
 
+		// Liveness
 		{
 			// Print live-in and live-out sets
 			jx_strbuf_pushCStr(sb, "  ; liveIn = { ");
@@ -1350,7 +1534,7 @@ bool jx_mir_bbAppendInstr(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb, jx_mi
 	bb->m_InstrListTail = instr;
 
 	if (bb->m_ParentFunc) {
-		bb->m_ParentFunc->m_Flags &= ~JMIR_FUNC_FLAGS_CFG_VALID_Msk;
+		bb->m_ParentFunc->m_Flags &= ~(JMIR_FUNC_FLAGS_CFG_VALID_Msk | JMIR_FUNC_FLAGS_SCC_VALID_Msk);
 	}
 
 	return true;
@@ -1374,7 +1558,7 @@ bool jx_mir_bbPrependInstr(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb, jx_m
 	bb->m_InstrListHead = instr;
 
 	if (bb->m_ParentFunc) {
-		bb->m_ParentFunc->m_Flags &= ~JMIR_FUNC_FLAGS_CFG_VALID_Msk;
+		bb->m_ParentFunc->m_Flags &= ~(JMIR_FUNC_FLAGS_CFG_VALID_Msk | JMIR_FUNC_FLAGS_SCC_VALID_Msk);
 	}
 
 	return true;
@@ -1403,7 +1587,7 @@ bool jx_mir_bbInsertInstrBefore(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb,
 	}
 
 	if (bb->m_ParentFunc) {
-		bb->m_ParentFunc->m_Flags &= ~JMIR_FUNC_FLAGS_CFG_VALID_Msk;
+		bb->m_ParentFunc->m_Flags &= ~(JMIR_FUNC_FLAGS_CFG_VALID_Msk | JMIR_FUNC_FLAGS_SCC_VALID_Msk);
 	}
 
 	return true;
@@ -1432,7 +1616,7 @@ bool jx_mir_bbInsertInstrAfter(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb, 
 	}
 
 	if (bb->m_ParentFunc) {
-		bb->m_ParentFunc->m_Flags &= ~JMIR_FUNC_FLAGS_CFG_VALID_Msk;
+		bb->m_ParentFunc->m_Flags &= ~(JMIR_FUNC_FLAGS_CFG_VALID_Msk | JMIR_FUNC_FLAGS_SCC_VALID_Msk);
 	}
 
 	return true;
@@ -1466,7 +1650,7 @@ bool jx_mir_bbRemoveInstr(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb, jx_mi
 	instr->m_Next = NULL;
 
 	if (bb->m_ParentFunc) {
-		bb->m_ParentFunc->m_Flags &= ~JMIR_FUNC_FLAGS_CFG_VALID_Msk;
+		bb->m_ParentFunc->m_Flags &= ~(JMIR_FUNC_FLAGS_CFG_VALID_Msk | JMIR_FUNC_FLAGS_SCC_VALID_Msk);
 	}
 
 	return true;
@@ -2974,6 +3158,13 @@ static jx_mir_operand_t* jmir_funcCreateArgument(jx_mir_context_t* ctx, jx_mir_f
 
 static void jmir_funcFree(jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
+	jx_mir_scc_t* scc = func->m_SCCListHead;
+	while (scc) {
+		jx_mir_scc_t* sccNext = scc->m_Next;
+		jmir_sccFree(ctx, scc);
+		scc = sccNext;
+	}
+
 	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
 	while (bb) {
 		jx_mir_basic_block_t* nextBB = bb->m_Next;
@@ -3169,4 +3360,35 @@ static int32_t jmir_funcProtoCompareCallback(const void* a, const void* b, void*
 	}
 
 	return 0;
+}
+
+static jx_mir_scc_t* jmir_sccAlloc(jx_mir_context_t* ctx)
+{
+	jx_mir_scc_t* scc = (jx_mir_scc_t*)JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_scc_t));
+	if (!scc) {
+		return NULL;
+	}
+
+	jx_memset(scc, 0, sizeof(jx_mir_scc_t));
+	scc->m_BasicBlockArr = (jx_mir_basic_block_t**)jx_array_create(ctx->m_Allocator);
+	if (!scc->m_BasicBlockArr) {
+		jmir_sccFree(ctx, scc);
+		return NULL;
+	}
+
+	return scc;
+}
+
+static void jmir_sccFree(jx_mir_context_t* ctx, jx_mir_scc_t* scc)
+{
+	jx_array_free(scc->m_BasicBlockArr);
+	
+	jx_mir_scc_t* child = scc->m_FirstChild;
+	while (child) {
+		jx_mir_scc_t* childNext = child->m_Next;
+		jmir_sccFree(ctx, child);
+		child = childNext;
+	}
+
+	JX_FREE(ctx->m_Allocator, scc);
 }

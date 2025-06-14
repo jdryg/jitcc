@@ -17,6 +17,7 @@ typedef struct jx_mir_basic_block_t jx_mir_basic_block_t;
 typedef struct jx_mir_function_t jx_mir_function_t;
 typedef struct jx_mir_frame_info_t jx_mir_frame_info_t;
 typedef struct jx_mir_function_pass_t jx_mir_function_pass_t;
+typedef struct jx_mir_scc_t jx_mir_scc_t;
 
 typedef enum jx_mir_type_kind
 {
@@ -419,6 +420,15 @@ typedef struct jx_mir_instruction_t
 	jx_bitset_t* m_LiveOutSet;
 } jx_mir_instruction_t;
 
+typedef struct jx_mir_bb_scc_info_t
+{
+	jx_mir_scc_t* m_SCC;
+	uint32_t m_ID;
+	uint32_t m_LowLink;
+	bool m_OnStack;
+	JX_PAD(7);
+} jx_mir_bb_scc_info_t;
+
 typedef struct jx_mir_basic_block_t
 {
 	jx_mir_basic_block_t* m_Next;
@@ -434,12 +444,27 @@ typedef struct jx_mir_basic_block_t
 	jx_mir_basic_block_t** m_SuccArr;
 	jx_bitset_t* m_LiveInSet;
 	jx_bitset_t* m_LiveOutSet;
+	jx_mir_bb_scc_info_t m_SCCInfo;
 } jx_mir_basic_block_t;
+
+// Strongly Connected Components
+typedef struct jx_mir_scc_t
+{
+	jx_mir_scc_t* m_Next;
+	jx_mir_scc_t* m_Prev;
+	jx_mir_scc_t* m_FirstChild;
+	jx_mir_basic_block_t* m_EntryNode; // If null indicates an irriducible scc (i.e. not a natural loop)
+	jx_mir_basic_block_t** m_BasicBlockArr;
+	uint32_t m_Depth;
+	JX_PAD(4);
+} jx_mir_scc_t;
 
 #define JMIR_FUNC_FLAGS_CFG_VALID_Pos       0
 #define JMIR_FUNC_FLAGS_CFG_VALID_Msk       (1u << JMIR_FUNC_FLAGS_CFG_VALID_Pos)
 #define JMIR_FUNC_FLAGS_LIVENESS_VALID_Pos  1
 #define JMIR_FUNC_FLAGS_LIVENESS_VALID_Msk  (1u << JMIR_FUNC_FLAGS_LIVENESS_VALID_Pos)
+#define JMIR_FUNC_FLAGS_SCC_VALID_Pos       2
+#define JMIR_FUNC_FLAGS_SCC_VALID_Msk       (1u << JMIR_FUNC_FLAGS_SCC_VALID_Pos)
 
 typedef struct jx_mir_function_t
 {
@@ -448,6 +473,8 @@ typedef struct jx_mir_function_t
 	jx_mir_basic_block_t* m_BasicBlockListHead;
 	jx_mir_frame_info_t* m_FrameInfo;
 	jx_mir_operand_t** m_Args;
+	jx_mir_scc_t* m_SCCListHead;
+	jx_mir_scc_t* m_SCCListTail;
 	uint32_t m_NextBasicBlockID;
 	uint32_t m_Flags; // JMIR_FUNC_FLAGS_xxx
 	uint32_t m_NextVirtualRegID[JMIR_REG_CLASS_COUNT];
@@ -507,6 +534,7 @@ bool jx_mir_funcRemoveBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func,
 void jx_mir_funcAllocStackForCall(jx_mir_context_t* ctx, jx_mir_function_t* func, uint32_t numArguments);
 bool jx_mir_funcUpdateCFG(jx_mir_context_t* ctx, jx_mir_function_t* func);
 bool jx_mir_funcUpdateLiveness(jx_mir_context_t* ctx, jx_mir_function_t* func);
+bool jx_mir_funcUpdateSCCs(jx_mir_context_t* ctx, jx_mir_function_t* func);
 uint32_t jx_mir_funcGetRegBitsetSize(jx_mir_context_t* ctx, jx_mir_function_t* func);
 jx_mir_reg_t jx_mir_funcMapBitsetIDToReg(jx_mir_context_t* ctx, jx_mir_function_t* func, uint32_t id);
 uint32_t jx_mir_funcMapRegToBitsetID(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_reg_t reg);

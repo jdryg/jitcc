@@ -621,6 +621,7 @@ static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t
 	pass->m_NumAvailHWRegs[JMIR_REG_CLASS_GP] = jx_bitcount_u64(pass->m_AvailHWRegs[JMIR_REG_CLASS_GP]);
 	pass->m_NumAvailHWRegs[JMIR_REG_CLASS_XMM] = jx_bitcount_u64(pass->m_AvailHWRegs[JMIR_REG_CLASS_XMM]);
 	
+	jx_mir_funcUpdateSCCs(ctx, func);
 	jx_mir_funcUpdateLiveness(ctx, func);
 
 	const uint32_t numNodes = jx_mir_funcGetRegBitsetSize(ctx, func);
@@ -659,6 +660,11 @@ static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t
 	{
 		jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
 		while (bb) {
+			JX_CHECK(bb->m_SCCInfo.m_SCC, "Basic block not a part of an SCC?");
+			jx_mir_scc_t* scc = bb->m_SCCInfo.m_SCC;
+			const uint32_t loopDepth = scc->m_Depth;
+			const uint32_t spillCostDelta = jx_pow_u32(10, loopDepth);
+
 			jx_mir_instruction_t* instr = bb->m_InstrListHead;
 			while (instr) {
 				const jx_bitset_t* instrLiveOutSet = instr->m_LiveOutSet;
@@ -694,8 +700,6 @@ static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t
 				}
 
 				// Update use/def spill cost
-				const uint32_t loopDepth = 0; // TODO: Basic block annotation
-				const uint32_t spillCostDelta = jx_pow_u32(10, loopDepth);
 				{
 					// NOTE: This loop can be merged with the edge loop above.
 					// Keep it here to make the code more clear. It shouldn't really matter...
