@@ -408,7 +408,7 @@ static void jmir_regAlloc_nodeSetState(jmir_func_pass_regalloc_t* pass, jmir_gra
 static jmir_graph_node_t* jmir_regAlloc_getNode(jmir_func_pass_regalloc_t* pass, uint32_t nodeID);
 static bool jmir_nodeIs(const jmir_graph_node_t* node, jmir_graph_node_state state);
 
-static jmir_mov_instr_t* jmir_regAlloc_movAlloc(jmir_func_pass_regalloc_t* pass, jx_mir_instruction_t* instr, jx_mir_annotation_instr_usedef_t* instrUseDefAnnot);
+static jmir_mov_instr_t* jmir_regAlloc_movAlloc(jmir_func_pass_regalloc_t* pass, jx_mir_instruction_t* instr);
 static void jmir_regAlloc_movSetState(jmir_func_pass_regalloc_t* pass, jmir_mov_instr_t* mov, jmir_mov_instr_state state);
 static bool jmir_movIs(const jmir_mov_instr_t* mov, jmir_mov_instr_state state);
 
@@ -661,11 +661,8 @@ static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t
 		while (bb) {
 			jx_mir_instruction_t* instr = bb->m_InstrListHead;
 			while (instr) {
-				jx_mir_annotation_instr_liveness_t* instrLiveAnnot = (jx_mir_annotation_instr_liveness_t*)jx_mir_instrGetAnnotation(ctx, instr, JMIR_ANNOT_INSTR_LIVENESS);
-				JX_CHECK(instrLiveAnnot, "Expected valid liveness annotation");
-
-				jx_mir_annotation_instr_usedef_t* instrUseDefAnnot = (jx_mir_annotation_instr_usedef_t*)jx_mir_instrGetAnnotation(ctx, instr, JMIR_ANNOT_INSTR_USE_DEF);
-				JX_CHECK(instrUseDefAnnot, "Expect valid use/def annotation");
+				const jx_bitset_t* instrLiveOutSet = instr->m_LiveOutSet;
+				jx_mir_instr_usedef_t* instrUseDefAnnot = &instr->m_UseDef;
 
 				// Create edges
 				{
@@ -674,21 +671,21 @@ static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t
 						jmir_graph_node_t* defNode = jmir_regAlloc_getNode(pass, jx_mir_funcMapRegToBitsetID(ctx, func, instrUseDefAnnot->m_Defs[iDef]));
 
 						jx_bitset_iterator_t liveIter;
-						jx_bitsetIterBegin(instrLiveAnnot->m_LiveOutSet, &liveIter, 0);
+						jx_bitsetIterBegin(instrLiveOutSet, &liveIter, 0);
 
-						uint32_t liveID = jx_bitsetIterNext(instrLiveAnnot->m_LiveOutSet, &liveIter);
+						uint32_t liveID = jx_bitsetIterNext(instrLiveOutSet, &liveIter);
 						while (liveID != UINT32_MAX) {
 							jmir_graph_node_t* liveNode = jmir_regAlloc_getNode(pass, liveID);
 							jmir_regAlloc_addEdge(pass, defNode, liveNode);
 
-							liveID = jx_bitsetIterNext(instrLiveAnnot->m_LiveOutSet, &liveIter);
+							liveID = jx_bitsetIterNext(instrLiveOutSet, &liveIter);
 						}
 					}
 				}
 
 				// Create moves
 				if (jx_mir_instrIsMovRegReg(instr)) {
-					jmir_mov_instr_t* mov = jmir_regAlloc_movAlloc(pass, instr, instrUseDefAnnot);
+					jmir_mov_instr_t* mov = jmir_regAlloc_movAlloc(pass, instr);
 					if (!mov) {
 						return false;
 					}
@@ -1314,12 +1311,14 @@ static inline bool jmir_nodeIs(const jmir_graph_node_t* node, jmir_graph_node_st
 	return node->m_State == state;
 }
 
-static jmir_mov_instr_t* jmir_regAlloc_movAlloc(jmir_func_pass_regalloc_t* pass, jx_mir_instruction_t* instr, jx_mir_annotation_instr_usedef_t* instrUseDefAnnot)
+static jmir_mov_instr_t* jmir_regAlloc_movAlloc(jmir_func_pass_regalloc_t* pass, jx_mir_instruction_t* instr)
 {
 	jmir_mov_instr_t* mov = (jmir_mov_instr_t*)JX_ALLOC(pass->m_LinearAllocator, sizeof(jmir_mov_instr_t));
 	if (!mov) {
 		return NULL;
 	}
+
+	jx_mir_instr_usedef_t* instrUseDefAnnot = &instr->m_UseDef;
 
 	jx_memset(mov, 0, sizeof(jmir_mov_instr_t));
 	mov->m_State = JMIR_MOV_STATE_ALLOCATED;
@@ -2735,15 +2734,15 @@ static bool jmir_funcPass_dceRun(jx_mir_function_pass_o* inst, jx_mir_context_t*
 			while (instr) {
 				jx_mir_instruction_t* instrNext = instr->m_Next;
 
-				jx_mir_annotation_instr_usedef_t* instrUseDefAnnot = (jx_mir_annotation_instr_usedef_t*)jx_mir_instrGetAnnotation(ctx, instr, JMIR_ANNOT_INSTR_USE_DEF);
+				jx_mir_instr_usedef_t* instrUseDefAnnot = &instr->m_UseDef;
 				const uint32_t numDefs = instrUseDefAnnot->m_NumDefs;
 				if (numDefs) {
-					jx_mir_annotation_instr_liveness_t* instrLiveAnnot = (jx_mir_annotation_instr_liveness_t*)jx_mir_instrGetAnnotation(ctx, instr, JMIR_ANNOT_INSTR_LIVENESS);
+					const jx_bitset_t* instrLiveOutSet = instr->m_LiveOutSet;
 
 					uint32_t numDeadDefs = 0;
 					for (uint32_t iDef = 0; iDef < numDefs; ++iDef) {
 						jx_mir_reg_t def = instrUseDefAnnot->m_Defs[iDef];
-						if (jx_mir_regIsVirtual(def) && !jx_bitsetIsBitSet(instrLiveAnnot->m_LiveOutSet, jx_mir_funcMapRegToBitsetID(ctx, func, def))) {
+						if (jx_mir_regIsVirtual(def) && !jx_bitsetIsBitSet(instrLiveOutSet, jx_mir_funcMapRegToBitsetID(ctx, func, def))) {
 							++numDeadDefs;
 						}
 					}
@@ -3116,11 +3115,8 @@ static bool jmir_funcPass_simplifyCFGRun(jx_mir_function_pass_o* inst, jx_mir_co
 		while (bb) {
 			jx_mir_basic_block_t* bbNext = bb->m_Next;
 
-			jx_mir_annotation_bb_cfg_t* bbCFGAnnot = (jx_mir_annotation_bb_cfg_t*)jx_mir_bbGetAnnotation(ctx, bb, JMIR_ANNOT_BB_CFG);
-			JX_CHECK(bbCFGAnnot, "Expected valid CFG annotation");
-
-			const uint32_t numPred = (uint32_t)jx_array_sizeu(bbCFGAnnot->m_PredArr);
-			if (numPred == 0 || (numPred == 1 && bbCFGAnnot->m_PredArr[0] == bb)) {
+			const uint32_t numPred = (uint32_t)jx_array_sizeu(bb->m_PredArr);
+			if (numPred == 0 || (numPred == 1 && bb->m_PredArr[0] == bb)) {
 				// Remove the block if it has no predecessors
 				jx_mir_funcRemoveBasicBlock(ctx, func, bb);
 				jx_mir_bbFree(ctx, bb);
@@ -3128,13 +3124,11 @@ static bool jmir_funcPass_simplifyCFGRun(jx_mir_function_pass_o* inst, jx_mir_co
 				numBasicBlocksChanged++;
 				cfgChanged = true;
 			} else if (numPred == 1) {
-				jx_mir_basic_block_t* pred = bbCFGAnnot->m_PredArr[0];
-				jx_mir_annotation_bb_cfg_t* predCFGAnnot = (jx_mir_annotation_bb_cfg_t*)jx_mir_bbGetAnnotation(ctx, pred, JMIR_ANNOT_BB_CFG);
-				JX_CHECK(predCFGAnnot, "Expected valid CFG annotation");
+				jx_mir_basic_block_t* pred = bb->m_PredArr[0];
 
-				const uint32_t numPredSucc = (uint32_t)jx_array_sizeu(predCFGAnnot->m_SuccArr);
+				const uint32_t numPredSucc = (uint32_t)jx_array_sizeu(pred->m_SuccArr);
 				if (numPredSucc == 1) {
-					JX_CHECK(predCFGAnnot->m_SuccArr[0] == bb, "Invalid CFG state");
+					JX_CHECK(pred->m_SuccArr[0] == bb, "Invalid CFG state");
 
 					// Remove the terminator instruction from the predecessor.
 					jx_mir_instruction_t* termInstr = jx_mir_bbGetFirstTerminatorInstr(ctx, pred);
