@@ -2066,7 +2066,6 @@ void jx_mir_instrFree(jx_mir_context_t* ctx, jx_mir_instruction_t* instr)
 
 void jx_mir_instrPrint(jx_mir_context_t* ctx, jx_mir_instruction_t* instr, jx_string_buffer_t* sb)
 {
-	// TODO: lea does not require size prefixes
 	jx_strbuf_printf(sb, "  %s ", kMIROpcodeMnemonic[instr->m_OpCode]);
 	
 	const uint32_t numOperands = instr->m_NumOperands;
@@ -2077,7 +2076,31 @@ void jx_mir_instrPrint(jx_mir_context_t* ctx, jx_mir_instruction_t* instr, jx_st
 		jx_mir_opPrint(ctx, instr->m_Operands[iOperand], instr->m_OpCode == JMIR_OP_LEA, sb);
 	}
 
+#if 1
 	jx_strbuf_pushCStr(sb, ";\n");
+#else
+	jx_strbuf_pushCStr(sb, "; liveOut = { ");
+	{
+		const jx_bitset_t* bs = instr->m_LiveOutSet;
+
+		jx_bitset_iterator_t iter;
+		jx_bitsetIterBegin(bs, &iter, 0);
+
+		bool first = true;
+		uint32_t id = jx_bitsetIterNext(bs, &iter);
+		while (id != UINT32_MAX) {
+			if (!first) {
+				jx_strbuf_pushCStr(sb, ", ");
+			}
+			first = false;
+
+			jx_mir_reg_t reg = jx_mir_funcMapBitsetIDToReg(ctx, instr->m_ParentBB->m_ParentFunc, id);
+			jmir_regPrint(ctx, reg, reg.m_Class == JMIR_REG_CLASS_GP ? JMIR_TYPE_I64 : JMIR_TYPE_F128, sb);
+			id = jx_bitsetIterNext(bs, &iter);
+		}
+	}
+	jx_strbuf_pushCStr(sb, " }\n");
+#endif
 }
 
 jx_mir_instruction_t* jx_mir_mov(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
@@ -3006,6 +3029,15 @@ static bool jmir_instrUpdateUseDefInfo(jx_mir_context_t* ctx, jx_mir_function_t*
 					jmir_instrAddUse(annot, kMIRFuncArgFReg[iArg]);
 				} else {
 					JX_CHECK(false, "Unknown register class");
+				}
+			}
+
+			if ((funcProto->m_Flags & JMIR_FUNC_PROTO_FLAGS_VARARG_Msk) != 0) {
+				for (uint32_t iArg = numArgs; iArg < JX_COUNTOF(kMIRFuncArgIReg); ++iArg) {
+					jmir_instrAddUse(annot, kMIRFuncArgIReg[iArg]);
+				}
+				for (uint32_t iArg = numArgs; iArg < JX_COUNTOF(kMIRFuncArgFReg); ++iArg) {
+					jmir_instrAddUse(annot, kMIRFuncArgFReg[iArg]);
 				}
 			}
 		}
