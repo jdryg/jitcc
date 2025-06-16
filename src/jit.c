@@ -1152,7 +1152,17 @@ bool jx64_test(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src
 		;
 
 	if (dst.m_Type == JX64_OPERAND_REG && src.m_Type == JX64_OPERAND_IMM) {
-		if (!jx64_binary_op_reg_imm(enc, &opcode, 1, 0b000, dst.u.m_Reg, src.u.m_ImmI64, src.m_Size)) {
+		jx_x64_size immSize = src.m_Size;
+		if (immSize == JX64_SIZE_64) {
+			if (!jx64_immFitsIn32Bits(src.u.m_ImmI64)) {
+				JX_CHECK(false, "Immediate cannot be a 64-bit value!");
+				return false;
+			} else {
+				immSize = JX64_SIZE_32;
+			}
+		}
+
+		if (!jx64_binary_op_reg_imm(enc, &opcode, 1, 0b000, dst.u.m_Reg, src.u.m_ImmI64, immSize)) {
 			return false;
 		}
 	} else if (dst.m_Type == JX64_OPERAND_REG && src.m_Type == JX64_OPERAND_REG) {
@@ -2105,15 +2115,6 @@ static bool jx64_math_unary_op(jx_x64_context_t* ctx, uint8_t baseOpcode, uint8_
 	}
 
 	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr->m_Buffer, instr->m_Size);
-}
-
-static inline bool jx64_immFitsIn32Bits(int64_t imm64)
-{
-	const uint64_t upperBits = (uint64_t)imm64 >> 32;
-	return false
-		|| upperBits == 0
-		|| upperBits == 0xFFFFFFFFull
-		;
 }
 
 // adc, add, sub, sbb, or, xor, and, cmp

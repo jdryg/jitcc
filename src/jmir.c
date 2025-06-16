@@ -570,6 +570,7 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 			jx_strbuf_destroy(sb);
 		}
 #endif
+
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_regAlloc, func);
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_removeRedundantMoves, func);
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_redundantConstElimination, func);
@@ -3042,6 +3043,8 @@ static bool jmir_instrUpdateUseDefInfo(jx_mir_context_t* ctx, jx_mir_function_t*
 			}
 		}
 
+		// TODO: If the called function is not an external function we might be able 
+		// to def only the caller-saved regs touched by the function.
 		{
 			const uint32_t numCallerSavedIRegs = JX_COUNTOF(kMIRFuncCallerSavedIReg);
 			for (uint32_t iReg = 0; iReg < numCallerSavedIRegs; ++iReg) {
