@@ -10,6 +10,15 @@
 #include <jlib/memory.h>
 #include <jlib/string.h>
 
+typedef struct jmir_reg_value_item_t
+{
+	jx_mir_reg_t m_Reg;
+	jx_mir_operand_t* m_Value;
+} jmir_reg_value_item_t;
+
+static uint64_t jmir_regValueItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
+static int32_t jmir_regValueItemCompare(const void* a, const void* b, void* udata);
+
 //////////////////////////////////////////////////////////////////////////
 // Remove fallthrough jumps
 //
@@ -31,6 +40,8 @@ static void jmir_funcPass_removeFallthroughJmpDestroy(jx_mir_function_pass_o* in
 
 static bool jmir_funcPass_removeFallthroughJmpRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
+	uint32_t numRedundantJumps = 0;
+
 	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
 	while (bb) {
 		jx_mir_instruction_t* instr = jx_mir_bbGetFirstTerminatorInstr(ctx, bb);
@@ -44,6 +55,7 @@ static bool jmir_funcPass_removeFallthroughJmpRun(jx_mir_function_pass_o* inst, 
 				if (targetBB->m_Kind == JMIR_OPERAND_BASIC_BLOCK && targetBB->u.m_BB == bb->m_Next) {
 					jx_mir_bbRemoveInstr(ctx, bb, instr);
 					jx_mir_instrFree(ctx, instr);
+					++numRedundantJumps;
 				}
 			}
 		}
@@ -51,7 +63,7 @@ static bool jmir_funcPass_removeFallthroughJmpRun(jx_mir_function_pass_o* inst, 
 		bb = bb->m_Next;
 	}
 
-	return false;
+	return numRedundantJumps != 0;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -84,6 +96,8 @@ static void jmir_funcPass_removeRedundantMovesDestroy(jx_mir_function_pass_o* in
 
 static bool jmir_funcPass_removeRedundantMovesRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
+	uint32_t numRedundantMoves = 0;
+
 	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
 	while (bb) {
 		jx_mir_instruction_t* instr = bb->m_InstrListHead;
@@ -102,6 +116,7 @@ static bool jmir_funcPass_removeRedundantMovesRun(jx_mir_function_pass_o* inst, 
 				if (dst->m_Kind == JMIR_OPERAND_REGISTER && src->m_Kind == JMIR_OPERAND_REGISTER && jx_mir_regEqual(dst->u.m_Reg, src->u.m_Reg)) {
 					jx_mir_bbRemoveInstr(ctx, bb, instr);
 					jx_mir_instrFree(ctx, instr);
+					++numRedundantMoves;
 				}
 			}
 
@@ -111,7 +126,7 @@ static bool jmir_funcPass_removeRedundantMovesRun(jx_mir_function_pass_o* inst, 
 		bb = bb->m_Next;
 	}
 
-	return false;
+	return numRedundantMoves != 0;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -136,6 +151,8 @@ static void jmir_funcPass_simplifyCondJmpDestroy(jx_mir_function_pass_o* inst, j
 static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
 	jx_mir_funcUpdateLiveness(ctx, func);
+
+	uint32_t numJumpsSimplified = 0;
 
 	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
 	while (bb) {
@@ -219,6 +236,8 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 									jx_mir_instrFree(ctx, testInstr);
 									jx_mir_instrFree(ctx, setccInstr);
 									jx_mir_instrFree(ctx, instr);
+
+									++numJumpsSimplified;
 								}
 							}
 						}
@@ -242,12 +261,15 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 
 						jx_mir_bbRemoveInstr(ctx, bb, cmpInstr);
 						jx_mir_instrFree(ctx, cmpInstr);
+
+						++numJumpsSimplified;
 					}
 				} else if (instr->m_Prev && instr->m_Prev->m_OpCode == JMIR_OP_AND) {
 					jx_mir_instruction_t* andInstr = instr->m_Prev;
 					jx_mir_operand_t* op0 = andInstr->m_Operands[0];
 					if (op0->m_Kind == JMIR_OPERAND_REGISTER && !jx_bitsetIsBitSet(bb->m_LiveOutSet, jx_mir_funcMapRegToBitsetID(ctx, func, op0->u.m_Reg))) {
 						andInstr->m_OpCode = JMIR_OP_TEST;
+						++numJumpsSimplified;
 					}
 				}
 			}
@@ -258,9 +280,10 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 		bb = bb->m_Next;
 	}
 
-	return false;
+	return numJumpsSimplified != 0;
 }
 
+#if 0 // Not needed
 //////////////////////////////////////////////////////////////////////////
 // Fix 
 // - mov memDst, memSrc => mov vr, memSrc; mov memDst, vr;
@@ -314,6 +337,7 @@ static bool jmir_funcPass_fixMemMemOpsRun(jx_mir_function_pass_o* inst, jx_mir_c
 
 	return false;
 }
+#endif
 
 //////////////////////////////////////////////////////////////////////////
 // Register allocator using Iterated Register Coalescing algorithm from
@@ -623,7 +647,7 @@ static bool jmir_funcPass_regAllocRun(jx_mir_function_pass_o* inst, jx_mir_conte
 
 	JX_CHECK(iter != JMIR_REGALLOC_MAX_ITERATIONS, "Maximum iterations exceeded?");
 
-	return false;
+	return iter != 0;
 }
 
 static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t* ctx, jx_mir_function_t* func, const jmir_hw_reg_desc_t* gpRegs, const jmir_hw_reg_desc_t* xmmRegs)
@@ -1788,15 +1812,10 @@ static bool jmir_peephole_isFloatConst(jx_mir_operand_t* op, double val)
 		;
 }
 
+#if 0 // Not needed
 //////////////////////////////////////////////////////////////////////////
 // Combine LEAs
 //
-typedef struct jmir_reg_value_item_t
-{
-	jx_mir_reg_t m_Reg;
-	jx_mir_operand_t* m_Value;
-} jmir_reg_value_item_t;
-
 typedef struct jmir_func_pass_combine_leas_t
 {
 	jx_allocator_i* m_Allocator;
@@ -1810,9 +1829,6 @@ static bool jmir_funcPass_combineLEAsRun(jx_mir_function_pass_o* inst, jx_mir_co
 
 static jx_mir_operand_t* jmir_combineLEAs_replaceMemRef(jmir_func_pass_combine_leas_t* pass, jx_mir_type_kind type, jx_mir_memory_ref_t* memRef);
 
-static uint64_t jir_regValueItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
-static int32_t jir_regValueItemCompare(const void* a, const void* b, void* udata);
-
 bool jx_mir_funcPassCreate_combineLEAs(jx_mir_function_pass_t* pass, jx_allocator_i* allocator)
 {
 	jmir_func_pass_combine_leas_t* inst = (jmir_func_pass_combine_leas_t*)JX_ALLOC(allocator, sizeof(jmir_func_pass_combine_leas_t));
@@ -1823,7 +1839,7 @@ bool jx_mir_funcPassCreate_combineLEAs(jx_mir_function_pass_t* pass, jx_allocato
 	jx_memset(inst, 0, sizeof(jmir_func_pass_combine_leas_t));
 	inst->m_Allocator = allocator;
 
-	inst->m_ValueMap = jx_hashmapCreate(allocator, sizeof(jmir_reg_value_item_t), 64, 0, 0, jir_regValueItemHash, jir_regValueItemCompare, NULL, NULL);
+	inst->m_ValueMap = jx_hashmapCreate(allocator, sizeof(jmir_reg_value_item_t), 64, 0, 0, jmir_regValueItemHash, jmir_regValueItemCompare, NULL, NULL);
 	if (!inst->m_ValueMap) {
 		jmir_funcPass_combineLEAsDestroy((jx_mir_function_pass_o*)inst, allocator);
 		return false;
@@ -1968,39 +1984,7 @@ static jx_mir_operand_t* jmir_combineLEAs_replaceMemRef(jmir_func_pass_combine_l
 
 	return newOp;
 }
-
-static uint64_t jir_regValueItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata)
-{
-	const jmir_reg_value_item_t* var = (const jmir_reg_value_item_t*)item;
-	uint64_t hash = jx_hashFNV1a(&var->m_Reg, sizeof(jx_mir_reg_t), seed0, seed1);
-	return hash;
-}
-
-static int32_t jir_regValueItemCompare(const void* a, const void* b, void* udata)
-{
-	const jmir_reg_value_item_t* varA = (const jmir_reg_value_item_t*)a;
-	const jmir_reg_value_item_t* varB = (const jmir_reg_value_item_t*)b;
-	const jx_mir_reg_t regA = varA->m_Reg;
-	const jx_mir_reg_t regB = varB->m_Reg;
-	int32_t res = regA.m_Class < regB.m_Class
-		? -1
-		: (regA.m_Class > regB.m_Class ? 1 : 0)
-		;
-	if (res == 0) {
-		res = regA.m_IsVirtual < regB.m_IsVirtual
-			? -1
-			: (regA.m_IsVirtual > regB.m_IsVirtual ? 1 : 0)
-			;
-		if (res == 0) {
-			res = regA.m_ID < regB.m_ID
-				? -1
-				: (regA.m_ID > regB.m_ID ? 1 : 0)
-				;
-		}
-	}
-
-	return res;
-}
+#endif
 
 //////////////////////////////////////////////////////////////////////////
 // Instruction Combiner
@@ -2090,6 +2074,8 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 	pass->m_Ctx = ctx;
 	pass->m_Func = func;
 
+	uint32_t numInstrCombined = 0;
+
 	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
 	while (bb) {
 		jx_hashmapClear(pass->m_ValueMap, false);
@@ -2153,6 +2139,8 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 				} else {
 					JX_CHECK(false, "Invalid operands?");
 				}
+
+				numInstrCombined += (instr->m_Operands[0] != lhs || instr->m_Operands[1] != rhs) ? 1 : 0;
 
 				instr->m_Operands[0] = lhs;
 				instr->m_Operands[1] = rhs;
@@ -2289,6 +2277,8 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 					JX_CHECK(false, "Invalid operands?");
 				}
 
+				numInstrCombined += (instr->m_Operands[0] != dst || instr->m_Operands[1] != src) ? 1 : 0;
+
 				instr->m_Operands[0] = dst;
 				instr->m_Operands[1] = src;
 			} break;
@@ -2373,6 +2363,8 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 					JX_CHECK(false, "Invalid operands?");
 				}
 
+				numInstrCombined += (instr->m_Operands[1] != src) ? 1 : 0;
+
 				instr->m_Operands[1] = src;
 			} break;
 			case JMIR_OP_IMUL3: {
@@ -2428,6 +2420,8 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 					JX_CHECK(src->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL, "Invalid lea source operand.");
 				}
 
+				numInstrCombined += (instr->m_Operands[1] != src) ? 1 : 0;
+
 				instr->m_Operands[1] = src;
 				jmir_instrCombine_setRegDef(pass, dst->u.m_Reg, instr);
 			} break;
@@ -2445,40 +2439,9 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 			case JMIR_OP_AND:
 			case JMIR_OP_OR: {
 				jx_mir_operand_t* lhs = instr->m_Operands[0];
-
-#if 1
 				if (lhs->m_Kind == JMIR_OPERAND_REGISTER) {
 					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
 				}
-#else
-				jx_mir_operand_t* rhs = instr->m_Operands[1];
-				if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_CONST) {
-					// op reg, const
-					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
-				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
-					// op reg, reg
-					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
-				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_MEMORY_REF) {
-					// op reg, [mem]
-					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
-				} else if (lhs->m_Kind == JMIR_OPERAND_REGISTER && rhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
-					// op reg, [sym]
-					jmir_instrCombine_removeRegDef(pass, lhs->u.m_Reg);
-				} else if (lhs->m_Kind == JMIR_OPERAND_MEMORY_REF && rhs->m_Kind == JMIR_OPERAND_CONST) {
-					// op [mem], const
-				} else if (lhs->m_Kind == JMIR_OPERAND_MEMORY_REF && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
-					// op [mem], reg
-				} else if (lhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL && rhs->m_Kind == JMIR_OPERAND_CONST) {
-					// op [sym], const
-				} else if (lhs->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL && rhs->m_Kind == JMIR_OPERAND_REGISTER) {
-					// op [sym], reg
-				} else {
-					JX_CHECK(false, "Invalid operands?");
-				}
-
-				instr->m_Operands[0] = lhs;
-				instr->m_Operands[1] = rhs;
-#endif
 			} break;
 			case JMIR_OP_ADD: {
 				jx_mir_operand_t* lhs = instr->m_Operands[0];
@@ -2507,6 +2470,8 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 				} else {
 					JX_CHECK(false, "Invalid operands?");
 				}
+
+				numInstrCombined += (instr->m_Operands[0] != lhs || instr->m_Operands[1] != rhs) ? 1 : 0;
 
 				instr->m_Operands[0] = lhs;
 				instr->m_Operands[1] = rhs;
@@ -2576,6 +2541,8 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 				} else {
 					JX_CHECK(false, "Invalid operands?");
 				}
+
+				numInstrCombined += (instr->m_Operands[0] != dst || instr->m_Operands[1] != src) ? 1 : 0;
 
 				instr->m_Operands[0] = dst;
 				instr->m_Operands[1] = src;
@@ -2701,6 +2668,8 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 					JX_CHECK(false, "Invalid operands?");
 				}
 
+				numInstrCombined += (instr->m_Operands[0] != lhs || instr->m_Operands[1] != rhs) ? 1 : 0;
+
 				instr->m_Operands[0] = lhs;
 				instr->m_Operands[1] = rhs;
 			} break;
@@ -2730,6 +2699,8 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 				} else {
 					JX_CHECK(false, "Invalid operands?");
 				}
+
+				numInstrCombined += (instr->m_Operands[0] != lhs || instr->m_Operands[1] != rhs) ? 1 : 0;
 
 				instr->m_Operands[0] = lhs;
 				instr->m_Operands[1] = rhs;
@@ -2768,6 +2739,8 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 				} else {
 					JX_CHECK(false, "Invalid operands?");
 				}
+
+				numInstrCombined += (instr->m_Operands[0] != lhs || instr->m_Operands[1] != rhs) ? 1 : 0;
 
 				instr->m_Operands[0] = lhs;
 				instr->m_Operands[1] = rhs;
@@ -2811,6 +2784,8 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 					JX_CHECK(false, "Invalid operands?");
 				}
 
+				numInstrCombined += (instr->m_Operands[0] != lhs || instr->m_Operands[1] != rhs) ? 1 : 0;
+
 				instr->m_Operands[0] = lhs;
 				instr->m_Operands[1] = rhs;
 			} break;
@@ -2847,7 +2822,7 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 	}
 #endif
 
-	return false;
+	return numInstrCombined != 0;
 }
 
 static void jmir_instrCombine_setRegDef(jmir_func_pass_instr_combine_t* pass, jx_mir_reg_t reg, jx_mir_instruction_t* def)
@@ -3166,6 +3141,8 @@ static void jmir_funcPass_dceDestroy(jx_mir_function_pass_o* inst, jx_allocator_
 
 static bool jmir_funcPass_dceRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
+	uint32_t numInstrRemoved = 0;
+
 	bool changed = true;
 	while (changed) {
 		changed = false;
@@ -3199,6 +3176,8 @@ static bool jmir_funcPass_dceRun(jx_mir_function_pass_o* inst, jx_mir_context_t*
 						jx_mir_bbRemoveInstr(ctx, bb, instr);
 						jx_mir_instrFree(ctx, instr);
 						changed = true;
+
+						++numInstrRemoved;
 					}
 				}
 
@@ -3209,7 +3188,7 @@ static bool jmir_funcPass_dceRun(jx_mir_function_pass_o* inst, jx_mir_context_t*
 		}
 	}
 
-	return false;
+	return numInstrRemoved != 0;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -3234,7 +3213,7 @@ bool jx_mir_funcPassCreate_redundantConstElimination(jx_mir_function_pass_t* pas
 	jx_memset(inst, 0, sizeof(jmir_func_pass_rce_t));
 	inst->m_Allocator = allocator;
 
-	inst->m_RegConstMap = jx_hashmapCreate(allocator, sizeof(jmir_reg_value_item_t), 64, 0, 0, jir_regValueItemHash, jir_regValueItemCompare, NULL, NULL);
+	inst->m_RegConstMap = jx_hashmapCreate(allocator, sizeof(jmir_reg_value_item_t), 64, 0, 0, jmir_regValueItemHash, jmir_regValueItemCompare, NULL, NULL);
 	if (!inst->m_RegConstMap) {
 		jmir_funcPass_redundantConstEliminationDestroy((jx_mir_function_pass_o*)inst, allocator);
 		return false;
@@ -3262,6 +3241,8 @@ static void jmir_funcPass_redundantConstEliminationDestroy(jx_mir_function_pass_
 static bool jmir_funcPass_redundantConstEliminationRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
 	jmir_func_pass_rce_t* pass = (jmir_func_pass_rce_t*)inst;
+
+	uint32_t numInstrRemoved = 0;
 
 	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
 	while (bb) {
@@ -3320,6 +3301,8 @@ static bool jmir_funcPass_redundantConstEliminationRun(jx_mir_function_pass_o* i
 							// Redundant instruction; remove.
 							jx_mir_bbRemoveInstr(ctx, bb, instr);
 							jx_mir_instrFree(ctx, instr);
+
+							++numInstrRemoved;
 						} else {
 							jx_hashmapSet(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = dstOp->u.m_Reg, .m_Value = srcOp});
 						}
@@ -3487,6 +3470,8 @@ static bool jmir_funcPass_redundantConstEliminationRun(jx_mir_function_pass_o* i
 						// Redundant instruction; remove.
 						jx_mir_bbRemoveInstr(ctx, bb, instr);
 						jx_mir_instrFree(ctx, instr);
+
+						++numInstrRemoved;
 					} else {
 						jx_mir_operand_t* zeroOp = jx_mir_opIConst(ctx, func, dstOp->m_Type, 0);
 						jx_hashmapSet(pass->m_RegConstMap, &(jmir_reg_value_item_t){.m_Reg = dstOp->u.m_Reg, .m_Value = zeroOp});
@@ -3506,7 +3491,7 @@ static bool jmir_funcPass_redundantConstEliminationRun(jx_mir_function_pass_o* i
 		bb = bb->m_Next;
 	}
 
-	return false;
+	return numInstrRemoved != 0;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -3614,4 +3599,40 @@ static bool jmir_funcPass_simplifyCFGRun(jx_mir_function_pass_o* inst, jx_mir_co
 	}
 
 	return numBasicBlocksChanged != 0;
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Common helpers
+//
+static uint64_t jmir_regValueItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata)
+{
+	const jmir_reg_value_item_t* var = (const jmir_reg_value_item_t*)item;
+	uint64_t hash = jx_hashFNV1a(&var->m_Reg, sizeof(jx_mir_reg_t), seed0, seed1);
+	return hash;
+}
+
+static int32_t jmir_regValueItemCompare(const void* a, const void* b, void* udata)
+{
+	const jmir_reg_value_item_t* varA = (const jmir_reg_value_item_t*)a;
+	const jmir_reg_value_item_t* varB = (const jmir_reg_value_item_t*)b;
+	const jx_mir_reg_t regA = varA->m_Reg;
+	const jx_mir_reg_t regB = varB->m_Reg;
+	int32_t res = regA.m_Class < regB.m_Class
+		? -1
+		: (regA.m_Class > regB.m_Class ? 1 : 0)
+		;
+	if (res == 0) {
+		res = regA.m_IsVirtual < regB.m_IsVirtual
+			? -1
+			: (regA.m_IsVirtual > regB.m_IsVirtual ? 1 : 0)
+			;
+		if (res == 0) {
+			res = regA.m_ID < regB.m_ID
+				? -1
+				: (regA.m_ID > regB.m_ID ? 1 : 0)
+				;
+		}
+	}
+
+	return res;
 }

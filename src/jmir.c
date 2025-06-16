@@ -155,8 +155,6 @@ typedef struct jx_mir_context_t
 	jx_mir_global_variable_t** m_GlobalVarArr;
 	jx_mir_function_pass_t* m_FuncPass_removeFallthroughJmp;
 	jx_mir_function_pass_t* m_FuncPass_simplifyCondJmp;
-	jx_mir_function_pass_t* m_FuncPass_fixMemMemOps;
-	jx_mir_function_pass_t* m_FuncPass_combineLEAs;
 	jx_mir_function_pass_t* m_FuncPass_deadCodeElimination;
 	jx_mir_function_pass_t* m_FuncPass_peephole;
 	jx_mir_function_pass_t* m_FuncPass_regAlloc;
@@ -230,8 +228,6 @@ jx_mir_context_t* jx_mir_createContext(jx_allocator_i* allocator)
 	{
 		ctx->m_FuncPass_removeFallthroughJmp = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_removeFallthroughJmp, NULL);
 		ctx->m_FuncPass_simplifyCondJmp = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_simplifyCondJmp, NULL);
-		ctx->m_FuncPass_fixMemMemOps = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_fixMemMemOps, NULL);
-		ctx->m_FuncPass_combineLEAs = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_combineLEAs, NULL);
 		ctx->m_FuncPass_deadCodeElimination = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_deadCodeElimination, NULL);
 		ctx->m_FuncPass_peephole = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_peephole, NULL);
 		ctx->m_FuncPass_regAlloc = jmir_funcPassCreate(ctx, jx_mir_funcPassCreate_regAlloc, NULL);
@@ -258,16 +254,6 @@ void jx_mir_destroyContext(jx_mir_context_t* ctx)
 		if (ctx->m_FuncPass_simplifyCondJmp) {
 			jmir_funcPassDestroy(ctx, ctx->m_FuncPass_simplifyCondJmp);
 			ctx->m_FuncPass_simplifyCondJmp = NULL;
-		}
-
-		if (ctx->m_FuncPass_fixMemMemOps) {
-			jmir_funcPassDestroy(ctx, ctx->m_FuncPass_fixMemMemOps);
-			ctx->m_FuncPass_fixMemMemOps = NULL;
-		}
-
-		if (ctx->m_FuncPass_combineLEAs) {
-			jmir_funcPassDestroy(ctx, ctx->m_FuncPass_combineLEAs);
-			ctx->m_FuncPass_combineLEAs = NULL;
 		}
 		
 		if (ctx->m_FuncPass_deadCodeElimination) {
@@ -551,15 +537,16 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCondJmp, func);
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCFG, func);
 
-		jmir_funcPassApply(ctx, ctx->m_FuncPass_instrCombine, func);
-		jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func);
-		jmir_funcPassApply(ctx, ctx->m_FuncPass_peephole, func);
-		jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func);
+		uint32_t numIter = 0;
+		bool changed = true;
+		while (changed && numIter < 2) {
+			changed = jmir_funcPassApply(ctx, ctx->m_FuncPass_instrCombine, func);
+			changed = jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func) || changed;
+			changed = jmir_funcPassApply(ctx, ctx->m_FuncPass_peephole, func) || changed;
+			changed = jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func) || changed;
+			++numIter;
+		}
 
-		jmir_funcPassApply(ctx, ctx->m_FuncPass_instrCombine, func);
-		jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func);
-		jmir_funcPassApply(ctx, ctx->m_FuncPass_peephole, func);
-		jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func);
 #if 0
 		{
 			jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
@@ -587,8 +574,12 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 #endif
 
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCondJmp, func);
-		jmir_funcPassApply(ctx, ctx->m_FuncPass_peephole, func);
-		jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func);
+		
+		changed = true;
+		while (changed) {
+			changed = jmir_funcPassApply(ctx, ctx->m_FuncPass_peephole, func);
+			changed = jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func) || changed;
+		}
 	}
 
 	// Store all callee-saved registers used by the function on the stack.
