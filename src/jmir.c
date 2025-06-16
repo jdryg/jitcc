@@ -539,7 +539,7 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 
 		uint32_t numIter = 0;
 		bool changed = true;
-		while (changed && numIter < 2) {
+		while (changed && numIter < 5) {
 			changed = jmir_funcPassApply(ctx, ctx->m_FuncPass_instrCombine, func);
 			changed = jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func) || changed;
 			changed = jmir_funcPassApply(ctx, ctx->m_FuncPass_peephole, func) || changed;
