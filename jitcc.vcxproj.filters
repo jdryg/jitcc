@@ -49,6 +49,9 @@
     <Filter Include="bin\test\stb">
       <UniqueIdentifier>{5e10ecd8-1b60-40f6-a85c-431460dcd037}</UniqueIdentifier>
     </Filter>
+    <Filter Include="3rdparty\jlib\3rdparty\tracy">
+      <UniqueIdentifier>{a67e738b-ac2e-4cb5-a26c-0b1ca8fe5b27}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\jcc.h">
@@ -1003,6 +1006,9 @@
     </ClCompile>
     <ClCompile Include="3rdparty\jlib\src\bitset.c">
       <Filter>3rdparty\jlib\src</Filter>
+    </ClCompile>
+    <ClCompile Include="3rdparty\jlib\3rdparty\tracy\TracyClient.cpp">
+      <Filter>3rdparty\jlib\3rdparty\tracy</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

@@ -9,6 +9,7 @@
 #include <jlib/math.h>
 #include <jlib/memory.h>
 #include <jlib/string.h>
+#include <tracy/tracy/TracyC.h>
 
 typedef struct jmir_reg_value_item_t
 {
@@ -40,6 +41,7 @@ static void jmir_funcPass_removeFallthroughJmpDestroy(jx_mir_function_pass_o* in
 
 static bool jmir_funcPass_removeFallthroughJmpRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "removeFallthroughJmp", 1);
 	uint32_t numRedundantJumps = 0;
 
 	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
@@ -62,6 +64,8 @@ static bool jmir_funcPass_removeFallthroughJmpRun(jx_mir_function_pass_o* inst, 
 
 		bb = bb->m_Next;
 	}
+	
+	TracyCZoneEnd(tracyCtx);
 
 	return numRedundantJumps != 0;
 }
@@ -96,6 +100,7 @@ static void jmir_funcPass_removeRedundantMovesDestroy(jx_mir_function_pass_o* in
 
 static bool jmir_funcPass_removeRedundantMovesRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "removeRedundantMoves", 1);
 	uint32_t numRedundantMoves = 0;
 
 	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
@@ -126,6 +131,8 @@ static bool jmir_funcPass_removeRedundantMovesRun(jx_mir_function_pass_o* inst, 
 		bb = bb->m_Next;
 	}
 
+	TracyCZoneEnd(tracyCtx);
+
 	return numRedundantMoves != 0;
 }
 
@@ -150,6 +157,8 @@ static void jmir_funcPass_simplifyCondJmpDestroy(jx_mir_function_pass_o* inst, j
 
 static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "simplifyCondJmp", 1);
+
 	jx_mir_funcUpdateLiveness(ctx, func);
 
 	uint32_t numJumpsSimplified = 0;
@@ -255,7 +264,7 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 						jx_mir_instruction_t* andInstr = cmpInstr->m_Prev;
 						jx_mir_operand_t* and_op0 = andInstr->m_Operands[0];
 
-						if (and_op0->m_Kind == JMIR_OPERAND_REGISTER && !jx_bitsetIsBitSet(bb->m_LiveOutSet, jx_mir_funcMapRegToBitsetID(ctx, func, and_op0->u.m_Reg))) {
+						if (and_op0->m_Kind == JMIR_OPERAND_REGISTER && !jx_bitsetIsBitSet(&bb->m_LiveOutSet, jx_mir_funcMapRegToBitsetID(ctx, func, and_op0->u.m_Reg))) {
 							andInstr->m_OpCode = JMIR_OP_TEST;
 						}
 
@@ -267,7 +276,7 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 				} else if (instr->m_Prev && instr->m_Prev->m_OpCode == JMIR_OP_AND) {
 					jx_mir_instruction_t* andInstr = instr->m_Prev;
 					jx_mir_operand_t* op0 = andInstr->m_Operands[0];
-					if (op0->m_Kind == JMIR_OPERAND_REGISTER && !jx_bitsetIsBitSet(bb->m_LiveOutSet, jx_mir_funcMapRegToBitsetID(ctx, func, op0->u.m_Reg))) {
+					if (op0->m_Kind == JMIR_OPERAND_REGISTER && !jx_bitsetIsBitSet(&bb->m_LiveOutSet, jx_mir_funcMapRegToBitsetID(ctx, func, op0->u.m_Reg))) {
 						andInstr->m_OpCode = JMIR_OP_TEST;
 						++numJumpsSimplified;
 					}
@@ -279,6 +288,8 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 
 		bb = bb->m_Next;
 	}
+
+	TracyCZoneEnd(tracyCtx);
 
 	return numJumpsSimplified != 0;
 }
@@ -501,6 +512,8 @@ static void jmir_funcPass_regAllocDestroy(jx_mir_function_pass_o* inst, jx_alloc
 
 static bool jmir_funcPass_regAllocRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "regAlloc", 1);
+
 	jmir_func_pass_regalloc_t* pass = (jmir_func_pass_regalloc_t*)inst;
 
 	pass->m_Ctx = ctx;
@@ -647,6 +660,8 @@ static bool jmir_funcPass_regAllocRun(jx_mir_function_pass_o* inst, jx_mir_conte
 
 	JX_CHECK(iter != JMIR_REGALLOC_MAX_ITERATIONS, "Maximum iterations exceeded?");
 
+	TracyCZoneEnd(tracyCtx);
+
 	return iter != 0;
 }
 
@@ -720,7 +735,7 @@ static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t
 
 			jx_mir_instruction_t* instr = bb->m_InstrListHead;
 			while (instr) {
-				const jx_bitset_t* instrLiveOutSet = instr->m_LiveOutSet;
+				const jx_bitset_t* instrLiveOutSet = &instr->m_LiveOutSet;
 				jx_mir_instr_usedef_t* instrUseDefAnnot = &instr->m_UseDef;
 
 				// Create edges
@@ -1468,6 +1483,8 @@ static void jmir_funcPass_peepholeDestroy(jx_mir_function_pass_o* inst, jx_alloc
 
 static bool jmir_funcPass_peepholeRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "peephole", 1);
+
 	jmir_func_pass_peephole_t* pass = (jmir_func_pass_peephole_t*)inst;
 
 	pass->m_Ctx = ctx;
@@ -1515,6 +1532,8 @@ static bool jmir_funcPass_peepholeRun(jx_mir_function_pass_o* inst, jx_mir_conte
 
 		changed = prevIterNumOpts != numOpts;
 	}
+
+	TracyCZoneEnd(tracyCtx);
 	
 	return numOpts != 0;
 }
@@ -2057,6 +2076,8 @@ static void jmir_funcPass_instrCombineDestroy(jx_mir_function_pass_o* inst, jx_a
 
 static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "instrCombine", 1);
+
 	jmir_func_pass_instr_combine_t* pass = (jmir_func_pass_instr_combine_t*)inst;
 
 	pass->m_Ctx = ctx;
@@ -2636,6 +2657,8 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 		bb = bb->m_Next;
 	}
 
+	TracyCZoneEnd(tracyCtx);
+
 	return numInstrCombined != 0;
 }
 
@@ -3008,6 +3031,8 @@ static void jmir_funcPass_dceDestroy(jx_mir_function_pass_o* inst, jx_allocator_
 
 static bool jmir_funcPass_dceRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "dce", 1);
+
 	uint32_t numInstrRemoved = 0;
 
 	bool changed = true;
@@ -3026,7 +3051,7 @@ static bool jmir_funcPass_dceRun(jx_mir_function_pass_o* inst, jx_mir_context_t*
 				jx_mir_instr_usedef_t* instrUseDefAnnot = &instr->m_UseDef;
 				const uint32_t numDefs = instrUseDefAnnot->m_NumDefs;
 				if (numDefs) {
-					const jx_bitset_t* instrLiveOutSet = instr->m_LiveOutSet;
+					const jx_bitset_t* instrLiveOutSet = &instr->m_LiveOutSet;
 
 					uint32_t numDeadDefs = 0;
 					for (uint32_t iDef = 0; iDef < numDefs; ++iDef) {
@@ -3054,6 +3079,8 @@ static bool jmir_funcPass_dceRun(jx_mir_function_pass_o* inst, jx_mir_context_t*
 			bb = bb->m_Next;
 		}
 	}
+
+	TracyCZoneEnd(tracyCtx);
 
 	return numInstrRemoved != 0;
 }
@@ -3107,6 +3134,8 @@ static void jmir_funcPass_redundantConstEliminationDestroy(jx_mir_function_pass_
 
 static bool jmir_funcPass_redundantConstEliminationRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "redundantConstElimination", 1);
+
 	jmir_func_pass_rce_t* pass = (jmir_func_pass_rce_t*)inst;
 
 	uint32_t numInstrRemoved = 0;
@@ -3358,6 +3387,8 @@ static bool jmir_funcPass_redundantConstEliminationRun(jx_mir_function_pass_o* i
 		bb = bb->m_Next;
 	}
 
+	TracyCZoneEnd(tracyCtx);
+
 	return numInstrRemoved != 0;
 }
 
@@ -3398,6 +3429,8 @@ static void jmir_funcPass_simplifyCFGDestroy(jx_mir_function_pass_o* inst, jx_al
 
 static bool jmir_funcPass_simplifyCFGRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "simplifyCFG", 1);
+
 	jmir_func_pass_simplify_cfg_t* pass = (jmir_func_pass_simplify_cfg_t*)inst;
 
 	uint32_t numBasicBlocksChanged = 0;
@@ -3464,6 +3497,8 @@ static bool jmir_funcPass_simplifyCFGRun(jx_mir_function_pass_o* inst, jx_mir_co
 			bb = bbNext;
 		}
 	}
+
+	TracyCZoneEnd(tracyCtx);
 
 	return numBasicBlocksChanged != 0;
 }

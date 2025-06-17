@@ -9,6 +9,7 @@
 #include <jlib/math.h>
 #include <jlib/memory.h>
 #include <jlib/string.h>
+#include <tracy/tracy/TracyC.h>
 
 static const char* kMIROpcodeMnemonic[] = {
 	[JMIR_OP_RET] = "ret",
@@ -689,16 +690,15 @@ void jx_mir_funcAppendBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func,
 	bb->m_ID = func->m_NextBasicBlockID++;
 
 	if (!func->m_BasicBlockListHead) {
+		JX_CHECK(!func->m_BasicBlockListTail, "Invalid linked-list state");
 		func->m_BasicBlockListHead = bb;
 	} else {
-		jx_mir_basic_block_t* tail = func->m_BasicBlockListHead;
-		while (tail->m_Next) {
-			tail = tail->m_Next;
-		}
-
-		tail->m_Next = bb;
-		bb->m_Prev = tail;
+		JX_CHECK(func->m_BasicBlockListTail, "Invalid linked-list state");
+		func->m_BasicBlockListTail->m_Next = bb;
+		bb->m_Prev = func->m_BasicBlockListTail;
 	}
+
+	func->m_BasicBlockListTail = bb;
 
 	func->m_Flags &= ~(JMIR_FUNC_FLAGS_CFG_VALID_Msk | JMIR_FUNC_FLAGS_SCC_VALID_Msk);
 }
@@ -712,8 +712,11 @@ void jx_mir_funcPrependBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func
 	bb->m_ID = func->m_NextBasicBlockID++;
 
 	bb->m_Next = func->m_BasicBlockListHead;
+
 	if (func->m_BasicBlockListHead) {
 		func->m_BasicBlockListHead->m_Prev = bb;
+	} else {
+		func->m_BasicBlockListTail = bb;
 	}
 	func->m_BasicBlockListHead = bb;
 
@@ -731,6 +734,9 @@ bool jx_mir_funcRemoveBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func,
 
 	if (func->m_BasicBlockListHead == bb) {
 		func->m_BasicBlockListHead = bb->m_Next;
+	}
+	if (func->m_BasicBlockListTail == bb) {
+		func->m_BasicBlockListTail = bb->m_Prev;
 	}
 
 	if (bb->m_Prev) {
@@ -760,6 +766,8 @@ bool jx_mir_funcUpdateCFG(jx_mir_context_t* ctx, jx_mir_function_t* func)
 	if ((func->m_Flags & JMIR_FUNC_FLAGS_CFG_VALID_Msk) != 0) {
 		return true;
 	}
+
+	TracyCZoneN(tracyCtx, "mir: Update CFG", 1);
 
 	// Make sure every basic block has a CFG annotation and reset its pred/succ arrays
 	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
@@ -822,6 +830,8 @@ bool jx_mir_funcUpdateCFG(jx_mir_context_t* ctx, jx_mir_function_t* func)
 
 	func->m_Flags |= JMIR_FUNC_FLAGS_CFG_VALID_Msk;
 
+	TracyCZoneEnd(tracyCtx);
+
 	return true;
 }
 
@@ -830,6 +840,8 @@ bool jx_mir_funcUpdateLiveness(jx_mir_context_t* ctx, jx_mir_function_t* func)
 //	if ((func->m_Flags & JMIR_FUNC_FLAGS_LIVENESS_VALID_Msk) != 0) {
 //		return true;
 //	}
+
+	TracyCZoneN(tracyCtx, "mir: Update Liveness", 1);
 
 	if (!jx_mir_funcUpdateCFG(ctx, func)) {
 		return false;
@@ -840,34 +852,15 @@ bool jx_mir_funcUpdateLiveness(jx_mir_context_t* ctx, jx_mir_function_t* func)
 	const uint32_t numRegs = jx_mir_funcGetRegBitsetSize(ctx, func);
 	jx_mir_basic_block_t* bb = func->m_BasicBlockListHead;
 	while (bb) {
-		if (!bb->m_LiveInSet) {
-			bb->m_LiveInSet = jx_bitsetCreate(numRegs, ctx->m_Allocator);
-			if (!bb->m_LiveInSet) {
-				return false;
-			}
+		jx_bitsetResize(&bb->m_LiveInSet, numRegs, ctx->m_Allocator);
+		jx_bitsetResize(&bb->m_LiveOutSet, numRegs, ctx->m_Allocator);
 
-			bb->m_LiveOutSet = jx_bitsetCreate(numRegs, ctx->m_Allocator);
-			if (!bb->m_LiveInSet) {
-				return false;
-			}
-		} 
-
-		jx_bitsetResize(bb->m_LiveInSet, numRegs, ctx->m_Allocator);
-		jx_bitsetResize(bb->m_LiveOutSet, numRegs, ctx->m_Allocator);
-
-		jx_bitsetClear(bb->m_LiveInSet);
-		jx_bitsetClear(bb->m_LiveOutSet);
+		jx_bitsetClear(&bb->m_LiveInSet);
+		jx_bitsetClear(&bb->m_LiveOutSet);
 
 		jx_mir_instruction_t* instr = bb->m_InstrListHead;
 		while (instr) {
-			if (!instr->m_LiveOutSet) {
-				instr->m_LiveOutSet = jx_bitsetCreate(numRegs, ctx->m_Allocator);
-				if (!instr->m_LiveOutSet) {
-					return false;
-				}
-			}
-
-			jx_bitsetResize(instr->m_LiveOutSet, numRegs, ctx->m_Allocator);
+			jx_bitsetResize(&instr->m_LiveOutSet, numRegs, ctx->m_Allocator);
 
 			// Recalculate use/def info
 			jmir_instrUpdateUseDefInfo(ctx, func, instr);
@@ -878,12 +871,19 @@ bool jx_mir_funcUpdateLiveness(jx_mir_context_t* ctx, jx_mir_function_t* func)
 		bb = bb->m_Next;
 	}
 
-	jx_bitset_t* prevLiveIn = jx_bitsetCreate(numRegs, ctx->m_Allocator);
-	jx_bitset_t* prevLiveOut = jx_bitsetCreate(numRegs, ctx->m_Allocator);
-	jx_bitset_t* instrLive = jx_bitsetCreate(numRegs, ctx->m_Allocator);
-	if (!prevLiveIn || !prevLiveOut || !instrLive) {
-		return false;
-	}
+	const uint64_t bitsetBufferSz = jx_bitsetCalcBufferSize(numRegs);
+	uint8_t* tempBitsetBuffer = (uint8_t*)JX_ALLOC(ctx->m_Allocator, bitsetBufferSz * 2);
+
+	jx_bitset_t prevLiveIn = {
+		.m_Bits = (uint64_t*)tempBitsetBuffer,
+		.m_NumBits = numRegs,
+		.m_BitCapacity = 0
+	};
+	jx_bitset_t instrLive = {
+		.m_Bits = (uint64_t*)(tempBitsetBuffer + bitsetBufferSz),
+		.m_NumBits = numRegs,
+		.m_BitCapacity = 0
+	};
 
 	uint32_t numIterations = 0;
 	// Rebuild live in/out sets
@@ -892,76 +892,70 @@ bool jx_mir_funcUpdateLiveness(jx_mir_context_t* ctx, jx_mir_function_t* func)
 		changed = false;
 		++numIterations;
 
-		// TODO: Reverse Postorder walk
-		bb = func->m_BasicBlockListHead;
+		bb = func->m_BasicBlockListTail;
 		while (bb) {
 			// out'[v] = out[v]
 			// in'[v] = in[v]
-			jx_bitsetCopy(prevLiveIn, bb->m_LiveInSet);
-			jx_bitsetCopy(prevLiveOut, bb->m_LiveOutSet);
+			jx_bitsetCopy(&prevLiveIn, &bb->m_LiveInSet);
 
 			// out[v] = Union(w in succ, in[w])
 			const uint32_t numSucc = (uint32_t)jx_array_sizeu(bb->m_SuccArr);
 			if (numSucc) {
-				jx_mir_basic_block_t* succ = bb->m_SuccArr[0];
-
-				jx_bitsetCopy(bb->m_LiveOutSet, succ->m_LiveInSet);
+				jx_bitsetCopy(&bb->m_LiveOutSet, &bb->m_SuccArr[0]->m_LiveInSet);
 				for (uint32_t iSucc = 1; iSucc < numSucc; ++iSucc) {
-					succ = bb->m_SuccArr[iSucc];
-					jx_bitsetUnion(bb->m_LiveOutSet, succ->m_LiveInSet);
+					jx_bitsetUnion(&bb->m_LiveOutSet, &bb->m_SuccArr[iSucc]->m_LiveInSet);
 				}
 			}
 
 			// Calculate live in by walking the basic block's instruction list backwards,
 			// while storing live info for each instruction.
 			{
-				jx_bitsetCopy(instrLive, bb->m_LiveOutSet);
+				jx_bitsetCopy(&instrLive, &bb->m_LiveOutSet);
 
 				jx_mir_instruction_t* instr = bb->m_InstrListTail;
 				while (instr) {
 					jx_mir_instr_usedef_t* instrUseDefAnnot = &instr->m_UseDef;
-					jx_bitset_t* instrLiveOutSet = instr->m_LiveOutSet;
+					jx_bitset_t* instrLiveOutSet = &instr->m_LiveOutSet;
 
 					if (jx_mir_instrIsMovRegReg(instr)) {
 						JX_CHECK(instrUseDefAnnot->m_NumUses == 1, "Move instruction expected to have 1 use.");
-						jx_bitsetResetBit(instrLive, jx_mir_funcMapRegToBitsetID(ctx, func, instrUseDefAnnot->m_Uses[0]));
+						jx_bitsetResetBit(&instrLive, jx_mir_funcMapRegToBitsetID(ctx, func, instrUseDefAnnot->m_Uses[0]));
 					}
 
-					jx_bitsetCopy(instrLiveOutSet, instrLive);
+					jx_bitsetCopy(instrLiveOutSet, &instrLive);
 
 					const uint32_t numDefs = instrUseDefAnnot->m_NumDefs;
 					for (uint32_t iDef = 0; iDef < numDefs; ++iDef) {
-						jx_bitsetResetBit(instrLive, jx_mir_funcMapRegToBitsetID(ctx, func, instrUseDefAnnot->m_Defs[iDef]));
+						jx_bitsetResetBit(&instrLive, jx_mir_funcMapRegToBitsetID(ctx, func, instrUseDefAnnot->m_Defs[iDef]));
 					}
 
 					const uint32_t numUses = instrUseDefAnnot->m_NumUses;
 					for (uint32_t iUse = 0; iUse < numUses; ++iUse) {
-						jx_bitsetSetBit(instrLive, jx_mir_funcMapRegToBitsetID(ctx, func, instrUseDefAnnot->m_Uses[iUse]));
+						jx_bitsetSetBit(&instrLive, jx_mir_funcMapRegToBitsetID(ctx, func, instrUseDefAnnot->m_Uses[iUse]));
 					}
 
 					instr = instr->m_Prev;
 				}
 
-				jx_bitsetCopy(bb->m_LiveInSet, instrLive);
+				jx_bitsetCopy(&bb->m_LiveInSet, &instrLive);
 			}
 
 			// Check if something changed
 			changed = changed
-				|| !jx_bitsetEqual(bb->m_LiveInSet, prevLiveIn)
-				|| !jx_bitsetEqual(bb->m_LiveOutSet, prevLiveOut)
+				|| !jx_bitsetEqual(&bb->m_LiveInSet, &prevLiveIn)
 				;
 
-			bb = bb->m_Next;
+			bb = bb->m_Prev;
 		}
 	}
 
 //	JX_TRACE("liveness: Func %s iterations %u", func->m_Name, numIterations);
 
-	jx_bitsetDestroy(instrLive, ctx->m_Allocator);
-	jx_bitsetDestroy(prevLiveIn, ctx->m_Allocator);
-	jx_bitsetDestroy(prevLiveOut, ctx->m_Allocator);
+	JX_FREE(ctx->m_Allocator, tempBitsetBuffer);
 
 	func->m_Flags |= JMIR_FUNC_FLAGS_LIVENESS_VALID_Msk;
+
+	TracyCZoneEnd(tracyCtx);
 
 	return true;
 }
@@ -1107,6 +1101,8 @@ bool jx_mir_funcUpdateSCCs(jx_mir_context_t* ctx, jx_mir_function_t* func)
 		return true;
 	}
 
+	TracyCZoneN(tracyCtx, "mir: Update SCCs", 1);
+
 	jx_mir_scc_t* scc = func->m_SCCListHead;
 	while (scc) {
 		jx_mir_scc_t* sccNext = scc->m_Next;
@@ -1117,6 +1113,7 @@ bool jx_mir_funcUpdateSCCs(jx_mir_context_t* ctx, jx_mir_function_t* func)
 	func->m_SCCListTail = NULL;
 
 	if (!jx_mir_funcUpdateCFG(ctx, func)) {
+		TracyCZoneEnd(tracyCtx);
 		return false;
 	}
 
@@ -1136,6 +1133,8 @@ bool jx_mir_funcUpdateSCCs(jx_mir_context_t* ctx, jx_mir_function_t* func)
 	jx_array_free(bbArr);
 
 	func->m_Flags |= JMIR_FUNC_FLAGS_SCC_VALID_Msk;
+
+	TracyCZoneEnd(tracyCtx);
 
 	return true;
 }
@@ -1407,7 +1406,7 @@ void jx_mir_funcPrint(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_string_
 			// Print live-in and live-out sets
 			jx_strbuf_pushCStr(sb, "  ; liveIn = { ");
 			{
-				const jx_bitset_t* bs = bb->m_LiveInSet;
+				const jx_bitset_t* bs = &bb->m_LiveInSet;
 
 				jx_bitset_iterator_t iter;
 				jx_bitsetIterBegin(bs, &iter, 0);
@@ -1429,7 +1428,7 @@ void jx_mir_funcPrint(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_string_
 
 			jx_strbuf_pushCStr(sb, "  ; liveOut = { ");
 			{
-				const jx_bitset_t* bs = bb->m_LiveOutSet;
+				const jx_bitset_t* bs = &bb->m_LiveOutSet;
 
 				jx_bitset_iterator_t iter;
 				jx_bitsetIterBegin(bs, &iter, 0);
@@ -1473,11 +1472,13 @@ jx_mir_basic_block_t* jx_mir_bbAlloc(jx_mir_context_t* ctx)
 
 	bb->m_PredArr = (jx_mir_basic_block_t**)jx_array_create(ctx->m_Allocator);
 	if (!bb->m_PredArr) {
+		jx_mir_bbFree(ctx, bb);
 		return false;
 	}
 
 	bb->m_SuccArr = (jx_mir_basic_block_t**)jx_array_create(ctx->m_Allocator);
 	if (!bb->m_SuccArr) {
+		jx_mir_bbFree(ctx, bb);
 		return false;
 	}
 	jx_array_reserve(bb->m_SuccArr, 2);
@@ -1497,14 +1498,8 @@ void jx_mir_bbFree(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb)
 	jx_array_free(bb->m_PredArr);
 	jx_array_free(bb->m_SuccArr);
 
-	if (bb->m_LiveInSet) {
-		jx_bitsetDestroy(bb->m_LiveInSet, ctx->m_Allocator);
-		bb->m_LiveInSet = NULL;
-	}
-	if (bb->m_LiveOutSet) {
-		jx_bitsetDestroy(bb->m_LiveOutSet, ctx->m_Allocator);
-		bb->m_LiveOutSet = NULL;
-	}
+	jx_bitsetFree(&bb->m_LiveInSet, ctx->m_Allocator);
+	jx_bitsetFree(&bb->m_LiveOutSet, ctx->m_Allocator);
 }
 
 bool jx_mir_bbAppendInstr(jx_mir_context_t* ctx, jx_mir_basic_block_t* bb, jx_mir_instruction_t* instr)
@@ -2050,10 +2045,7 @@ void jx_mir_opPrint(jx_mir_context_t* ctx, jx_mir_operand_t* op, bool memRefSkip
 
 void jx_mir_instrFree(jx_mir_context_t* ctx, jx_mir_instruction_t* instr)
 {
-	if (instr->m_LiveOutSet) {
-		jx_bitsetDestroy(instr->m_LiveOutSet, ctx->m_Allocator);
-		instr->m_LiveOutSet = NULL;
-	}
+	jx_bitsetFree(&instr->m_LiveOutSet, ctx->m_Allocator);
 }
 
 void jx_mir_instrPrint(jx_mir_context_t* ctx, jx_mir_instruction_t* instr, jx_string_buffer_t* sb)
@@ -2740,6 +2732,7 @@ static jx_mir_instruction_t* jmir_instrAlloc(jx_mir_context_t* ctx, uint32_t opc
 	if (numOperands) {
 		instr->m_Operands = (jx_mir_operand_t**)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_mir_operand_t*) * numOperands);
 		if (!instr->m_Operands) {
+			jx_mir_instrFree(ctx, instr);
 			return NULL;
 		}
 

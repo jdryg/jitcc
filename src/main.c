@@ -17,6 +17,7 @@
 #include <jlib/memory.h>
 #include <jlib/os.h>
 #include <jlib/string.h>
+#include <tracy/tracy/TracyC.h>
 
 int main(int argc, char** argv)
 {
@@ -159,21 +160,26 @@ int main(int argc, char** argv)
 	const char* sourceFile = "test/stb_truetype_test.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
+	TracyCZoneN(frontend, "Frontend", 1);
 	jx_cc_translation_unit_t* tu = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_INSTALL, sourceFile);
 	if (!tu || tu->m_NumErrors != 0) {
 		JX_SYS_LOG_INFO(NULL, "Failed to compile \"%s\"\n", sourceFile);
 		goto end;
 	}
+	TracyCZoneEnd(frontend);
 
 	JX_SYS_LOG_INFO(NULL, "Building IR...\n");
 	{
 		jx_ir_context_t* irCtx = jx_ir_createContext(allocator);
 		jx_irgen_context_t* genCtx = jx_irgen_createContext(irCtx, allocator);
 
+		TracyCZoneN(irgen, "IR Gen", 1);
 		if (!jx_irgen_moduleGen(genCtx, sourceFile, tu)) {
+			TracyCZoneEnd(irgen);
 			JX_SYS_LOG_ERROR(NULL, "Failed to generate module IR\n");
 		} else {
 			jx_irgen_destroyContext(genCtx);
+			TracyCZoneEnd(irgen);
 
 			jx_string_buffer_t* sb = jx_strbuf_create(allocator);
 			jx_ir_print(irCtx, sb);
@@ -185,12 +191,14 @@ int main(int argc, char** argv)
 				jx_mir_context_t* mirCtx = jx_mir_createContext(allocator);
 				jx_mirgen_context_t* mirGenCtx = jx_mirgen_createContext(irCtx, mirCtx, allocator);
 
+				TracyCZoneN(mirgen, "MIR Gen", 1);
 				jx_ir_module_t* irMod = jx_ir_getModule(irCtx, 0);
 				if (irMod) {
 					jx_mirgen_moduleGen(mirGenCtx, irMod);
 				}
 
 				jx_mirgen_destroyContext(mirGenCtx);
+				TracyCZoneEnd(mirgen);
 
 				sb = jx_strbuf_create(allocator);
 				jx_mir_print(mirCtx, sb);
@@ -198,10 +206,11 @@ int main(int argc, char** argv)
 				JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
 				jx_strbuf_destroy(sb);
 
+				TracyCZoneN(x64gen, "x64 Gen", 1);
 				jx_x64_context_t* jitCtx = jx_x64_createContext(allocator);
 				jx_x64gen_context_t* jitgenCtx = jx_x64gen_createContext(jitCtx, mirCtx, allocator);
-
 				if (jx_x64gen_codeGen(jitgenCtx)) {
+					TracyCZoneEnd(x64gen);
 					uint32_t bufferSize = 0;
 					const uint8_t* buffer = jx64_getBuffer(jitCtx, &bufferSize);
 
@@ -226,7 +235,9 @@ int main(int argc, char** argv)
 						uint32_t mainOffset = jx64_labelGetOffset(jitCtx, symMain->m_Label);
 						JX_SYS_LOG_INFO(NULL, "main offset %u\n", mainOffset);
 						pfnMain mainFunc = (pfnMain)((uint8_t*)buffer + mainOffset);
+						TracyCZoneN(execute, "main()", 1);
 						int32_t ret = mainFunc();
+						TracyCZoneEnd(execute);
 						JX_SYS_LOG_DEBUG(NULL, "main() returned %d\n", ret);
 					} else {
 						JX_SYS_LOG_ERROR(NULL, "main() not found!\n");

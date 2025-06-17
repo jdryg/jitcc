@@ -13,7 +13,7 @@ jx_bitset_t* jx_bitsetCreate(uint32_t numBits, jx_allocator_i* allocator)
 
 	jx_memset(bs, 0, sizeof(jx_bitset_t));
 
-	const uint64_t bufferSize = jx_bitsetCalcBufferSize(numBits);
+	const uint64_t bufferSize = jx_bitsetCalcBufferSize(jx_max_u32(numBits, 1));
 	bs->m_Bits = (uint64_t*)JX_ALLOC(allocator, bufferSize);
 	if (!bs->m_Bits) {
 		JX_FREE(allocator, bs);
@@ -31,6 +31,12 @@ void jx_bitsetDestroy(jx_bitset_t* bs, jx_allocator_i* allocator)
 {
 	JX_FREE(allocator, bs->m_Bits);
 	JX_FREE(allocator, bs);
+}
+
+void jx_bitsetFree(jx_bitset_t* bs, jx_allocator_i* allocator)
+{
+	JX_FREE(allocator, bs->m_Bits);
+	jx_memset(bs, 0, sizeof(jx_bitset_t));
 }
 
 bool jx_bitsetResize(jx_bitset_t* bs, uint32_t numBits, jx_allocator_i* allocator)
@@ -56,60 +62,64 @@ bool jx_bitsetResize(jx_bitset_t* bs, uint32_t numBits, jx_allocator_i* allocato
 	return true;
 }
 
-bool jx_bitsetUnion(jx_bitset_t* dst, const jx_bitset_t* src)
+void jx_bitsetUnion(jx_bitset_t* dst, const jx_bitset_t* src)
 {
-	if (dst->m_NumBits != src->m_NumBits) {
-		JX_CHECK(false, "Can only perform bitset operation on identically sized sets.");
-		return false;
-	}
+	JX_CHECK(dst->m_NumBits == src->m_NumBits, "Can only perform bitset operation on identically sized sets.");
 
 	const uint32_t numBits = dst->m_NumBits;
 	const uint32_t numWords = (numBits + 63) / 64;
 	for (uint32_t iWord = 0; iWord < numWords; ++iWord) {
 		dst->m_Bits[iWord] |= src->m_Bits[iWord];
 	}
-
-	return true;
 }
 
-bool jx_bitsetIntersection(jx_bitset_t* dst, const jx_bitset_t* src)
+void jx_bitsetIntersection(jx_bitset_t* dst, const jx_bitset_t* src)
 {
-	if (dst->m_NumBits != src->m_NumBits) {
-		JX_CHECK(false, "Can only perform bitset operation on identically sized sets.");
-		return false;
-	}
+	JX_CHECK(dst->m_NumBits == src->m_NumBits, "Can only perform bitset operation on identically sized sets.");
 
 	const uint32_t numBits = dst->m_NumBits;
 	const uint32_t numWords = (numBits + 63) / 64;
 	for (uint32_t iWord = 0; iWord < numWords; ++iWord) {
 		dst->m_Bits[iWord] &= src->m_Bits[iWord];
 	}
-
-	return true;
 }
 
-bool jx_bitsetCopy(jx_bitset_t* dst, const jx_bitset_t* src)
+void jx_bitsetCopy(jx_bitset_t* dst, const jx_bitset_t* src)
 {
-	if (dst->m_NumBits != src->m_NumBits) {
-		JX_CHECK(false, "Can only perform bitset operation on identically sized sets.");
-		return false;
-	}
+	JX_CHECK(dst->m_NumBits == src->m_NumBits, "Can only perform bitset operation on identically sized sets.");
 
 	const uint32_t numBits = dst->m_NumBits;
 	const uint32_t numWords = (numBits + 63) / 64;
+#if 1
+	uint64_t* dstPtr = dst->m_Bits;
+	const uint64_t* srcPtr = src->m_Bits;
+	uint32_t remaining = numWords;
+	while (remaining >= 4) {
+		*dstPtr++ = *srcPtr++;
+		*dstPtr++ = *srcPtr++;
+		*dstPtr++ = *srcPtr++;
+		*dstPtr++ = *srcPtr++;
+		remaining -= 4;
+	}
+	switch (remaining) {
+	case 3:
+		*dstPtr++ = *srcPtr++;
+	case 2:
+		*dstPtr++ = *srcPtr++;
+	case 1:
+		*dstPtr++ = *srcPtr++;
+		break;
+	}
+#else
 	for (uint32_t iWord = 0; iWord < numWords; ++iWord) {
 		dst->m_Bits[iWord] = src->m_Bits[iWord];
 	}
-
-	return true;
+#endif
 }
 
-bool jx_bitsetSub(jx_bitset_t* dst, const jx_bitset_t* src)
+void jx_bitsetSub(jx_bitset_t* dst, const jx_bitset_t* src)
 {
-	if (dst->m_NumBits != src->m_NumBits) {
-		JX_CHECK(false, "Can only perform bitset operation on identically sized sets.");
-		return false;
-	}
+	JX_CHECK(dst->m_NumBits == src->m_NumBits, "Can only perform bitset operation on identically sized sets.");
 
 	jx_bitset_iterator_t iter;
 	jx_bitsetIterBegin(dst, &iter, 0);
@@ -122,16 +132,11 @@ bool jx_bitsetSub(jx_bitset_t* dst, const jx_bitset_t* src)
 
 		nextSetBit = jx_bitsetIterNext(dst, &iter);
 	}
-
-	return true;
 }
 
 bool jx_bitsetEqual(const jx_bitset_t* a, const jx_bitset_t* b)
 {
-	if (a->m_NumBits != b->m_NumBits) {
-		JX_CHECK(false, "Can only perform bitset operation on identically sized sets.");
-		return false;
-	}
+	JX_CHECK(a->m_NumBits == b->m_NumBits, "Can only perform bitset operation on identically sized sets.");
 
 	const uint32_t numBits = a->m_NumBits;
 	const uint32_t numWords = (numBits + 63) / 64;
