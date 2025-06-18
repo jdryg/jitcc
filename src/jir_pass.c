@@ -12,6 +12,7 @@
 #include <jlib/math.h>
 #include <jlib/memory.h>
 #include <jlib/string.h>
+#include <tracy/tracy/TracyC.h>
 
 static int32_t jir_comparePtrs(void* a, void* b);
 
@@ -79,6 +80,7 @@ static void jir_funcPass_singleRetBlockDestroy(jx_ir_function_pass_o* inst, jx_a
 
 static bool jir_funcPass_singleRetBlockRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "ir: Single Ret Block", 1);
 	jir_func_pass_single_ret_block_t* pass = (jir_func_pass_single_ret_block_t*)inst;
 	
 	jx_array_resize(pass->m_RetBBArr, 0);
@@ -97,6 +99,7 @@ static bool jir_funcPass_singleRetBlockRun(jx_ir_function_pass_o* inst, jx_ir_co
 	// If there is only 1 such block we are done.
 	const uint32_t numRetBlocks = (uint32_t)jx_array_sizeu(pass->m_RetBBArr);
 	if (numRetBlocks <= 1) {
+		TracyCZoneEnd(tracyCtx);
 		return false;
 	}
 
@@ -134,6 +137,8 @@ static bool jir_funcPass_singleRetBlockRun(jx_ir_function_pass_o* inst, jx_ir_co
 	}
 
 	jx_ir_funcAppendBasicBlock(ctx, func, newRetBB);
+
+	TracyCZoneEnd(tracyCtx);
 
 	return true;
 }
@@ -185,6 +190,7 @@ static void jir_funcPass_simplifyCFGDestroy(jx_ir_function_pass_o* inst, jx_allo
 
 static bool jir_funcPass_simplifyCFGRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "ir: Simplify CFG", 1);
 	jir_func_pass_simplify_cfg_t* pass = (jir_func_pass_simplify_cfg_t*)inst;
 
 	uint32_t numBasicBlocksChanged = 0;
@@ -332,6 +338,8 @@ static bool jir_funcPass_simplifyCFGRun(jx_ir_function_pass_o* inst, jx_ir_conte
 		}
 	}
 
+	TracyCZoneEnd(tracyCtx);
+
 	return numBasicBlocksChanged != 0;
 }
 
@@ -475,6 +483,7 @@ static void jir_funcPass_simpleSSADestroy(jx_ir_function_pass_o* inst, jx_alloca
 
 static bool jir_funcPass_simpleSSARun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "ir: Simple SSA", 1);
 	jir_func_pass_simple_ssa_t* pass = (jir_func_pass_simple_ssa_t*)inst;
 	pass->m_Ctx = ctx;
 
@@ -586,6 +595,8 @@ static bool jir_funcPass_simpleSSARun(jx_ir_function_pass_o* inst, jx_ir_context
 	}
 
 	pass->m_Ctx = NULL;
+
+	TracyCZoneEnd(tracyCtx);
 
 	return true;
 }
@@ -1013,6 +1024,7 @@ static void jir_funcPass_constantFoldingDestroy(jx_ir_function_pass_o* inst, jx_
 
 static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "ir: Constant Folding", 1);
 	jir_func_pass_const_folding_t* pass = (jir_func_pass_const_folding_t*)inst;
 
 	uint32_t numFolds = 0;
@@ -1220,6 +1232,8 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 
 		changed = prevIterNumFolds != numFolds;
 	}
+
+	TracyCZoneEnd(tracyCtx);
 
 	return numFolds != 0;
 }
@@ -1836,6 +1850,8 @@ static void jir_funcPass_peepholeDestroy(jx_ir_function_pass_o* inst, jx_allocat
 
 static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "ir: Peephole", 1);
+
 	jir_func_pass_peephole_t* pass = (jir_func_pass_peephole_t*)inst;
 
 	pass->m_Ctx = ctx;
@@ -1908,6 +1924,8 @@ static bool jir_funcPass_peepholeRun(jx_ir_function_pass_o* inst, jx_ir_context_
 			bb = bb->m_Next;
 		}
 	}
+
+	TracyCZoneEnd(tracyCtx);
 
 	return numOpts != 0;
 }
@@ -2679,6 +2697,8 @@ static void jir_funcPass_canonicalizeOperandsDestroy(jx_ir_function_pass_o* inst
 
 static bool jir_funcPass_canonicalizeOperandsRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "ir: Canonicalize Operands", 1);
+
 	jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
 	while (bb) {
 		jx_ir_instruction_t* instr = bb->m_InstrListHead;
@@ -2738,6 +2758,8 @@ static bool jir_funcPass_canonicalizeOperandsRun(jx_ir_function_pass_o* inst, jx
 		bb = bb->m_Next;
 	}
 
+	TracyCZoneEnd(tracyCtx);
+
 	return false;
 }
 
@@ -2788,9 +2810,12 @@ static void jir_funcPass_reorderBasicBlocksDestroy(jx_ir_function_pass_o* inst, 
 
 static bool jir_funcPass_reorderBasicBlocksRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "ir: Reorder Basic Blocks", 1);
+
 	jir_func_pass_reorder_bb_t* pass = (jir_func_pass_reorder_bb_t*)inst;
 
 	if (!jx_ir_funcUpdateDomTree(ctx, func)) {
+		TracyCZoneEnd(tracyCtx);
 		return false;
 	}
 
@@ -2833,6 +2858,8 @@ static bool jir_funcPass_reorderBasicBlocksRun(jx_ir_function_pass_o* inst, jx_i
 
 		prev = bb;
 	}
+
+	TracyCZoneEnd(tracyCtx);
 	
 	return orderChanged;
 }
@@ -3369,6 +3396,8 @@ static void jir_funcPass_removeRedundantPhisDestroy(jx_ir_function_pass_o* inst,
 
 static bool jir_funcPass_removeRedundantPhisRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "ir: Remove Redundant Phis", 1);
+
 	jir_func_pass_remove_redundant_phis_t* pass = (jir_func_pass_remove_redundant_phis_t*)inst;
 
 	uint32_t numRemovals = 0;
@@ -3410,6 +3439,8 @@ static bool jir_funcPass_removeRedundantPhisRun(jx_ir_function_pass_o* inst, jx_
 
 		bb = bb->m_Next;
 	}
+
+	TracyCZoneEnd(tracyCtx);
 
 	return numRemovals != 0;
 }
@@ -3457,6 +3488,8 @@ static void jir_funcPass_deadCodeEliminationDestroy(jx_ir_function_pass_o* inst,
 
 static bool jir_funcPass_deadCodeEliminationRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "ir: DCE", 1);
+
 	jir_func_pass_dce_t* pass = (jir_func_pass_dce_t*)inst;
 
 	pass->m_Ctx = ctx;
@@ -3514,6 +3547,7 @@ static bool jir_funcPass_deadCodeEliminationRun(jx_ir_function_pass_o* inst, jx_
 		}
 	}
 
+	TracyCZoneEnd(tracyCtx);
 
 	return numRemovals != 0;
 }
@@ -3629,6 +3663,8 @@ static void jir_funcPass_localValueNumberingDestroy(jx_ir_function_pass_o* inst,
 
 static bool jir_funcPass_localValueNumberingRun(jx_ir_function_pass_o* inst, jx_ir_context_t* ctx, jx_ir_function_t* func)
 {
+	TracyCZoneN(tracyCtx, "ir: LVN", 1);
+
 	jir_func_pass_lvn_t* pass = (jir_func_pass_lvn_t*)inst;
 
 	pass->m_Ctx = ctx;
@@ -3659,6 +3695,8 @@ static bool jir_funcPass_localValueNumberingRun(jx_ir_function_pass_o* inst, jx_
 
 		bb = bb->m_Next;
 	}
+
+	TracyCZoneEnd(tracyCtx);
 
 	return false;
 }
@@ -3932,6 +3970,8 @@ static void jir_funcPass_inlineFuncsDestroy(jx_ir_module_pass_o* inst, jx_alloca
 
 static bool jir_funcPass_inlineFuncsRun(jx_ir_module_pass_o* inst, jx_ir_context_t* ctx, jx_ir_module_t* mod)
 {
+	TracyCZoneN(tracyCtx, "ir: Inline Functions", 1);
+
 	jir_module_pass_inliner_t* pass = (jir_module_pass_inliner_t*)inst;
 	pass->m_Ctx = ctx;
 
@@ -3984,6 +4024,8 @@ static bool jir_funcPass_inlineFuncsRun(jx_ir_module_pass_o* inst, jx_ir_context
 	}
 
 	jir_callGraphDestroy(callGraph);
+
+	TracyCZoneEnd(tracyCtx);
 
 	return numCallsInlined != 0;
 }

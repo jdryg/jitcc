@@ -158,6 +158,7 @@ int main(int argc, char** argv)
 //	const char* sourceFile = "test/stb_image_write_test.c";
 //	const char* sourceFile = "test/stb_sprintf_test.c";
 	const char* sourceFile = "test/stb_truetype_test.c";
+//	const char* sourceFile = "test/sieve.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
 	TracyCZoneN(frontend, "Frontend", 1);
@@ -259,6 +260,6 @@ end:
 	allocator_api->destroyAllocator(allocator);
 
 	jx_kernel_shutdownAPI();
- 
+
 	return 0;
 }
