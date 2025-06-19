@@ -535,6 +535,7 @@ void jx_mir_funcPrependBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func
 bool jx_mir_funcRemoveBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb);
 void jx_mir_funcAllocStackForCall(jx_mir_context_t* ctx, jx_mir_function_t* func, uint32_t numArguments);
 bool jx_mir_funcUpdateCFG(jx_mir_context_t* ctx, jx_mir_function_t* func);
+bool jx_mir_funcRenumberVirtualRegs(jx_mir_context_t* ctx, jx_mir_function_t* func);
 bool jx_mir_funcUpdateLiveness(jx_mir_context_t* ctx, jx_mir_function_t* func);
 bool jx_mir_funcUpdateSCCs(jx_mir_context_t* ctx, jx_mir_function_t* func);
 uint32_t jx_mir_funcGetRegBitsetSize(jx_mir_context_t* ctx, jx_mir_function_t* func);

@@ -1455,6 +1455,8 @@
     </ClCompile>
     <ClCompile Include="bin\test\sieve.c">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="bin\test\stb_image_write_test.c">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>

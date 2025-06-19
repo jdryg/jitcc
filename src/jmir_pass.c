@@ -375,6 +375,19 @@ typedef enum jmir_graph_node_state
 	JMIR_NODE_STATE_COUNT
 } jmir_graph_node_state;
 
+static const char* kMIRNodeStateName[] = {
+	[JMIR_NODE_STATE_ALLOCATED] = "ALLOCATED",
+	[JMIR_NODE_STATE_INITIAL] = "INITIAL",
+	[JMIR_NODE_STATE_PRECOLORED] = "PRECOLORED",
+	[JMIR_NODE_STATE_SIMPLIFY] = "SIMPLIFY",
+	[JMIR_NODE_STATE_FREEZE] = "FREEZE",
+	[JMIR_NODE_STATE_SPILL] = "SPILL",
+	[JMIR_NODE_STATE_SPILLED] = "SPILLED",
+	[JMIR_NODE_STATE_COALESCED] = "COALESCED",
+	[JMIR_NODE_STATE_COLORED] = "COLORED",
+	[JMIR_NODE_STATE_SELECT] = "SELECT",
+};
+
 typedef enum jmir_mov_instr_state
 {
 	JMIR_MOV_STATE_ALLOCATED = 0,
@@ -387,6 +400,15 @@ typedef enum jmir_mov_instr_state
 	JMIR_MOV_STATE_COUNT
 } jmir_mov_instr_state;
 
+static const char* kMIRMovStateName[] = {
+	[JMIR_MOV_STATE_ALLOCATED] = "ALLOCATED",
+	[JMIR_MOV_STATE_COALESCED] = "COALESCED",
+	[JMIR_MOV_STATE_CONSTRAINED] = "CONSTRAINED",
+	[JMIR_MOV_STATE_FROZEN] = "FROZEN",
+	[JMIR_MOV_STATE_WORKLIST] = "WORKLIST",
+	[JMIR_MOV_STATE_ACTIVE] = "ACTIVE",
+};
+
 typedef struct jmir_graph_node_t
 {
 	jmir_graph_node_t* m_Next;
@@ -396,11 +418,11 @@ typedef struct jmir_graph_node_t
 	jmir_mov_instr_t** m_MoveArr;
 	jmir_graph_node_t* m_Alias;
 	jmir_graph_node_state m_State;
-	jx_mir_reg_class m_RegClass;
+	jx_mir_reg_t m_Reg;
 	uint32_t m_Degree;
 	uint32_t m_ID; // ID of the node; used as the index in all bitsets; must be unique
 	uint32_t m_Color;
-	uint32_t m_SpillCost;
+	double m_SpillCost;
 } jmir_graph_node_t;
 
 typedef struct jmir_mov_instr_t
@@ -467,7 +489,7 @@ static void jmir_regAlloc_nodeDecrementDegree(jmir_func_pass_regalloc_t* pass, j
 static void jmir_regAlloc_nodeEnableMove(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node);
 static void jmir_regAlloc_nodeAddWorklist(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node);
 static jmir_graph_node_t* jmir_regAlloc_nodeAdjacentIterNext(jmir_graph_node_t* node, uint32_t* iter);
-static bool jmir_regAlloc_nodeInit(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node, uint32_t regID, jx_mir_reg_class regClass, uint32_t color);
+static bool jmir_regAlloc_nodeInit(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node, uint32_t id, jx_mir_reg_t reg, uint32_t color);
 static void jmir_regAlloc_nodeSetState(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node, jmir_graph_node_state state);
 static jmir_graph_node_t* jmir_regAlloc_getNode(jmir_func_pass_regalloc_t* pass, uint32_t nodeID);
 static bool jmir_nodeIs(const jmir_graph_node_t* node, jmir_graph_node_state state);
@@ -513,6 +535,8 @@ static void jmir_funcPass_regAllocDestroy(jx_mir_function_pass_o* inst, jx_alloc
 static bool jmir_funcPass_regAllocRun(jx_mir_function_pass_o* inst, jx_mir_context_t* ctx, jx_mir_function_t* func)
 {
 	TracyCZoneN(tracyCtx, "regAlloc", 1);
+
+//	JX_TRACE("regalloc: Func: %s", func->m_Name);
 
 	jmir_func_pass_regalloc_t* pass = (jmir_func_pass_regalloc_t*)inst;
 
@@ -625,6 +649,7 @@ static bool jmir_funcPass_regAllocRun(jx_mir_function_pass_o* inst, jx_mir_conte
 	bool changed = true;
 	while (changed && iter < JMIR_REGALLOC_MAX_ITERATIONS) {
 		changed = false;
+//		JX_TRACE("regalloc: iteration: %u", iter);
 
 		// Liveness analysis + build
 		if (!jmir_regAlloc_init(pass, ctx, func, gpRegDesc, xmmRegDesc)) {
@@ -689,6 +714,7 @@ static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t
 	pass->m_NumAvailHWRegs[JMIR_REG_CLASS_GP] = jx_bitcount_u64(pass->m_AvailHWRegs[JMIR_REG_CLASS_GP]);
 	pass->m_NumAvailHWRegs[JMIR_REG_CLASS_XMM] = jx_bitcount_u64(pass->m_AvailHWRegs[JMIR_REG_CLASS_XMM]);
 	
+	jx_mir_funcRenumberVirtualRegs(ctx, func);
 	jx_mir_funcUpdateSCCs(ctx, func);
 	jx_mir_funcUpdateLiveness(ctx, func);
 
@@ -715,7 +741,7 @@ static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t
 			}
 		}
 
-		if (!jmir_regAlloc_nodeInit(pass, node, iNode, reg.m_Class, color)) {
+		if (!jmir_regAlloc_nodeInit(pass, node, iNode, reg, color)) {
 			return false;
 		}
 	}
@@ -731,7 +757,7 @@ static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t
 			JX_CHECK(bb->m_SCCInfo.m_SCC, "Basic block not a part of an SCC?");
 			jx_mir_scc_t* scc = bb->m_SCCInfo.m_SCC;
 			const uint32_t loopDepth = scc->m_Depth;
-			const uint32_t spillCostDelta = jx_pow_u32(10, loopDepth);
+			const double spillCostDelta = (double)jx_pow_u32(10, loopDepth);
 
 			jx_mir_instruction_t* instr = bb->m_InstrListHead;
 			while (instr) {
@@ -774,13 +800,17 @@ static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t
 					const uint32_t numDefs = instrUseDefAnnot->m_NumDefs;
 					for (uint32_t iDef = 0; iDef < numDefs; ++iDef) {
 						jmir_graph_node_t* defNode = jmir_regAlloc_getNode(pass, jx_mir_funcMapRegToBitsetID(ctx, func, instrUseDefAnnot->m_Defs[iDef]));
-						defNode->m_SpillCost += spillCostDelta;
+						if (defNode->m_Color == UINT32_MAX) {
+							defNode->m_SpillCost += spillCostDelta;
+						}
 					}
 
 					const uint32_t numUses = instrUseDefAnnot->m_NumUses;
 					for (uint32_t iUse = 0; iUse < numUses; ++iUse) {
 						jmir_graph_node_t* useNode = jmir_regAlloc_getNode(pass, jx_mir_funcMapRegToBitsetID(ctx, func, instrUseDefAnnot->m_Uses[iUse]));
-						useNode->m_SpillCost += spillCostDelta;
+						if (useNode->m_Color == UINT32_MAX) {
+							useNode->m_SpillCost += spillCostDelta;
+						}
 					}
 				}
 
@@ -789,6 +819,12 @@ static bool jmir_regAlloc_init(jmir_func_pass_regalloc_t* pass, jx_mir_context_t
 
 			bb = bb->m_Next;
 		}
+	}
+
+	for (uint32_t iNode = 32; iNode < numNodes; ++iNode) {
+		jmir_graph_node_t* node = &pass->m_Nodes[iNode];
+//		JX_TRACE("regalloc: Node %u: SpillCost = %.0f, Degree = %u, Ratio = %f", node->m_ID, node->m_SpillCost, node->m_Degree, node->m_SpillCost / (double)node->m_Degree);
+		node->m_SpillCost /= (double)node->m_Degree;
 	}
 
 	return true;
@@ -813,7 +849,7 @@ static void jmir_regAlloc_makeWorklist(jmir_func_pass_regalloc_t* pass)
 	while (node) {
 		jmir_graph_node_t* nextNode = node->m_Next;
 
-		if (node->m_Degree >= pass->m_NumAvailHWRegs[node->m_RegClass]) {
+		if (node->m_Degree >= pass->m_NumAvailHWRegs[node->m_Reg.m_Class]) {
 			jmir_regAlloc_nodeSetState(pass, node, JMIR_NODE_STATE_SPILL);
 		} else if (jmir_regAlloc_nodeMoveRelated(pass, node)) {
 			jmir_regAlloc_nodeSetState(pass, node, JMIR_NODE_STATE_FREEZE);
@@ -891,17 +927,14 @@ static void jmir_regAlloc_selectSpill(jmir_func_pass_regalloc_t* pass)
 
 	jmir_graph_node_t* spilledNode = spillCandidate;
 	JX_CHECK(spilledNode->m_Degree != 0, "A spill candidate has 0 degree!");
-	double spillCost = (double)spilledNode->m_SpillCost / (double)spilledNode->m_Degree;
 
 	spillCandidate = spillCandidate->m_Next;
 	while (spillCandidate) {
 		JX_CHECK(jmir_nodeIs(spillCandidate, JMIR_NODE_STATE_SPILL), "Node in spill worklist not in spill state!");
 		JX_CHECK(spillCandidate->m_Degree != 0, "A spill candidate has 0 degree!");
 
-		const double candidateCost = (double)spillCandidate->m_SpillCost / (double)spillCandidate->m_Degree;
-		if (spillCost > candidateCost) {
+		if (spilledNode->m_SpillCost > spillCandidate->m_SpillCost) {
 			spilledNode = spillCandidate;
-			spillCost = candidateCost;
 		}
 
 		spillCandidate = spillCandidate->m_Next;
@@ -917,7 +950,7 @@ static void jmir_regAlloc_assignColors(jmir_func_pass_regalloc_t* pass)
 	while (node) {
 		JX_CHECK(jmir_nodeIs(node, JMIR_NODE_STATE_SELECT), "Node in select stack not in select state!");
 
-		uint64_t availableColors = pass->m_AvailHWRegs[node->m_RegClass];
+		uint64_t availableColors = pass->m_AvailHWRegs[node->m_Reg.m_Class];
 
 		const uint32_t numAdjacent = (uint32_t)jx_array_sizeu(node->m_AdjacentArr);
 		for (uint32_t iAdjacent = 0; iAdjacent < numAdjacent; ++iAdjacent) {
@@ -944,7 +977,7 @@ static void jmir_regAlloc_assignColors(jmir_func_pass_regalloc_t* pass)
 
 		jmir_graph_node_t* alias = jmir_regAlloc_nodeGetAlias(pass, node);
 
-		if (alias->m_Color <= pass->m_TotalHWRegs[alias->m_RegClass]) {
+		if (alias->m_Color <= pass->m_TotalHWRegs[alias->m_Reg.m_Class]) {
 			node->m_Color = alias->m_Color;
 			jmir_regAlloc_nodeSetState(pass, node, JMIR_NODE_STATE_COLORED);
 		} else {
@@ -965,9 +998,9 @@ static jx_mir_reg_t jmir_regAlloc_getHWRegWithColor(jmir_func_pass_regalloc_t* p
 		jmir_graph_node_t* node = &pass->m_Nodes[firstRegID + iHWReg];
 		if (node->m_Color == color) {
 			JX_CHECK(jmir_nodeIs(node, JMIR_NODE_STATE_PRECOLORED), "Expected precolored hw register!");
-			JX_CHECK(node->m_RegClass == regClass, "Invalid register class");
+			JX_CHECK(node->m_Reg.m_Class == regClass, "Invalid register class");
 
-			jx_mir_reg_t hwReg = jx_mir_funcMapBitsetIDToReg(pass->m_Ctx, pass->m_Func, node->m_ID);
+			jx_mir_reg_t hwReg = node->m_Reg;
 			JX_CHECK(jx_mir_regIsClass(hwReg, regClass), "Invalid register class");
 			return hwReg;
 		}
@@ -992,7 +1025,7 @@ static void jmir_regAlloc_replaceRegs(jmir_func_pass_regalloc_t* pass)
 					if (jx_mir_regIsVirtual(operand->u.m_Reg)) {
 						jmir_graph_node_t* node = jmir_regAlloc_getNode(pass, jx_mir_funcMapRegToBitsetID(ctx, func, operand->u.m_Reg));
 						if (jmir_nodeIs(node, JMIR_NODE_STATE_COLORED)) {
-							jx_mir_reg_t hwReg = jmir_regAlloc_getHWRegWithColor(pass, node->m_RegClass, node->m_Color);
+							jx_mir_reg_t hwReg = jmir_regAlloc_getHWRegWithColor(pass, node->m_Reg.m_Class, node->m_Color);
 							JX_CHECK(jx_mir_regIsValid(hwReg) && jx_mir_regIsHW(hwReg), "Expected hw reg");
 							instr->m_Operands[iOperand] = jx_mir_opHWReg(ctx, func, operand->m_Type, hwReg);
 						}
@@ -1003,7 +1036,7 @@ static void jmir_regAlloc_replaceRegs(jmir_func_pass_regalloc_t* pass)
 					if (jx_mir_regIsValid(memRef.m_BaseReg) && jx_mir_regIsVirtual(memRef.m_BaseReg)) {
 						jmir_graph_node_t* node = jmir_regAlloc_getNode(pass, jx_mir_funcMapRegToBitsetID(ctx, func, memRef.m_BaseReg));
 						if (jmir_nodeIs(node, JMIR_NODE_STATE_COLORED)) {
-							jx_mir_reg_t hwReg = jmir_regAlloc_getHWRegWithColor(pass, node->m_RegClass, node->m_Color);
+							jx_mir_reg_t hwReg = jmir_regAlloc_getHWRegWithColor(pass, node->m_Reg.m_Class, node->m_Color);
 							JX_CHECK(jx_mir_regIsValid(hwReg) && jx_mir_regIsHW(hwReg), "Expected hw reg");
 							memRef.m_BaseReg = hwReg;
 						}
@@ -1012,7 +1045,7 @@ static void jmir_regAlloc_replaceRegs(jmir_func_pass_regalloc_t* pass)
 					if (jx_mir_regIsValid(memRef.m_IndexReg) && jx_mir_regIsVirtual(memRef.m_IndexReg)) {
 						jmir_graph_node_t* node = jmir_regAlloc_getNode(pass, jx_mir_funcMapRegToBitsetID(ctx, func, memRef.m_IndexReg));
 						if (jmir_nodeIs(node, JMIR_NODE_STATE_COLORED)) {
-							jx_mir_reg_t hwReg = jmir_regAlloc_getHWRegWithColor(pass, node->m_RegClass, node->m_Color);
+							jx_mir_reg_t hwReg = jmir_regAlloc_getHWRegWithColor(pass, node->m_Reg.m_Class, node->m_Color);
 							JX_CHECK(jx_mir_regIsValid(hwReg) && jx_mir_regIsHW(hwReg), "Expected hw reg");
 							memRef.m_IndexReg = hwReg;
 						}
@@ -1042,8 +1075,10 @@ static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass)
 	while (node) {
 		JX_CHECK(jmir_nodeIs(node, JMIR_NODE_STATE_SPILLED), "Expected node from spill list!");
 
-		jx_mir_reg_t vreg = jx_mir_funcMapBitsetIDToReg(ctx, func, node->m_ID);
+		const jx_mir_reg_t vreg = node->m_Reg;
 		JX_CHECK(jx_mir_regIsVirtual(vreg), "Trying to spill a hw reg?");
+
+//		JX_TRACE("regalloc: Spilling node %u (%%vr%u%s) with cost %f", node->m_ID, vreg.m_ID, vreg.m_Class == JMIR_REG_CLASS_GP ? "" : "f", node->m_SpillCost);
 
 		if (!jx_mir_funcSpillVirtualReg(ctx, func, vreg)) {
 			JX_CHECK(false, "Failed to spill vreg %u", vreg.m_ID);
@@ -1055,7 +1090,7 @@ static void jmir_regAlloc_spill(jmir_func_pass_regalloc_t* pass)
 
 static void jmir_regAlloc_addEdge(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* u, jmir_graph_node_t* v)
 {
-	if (u != v && u->m_RegClass == v->m_RegClass && !jmir_regAlloc_areNodesAdjacent(pass, u, v)) {
+	if (u != v && u->m_Reg.m_Class == v->m_Reg.m_Class && !jmir_regAlloc_areNodesAdjacent(pass, u, v)) {
 		jx_bitsetSetBit(u->m_AdjacentSet, v->m_ID);
 		jx_bitsetSetBit(v->m_AdjacentSet, u->m_ID);
 
@@ -1081,8 +1116,8 @@ static bool jmir_regAlloc_canCombineNodes(jmir_func_pass_regalloc_t* pass, jmir_
 {
 	bool canCombine = false;
 
-	const jx_mir_reg_class regClass = u->m_RegClass;
-	JX_CHECK(regClass == v->m_RegClass, "Trying to combine nodes from different register classes?");
+	const jx_mir_reg_class regClass = u->m_Reg.m_Class;
+	JX_CHECK(regClass == v->m_Reg.m_Class, "Trying to combine nodes from different register classes?");
 
 	if (jmir_nodeIs(u, JMIR_NODE_STATE_PRECOLORED)) {
 		bool allOK = true;
@@ -1147,7 +1182,7 @@ static void jmir_regAlloc_combineNodes(jmir_func_pass_regalloc_t* pass, jmir_gra
 	while (t) {
 		uint32_t d = t->m_Degree;
 		jmir_regAlloc_addEdge(pass, t, u);
-		if (d < pass->m_NumAvailHWRegs[t->m_RegClass] && t->m_Degree >= pass->m_NumAvailHWRegs[t->m_RegClass]) {
+		if (d < pass->m_NumAvailHWRegs[t->m_Reg.m_Class] && t->m_Degree >= pass->m_NumAvailHWRegs[t->m_Reg.m_Class]) {
 			JX_CHECK(jmir_nodeIs(t, JMIR_NODE_STATE_FREEZE), "Node expected to be in freeze state.");
 			jmir_regAlloc_nodeSetState(pass, t, JMIR_NODE_STATE_SPILL);
 		}
@@ -1156,14 +1191,14 @@ static void jmir_regAlloc_combineNodes(jmir_func_pass_regalloc_t* pass, jmir_gra
 		t = jmir_regAlloc_nodeAdjacentIterNext(v, &adjIter);
 	}
 
-	if (u->m_Degree >= pass->m_NumAvailHWRegs[u->m_RegClass] && jmir_nodeIs(u, JMIR_NODE_STATE_FREEZE)) {
+	if (u->m_Degree >= pass->m_NumAvailHWRegs[u->m_Reg.m_Class] && jmir_nodeIs(u, JMIR_NODE_STATE_FREEZE)) {
 		jmir_regAlloc_nodeSetState(pass, u, JMIR_NODE_STATE_SPILL);
 	}
 }
 
 static bool jmir_regAlloc_OK(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* t, jmir_graph_node_t* r)
 {
-	return (t->m_Degree < pass->m_NumAvailHWRegs[t->m_RegClass])
+	return (t->m_Degree < pass->m_NumAvailHWRegs[t->m_Reg.m_Class])
 		|| jmir_nodeIs(t, JMIR_NODE_STATE_PRECOLORED)
 		|| jmir_regAlloc_areNodesAdjacent(pass, t, r)
 		;
@@ -1225,7 +1260,7 @@ static void jmir_regAlloc_nodeFreezeMoves(jmir_func_pass_regalloc_t* pass, jmir_
 				}
 			}
 
-			if (!jmir_nodeIs(v, JMIR_NODE_STATE_PRECOLORED) && numNodeMoves == 0 && v->m_Degree < pass->m_NumAvailHWRegs[v->m_RegClass]) {
+			if (!jmir_nodeIs(v, JMIR_NODE_STATE_PRECOLORED) && numNodeMoves == 0 && v->m_Degree < pass->m_NumAvailHWRegs[v->m_Reg.m_Class]) {
 				JX_CHECK(jmir_nodeIs(v, JMIR_NODE_STATE_FREEZE), "Node expected to be in freeze worklist");
 				jmir_regAlloc_nodeSetState(pass, v, JMIR_NODE_STATE_SIMPLIFY);
 			}
@@ -1257,7 +1292,7 @@ static void jmir_regAlloc_nodeDecrementDegree(jmir_func_pass_regalloc_t* pass, j
 
 	--node->m_Degree;
 
-	if (d == pass->m_NumAvailHWRegs[node->m_RegClass]) {
+	if (d == pass->m_NumAvailHWRegs[node->m_Reg.m_Class]) {
 		jmir_regAlloc_nodeEnableMove(pass, node);
 
 		uint32_t adjIter = 0;
@@ -1287,7 +1322,7 @@ static void jmir_regAlloc_nodeEnableMove(jmir_func_pass_regalloc_t* pass, jmir_g
 
 static void jmir_regAlloc_nodeAddWorklist(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node)
 {
-	if (!jmir_nodeIs(node, JMIR_NODE_STATE_PRECOLORED) && !jmir_regAlloc_nodeMoveRelated(pass, node) && node->m_Degree < pass->m_NumAvailHWRegs[node->m_RegClass]) {
+	if (!jmir_nodeIs(node, JMIR_NODE_STATE_PRECOLORED) && !jmir_regAlloc_nodeMoveRelated(pass, node) && node->m_Degree < pass->m_NumAvailHWRegs[node->m_Reg.m_Class]) {
 		JX_CHECK(jmir_nodeIs(node, JMIR_NODE_STATE_FREEZE), "Expected node to be in freeze list");
 		jmir_regAlloc_nodeSetState(pass, node, JMIR_NODE_STATE_SIMPLIFY);
 	}
@@ -1311,7 +1346,7 @@ static jmir_graph_node_t* jmir_regAlloc_nodeAdjacentIterNext(jmir_graph_node_t* 
 	return res;
 }
 
-static bool jmir_regAlloc_nodeInit(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node, uint32_t id, jx_mir_reg_class regClass, uint32_t color)
+static bool jmir_regAlloc_nodeInit(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node, uint32_t id, jx_mir_reg_t reg, uint32_t color)
 {
 	node->m_AdjacentSet = jx_bitsetCreate(pass->m_NumNodes, pass->m_LinearAllocator);
 	if (!node->m_AdjacentSet) {
@@ -1335,8 +1370,8 @@ static bool jmir_regAlloc_nodeInit(jmir_func_pass_regalloc_t* pass, jmir_graph_n
 	node->m_ID = id;
 	node->m_Color = color;
 	node->m_State = JMIR_NODE_STATE_ALLOCATED;
-	node->m_RegClass = regClass;
-	node->m_SpillCost = color != UINT32_MAX ? UINT32_MAX : 0;
+	node->m_Reg = reg;
+	node->m_SpillCost = color != UINT32_MAX ? 1e300 : 0;
 	jmir_regAlloc_nodeSetState(pass, node, color != UINT32_MAX ? JMIR_NODE_STATE_PRECOLORED : JMIR_NODE_STATE_INITIAL);
 
 	return true;
@@ -1344,6 +1379,8 @@ static bool jmir_regAlloc_nodeInit(jmir_func_pass_regalloc_t* pass, jmir_graph_n
 
 static void jmir_regAlloc_nodeSetState(jmir_func_pass_regalloc_t* pass, jmir_graph_node_t* node, jmir_graph_node_state state)
 {
+//	JX_TRACE("regalloc: Node %u: %s -> %s", node->m_ID, kMIRNodeStateName[node->m_State], kMIRNodeStateName[state]);
+
 	// Remove from previous list
 	if (jmir_nodeIs(node, JMIR_NODE_STATE_ALLOCATED)) {
 		JX_CHECK(!node->m_Next && !node->m_Prev, "Node in allocated state should not be part of a list!");
@@ -1397,6 +1434,8 @@ static jmir_mov_instr_t* jmir_regAlloc_movAlloc(jmir_func_pass_regalloc_t* pass,
 	mov->m_Dst = jmir_regAlloc_getNode(pass, jx_mir_funcMapRegToBitsetID(pass->m_Ctx, pass->m_Func, instrUseDefAnnot->m_Defs[0]));
 	mov->m_Src = jmir_regAlloc_getNode(pass, jx_mir_funcMapRegToBitsetID(pass->m_Ctx, pass->m_Func, instrUseDefAnnot->m_Uses[0]));
 
+//	JX_TRACE("regalloc: Creating move %u = %u", mov->m_Dst->m_ID, mov->m_Src->m_ID);
+
 	jx_array_push_back(mov->m_Dst->m_MoveArr, mov);
 	if (!jx_mir_regEqual(instrUseDefAnnot->m_Defs[0], instrUseDefAnnot->m_Uses[0])) {
 		jx_array_push_back(mov->m_Src->m_MoveArr, mov);
@@ -1407,6 +1446,8 @@ static jmir_mov_instr_t* jmir_regAlloc_movAlloc(jmir_func_pass_regalloc_t* pass,
 
 static void jmir_regAlloc_movSetState(jmir_func_pass_regalloc_t* pass, jmir_mov_instr_t* mov, jmir_mov_instr_state state)
 {
+//	JX_TRACE("regalloc: Move %u = %u: %s -> %s", mov->m_Dst->m_ID, mov->m_Src->m_ID, kMIRMovStateName[mov->m_State], kMIRMovStateName[state]);
+
 	// Remove from previous list
 	if (jmir_movIs(mov, JMIR_MOV_STATE_ALLOCATED)) {
 		JX_CHECK(!mov->m_Next && !mov->m_Prev, "Move in allocated state should not be part of a list!");
