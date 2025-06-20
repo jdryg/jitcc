@@ -3606,6 +3606,8 @@ static uint32_t jir_dce_bbVisit(jir_func_pass_dce_t* pass, jx_ir_basic_block_t* 
 //////////////////////////////////////////////////////////////////////////
 // Local Value Numbering
 //
+#define JIR_LVN_CONFIG_VALUE_NUMBER_LOADS 1
+
 typedef struct jir_hash_value_map_item_t
 {
 	uint64_t m_Hash;
@@ -3678,15 +3680,36 @@ static bool jir_funcPass_localValueNumberingRun(jx_ir_function_pass_o* inst, jx_
 		while (instr) {
 			jx_ir_instruction_t* instrNext = instr->m_Next;
 
-			uint64_t hash = 0ull;
-			if (jir_lvn_instrCalcHash(pass, instr, &hash)) {
-				jir_hash_value_map_item_t* hashItem = jx_hashmapGet(pass->m_ValueMap, &(jir_hash_value_map_item_t){.m_Hash = hash });
-				if (hashItem) {
-					jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), hashItem->m_Value);
-					jx_ir_bbRemoveInstr(ctx, bb, instr);
-					jx_ir_instrFree(ctx, instr);
-				} else {
-					jx_hashmapSet(pass->m_ValueMap, &(jir_hash_value_map_item_t){.m_Hash = hash, .m_Value = jx_ir_instrToValue(instr) });
+#if JIR_LVN_CONFIG_VALUE_NUMBER_LOADS
+			if (instr->m_OpCode == JIR_OP_CALL || instr->m_OpCode == JIR_OP_STORE) {
+				// NOTE: Calls and stores invalidate all loads. Anything more complicated requires
+				// alias analysis. 
+				// 
+				// TODO: In case of stores to alloca'd values I might be able to 
+				// map the stored value to the load (is that store-to-load forwarding?) but I don't
+				// know if it's safe without alias analysis.
+				uint32_t itemID = 0;
+				jir_hash_value_map_item_t* itemPtr = NULL;
+				while (jx_hashmapIter(pass->m_ValueMap, &itemID, (void**)&itemPtr)) {
+					jx_ir_instruction_t* instr = jx_ir_valueToInstr(itemPtr->m_Value);
+					if (instr && instr->m_OpCode == JIR_OP_LOAD) {
+						jx_hashmapDelete(pass->m_ValueMap, itemPtr);
+						itemID = 0;
+					}
+				}
+			} else 
+#endif
+			{
+				uint64_t hash = 0ull;
+				if (jir_lvn_instrCalcHash(pass, instr, &hash)) {
+					jir_hash_value_map_item_t* hashItem = jx_hashmapGet(pass->m_ValueMap, &(jir_hash_value_map_item_t){ .m_Hash = hash });
+					if (hashItem) {
+						jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), hashItem->m_Value);
+						jx_ir_bbRemoveInstr(ctx, bb, instr);
+						jx_ir_instrFree(ctx, instr);
+					} else {
+						jx_hashmapSet(pass->m_ValueMap, &(jir_hash_value_map_item_t){ .m_Hash = hash, .m_Value = jx_ir_instrToValue(instr) });
+					}
 				}
 			}
 
@@ -3770,13 +3793,23 @@ static bool jir_lvn_instrCalcHash(jir_func_pass_lvn_t* pass, jx_ir_instruction_t
 		hash = jx_hashFNV1a(&op0, sizeof(jx_ir_value_t**), hash, 0);
 		res = true;
 	} break;
+	case JIR_OP_LOAD: {
+#if JIR_LVN_CONFIG_VALUE_NUMBER_LOADS
+		jx_ir_value_t* ptr = jx_ir_instrGetOperandVal(instr, 0);
+		hash = jx_hashFNV1a(&ptr, sizeof(jx_ir_value_t**), hash, 0);
+		res = true;
+#endif
+	} break;
 	case JIR_OP_RET:
 	case JIR_OP_BRANCH:
-	case JIR_OP_ALLOCA:
-	case JIR_OP_LOAD:
+	case JIR_OP_ALLOCA:{
+		// Don't replace those.
+	} break;
 	case JIR_OP_STORE:
 	case JIR_OP_CALL: {
-		// Don't replace those.
+#if JIR_LVN_CONFIG_VALUE_NUMBER_LOADS
+		JX_CHECK(false, "Cannot calculate hash for calls and stores!");
+#endif
 	} break;
 	default: {
 		JX_CHECK(false, "Unknown opcode");
