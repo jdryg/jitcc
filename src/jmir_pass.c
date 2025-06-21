@@ -1496,6 +1496,7 @@ static bool jmir_peephole_jumps(jmir_func_pass_peephole_t* pass, jx_mir_instruct
 static bool jmir_peephole_imul(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr);
 static bool jmir_peephole_lea(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr);
 static bool jmir_peephole_mov_x(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr);
+static bool jmir_peephole_add(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr);
 
 static bool jmir_peephole_isFloatConst(jx_mir_operand_t* op, double val);
 
@@ -1563,6 +1564,8 @@ static bool jmir_funcPass_peepholeRun(jx_mir_function_pass_o* inst, jx_mir_conte
 					numOpts += jmir_peephole_lea(pass, instr) ? 1 : 0;
 				} else if (instr->m_OpCode == JMIR_OP_MOVSX || instr->m_OpCode == JMIR_OP_MOVZX) {
 					numOpts += jmir_peephole_mov_x(pass, instr) ? 1 : 0;
+				} else if (instr->m_OpCode == JMIR_OP_ADD) {
+					numOpts += jmir_peephole_add(pass, instr) ? 1 : 0;
 				}
 
 				instr = instrNext;
@@ -1844,21 +1847,88 @@ static bool jmir_peephole_mov_x(jmir_func_pass_peephole_t* pass, jx_mir_instruct
 		jx_mir_operand_t* dst = instr->m_Operands[0];
 		jx_mir_operand_t* src = instr->m_Operands[1];
 		JX_CHECK(dst->m_Kind == JMIR_OPERAND_REGISTER, "Expected register operand");
-		if (src->m_Kind == JMIR_OPERAND_REGISTER) {
-			// mov vr1, any
-			// movsx/movzx vr2, vr1
-			//  =>
-			// movsx/movzx vr2, any
+		if (src->m_Kind == JMIR_OPERAND_REGISTER && instr->m_Prev) {
 			jx_mir_instruction_t* prevInstr = instr->m_Prev;
-			if (prevInstr && prevInstr->m_OpCode == JMIR_OP_MOV) {
+			if (prevInstr->m_OpCode == JMIR_OP_MOV) {
+				// mov vr1, any
+				// movsx/movzx vr2, vr1
+				//  =>
+				// movsx/movzx vr2, any
 				jx_mir_operand_t* movDst = prevInstr->m_Operands[0];
-				if (movDst->m_Kind == JMIR_OPERAND_REGISTER && jx_mir_regEqual(src->u.m_Reg, movDst->u.m_Reg) && instr->m_Operands[1]->m_Type == prevInstr->m_Operands[1]->m_Type) {
+				if (jx_mir_opEqual(src, movDst) && instr->m_Operands[1]->m_Type == prevInstr->m_Operands[1]->m_Type) {
 					instr->m_Operands[1] = prevInstr->m_Operands[1];
 					res = true;
+				}
+			} else if (prevInstr->m_OpCode == JMIR_OP_ADD) {
+				// mov vr1, any
+				// add vr1, const
+				// movsx/movzx vr2, vr1
+				//  =>
+				// movsx vr3, any
+				// lea vr2, [vr3 + const]
+				jx_mir_operand_t* addDst = prevInstr->m_Operands[0];
+				jx_mir_operand_t* addSrc = prevInstr->m_Operands[1];
+				if ((dst->m_Type == JMIR_TYPE_I64 || dst->m_Type == JMIR_TYPE_PTR) && jx_mir_opEqual(src, addDst) && addSrc->m_Kind == JMIR_OPERAND_CONST && prevInstr->m_Prev) {
+					jx_mir_instruction_t* addPrevInstr = prevInstr->m_Prev;
+					if (addPrevInstr->m_OpCode == JMIR_OP_MOV) {
+						jx_mir_operand_t* movDst = addPrevInstr->m_Operands[0];
+						if (jx_mir_opEqual(addDst, movDst)) {
+							jx_mir_operand_t* tmp = jx_mir_opVirtualReg(ctx, func, dst->m_Type);
+							jx_mir_instruction_t* movxInstr = instr->m_OpCode == JMIR_OP_MOVZX
+								? jx_mir_movzx(ctx, tmp, addPrevInstr->m_Operands[1])
+								: jx_mir_movsx(ctx, tmp, addPrevInstr->m_Operands[1])
+								;
+							jx_mir_bbInsertInstrBefore(ctx, bb, instr, movxInstr);
+
+							jx_mir_operand_t* memRef = jx_mir_opMemoryRef(ctx, func, dst->m_Type, tmp->u.m_Reg, kMIRRegGPNone, 1, (int32_t)addSrc->u.m_ConstI64);
+							instr->m_OpCode = JMIR_OP_LEA;
+							instr->m_Operands[1] = memRef;
+							res = true;
+						}
+					}
 				}
 			}
 		}
 	}
+
+	return res;
+}
+
+static bool jmir_peephole_add(jmir_func_pass_peephole_t* pass, jx_mir_instruction_t* instr)
+{
+	jx_mir_context_t* ctx = pass->m_Ctx;
+	jx_mir_function_t* func = pass->m_Func;
+	jx_mir_basic_block_t* bb = instr->m_ParentBB;
+
+	bool res = false;
+
+#if 0 
+	// NOTE: This does not work correctly because mir's lea cannot 
+	// distinguish between 32-bit and 64-bit regs in memory references.
+	// It assumes both base and index regs are 64-bit.
+	// Also it messes up with the corresponding movsx/movzx optimization.
+	// It either needs another special case in movsx/movzx or check here if the 
+	// next instruction is a movsx/movzx and skip this code.
+	{
+		jx_mir_operand_t* dst = instr->m_Operands[0];
+		jx_mir_operand_t* src = instr->m_Operands[1];
+		if ((dst->m_Type == JMIR_TYPE_I32 || dst->m_Type == JMIR_TYPE_I64 || dst->m_Type == JMIR_TYPE_PTR) && dst->m_Kind == JMIR_OPERAND_REGISTER && (src->m_Kind == JMIR_OPERAND_REGISTER || src->m_Kind == JMIR_OPERAND_CONST) && instr->m_Prev) {
+			jx_mir_instruction_t* prevInstr = instr->m_Prev;
+			if (prevInstr->m_OpCode == JMIR_OP_MOV) {
+				jx_mir_operand_t* movDst = prevInstr->m_Operands[0];
+				jx_mir_operand_t* movSrc = prevInstr->m_Operands[1];
+				if (jx_mir_opEqual(dst, movDst) && movSrc->m_Kind == JMIR_OPERAND_REGISTER) {
+					// mov vreg2, vreg1;
+					// add vreg2, const/vreg3;
+					//  =>
+					// lea vreg2, [vreg1 + const/vreg3]
+					instr->m_OpCode = JMIR_OP_LEA;
+					instr->m_Operands[1] = jx_mir_opMemoryRef(ctx, func, dst->m_Type, movSrc->u.m_Reg, src->m_Kind == JMIR_OPERAND_CONST ? kMIRRegGPNone : src->u.m_Reg, 1, src->m_Kind == JMIR_OPERAND_CONST ? (int32_t)src->u.m_ConstI64 : 0);
+				}
+			}
+		}
+	}
+#endif
 
 	return res;
 }
@@ -2246,8 +2316,18 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 				} else if (dst->m_Kind == JMIR_OPERAND_REGISTER && src->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
 					// mov reg, [sym]
 					jmir_instrCombine_removeRegDef(pass, dst->u.m_Reg);
-				} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF && (src->m_Kind == JMIR_OPERAND_REGISTER || src->m_Kind == JMIR_OPERAND_CONST)) {
+				} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF && src->m_Kind == JMIR_OPERAND_REGISTER) {
 					// mov [mem], reg
+					jx_mir_memory_ref_t memRef = jmir_instrCombine_simplifyMemRef(pass, bb, dst->u.m_MemRef);
+					if (!jx_mir_memRefEqual(&memRef, dst->u.m_MemRef)) {
+						dst = jx_mir_opMemoryRef(ctx, func, dst->m_Type, memRef.m_BaseReg, memRef.m_IndexReg, memRef.m_Scale, memRef.m_Displacement);
+					} else {
+						jx_mir_instruction_t* srcRegDef = jmir_instrCombine_getRegDef(pass, src->u.m_Reg);
+						if (jmir_instrCombine_isMovVRegVReg(srcRegDef) && srcRegDef->m_Operands[1]->m_Type == src->m_Type) {
+							src = srcRegDef->m_Operands[1];
+						}
+					}
+				} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF && src->m_Kind == JMIR_OPERAND_CONST) {
 					// mov [mem], const
 					jx_mir_memory_ref_t memRef = jmir_instrCombine_simplifyMemRef(pass, bb, dst->u.m_MemRef);
 					if (!jx_mir_memRefEqual(&memRef, dst->u.m_MemRef)) {
@@ -3065,6 +3145,19 @@ static jx_mir_memory_ref_t jmir_instrCombine_simplifyMemRef(jmir_func_pass_instr
 		jx_mir_instruction_t* indexRegDef = jmir_instrCombine_getRegDef(pass, memRef.m_IndexReg);
 		if (jmir_instrCombine_isMovVRegVReg(indexRegDef)) {
 			memRef.m_IndexReg = indexRegDef->m_Operands[1]->u.m_Reg;
+		} else if (jmir_instrCombine_isLeaVReg(indexRegDef)) {
+			// If indexRegDef is lea indexReg, [baseReg + offset] replace 
+			// indexReg with baseReg and add offset * scale to displacement
+			jx_mir_operand_t* leaSrc = indexRegDef->m_Operands[1];
+			if (leaSrc->m_Kind == JMIR_OPERAND_MEMORY_REF) {
+				const jx_mir_memory_ref_t* leaSrcMemRef = leaSrc->u.m_MemRef;
+				if (!jx_mir_regIsValid(leaSrcMemRef->m_IndexReg)) {
+					memRef.m_IndexReg = leaSrcMemRef->m_BaseReg;
+					memRef.m_Displacement += leaSrcMemRef->m_Displacement * memRef.m_Scale;
+				}
+			} else if (leaSrc->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+				// TODO: 
+			}
 		}
 	}
 
