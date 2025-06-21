@@ -494,4 +494,13 @@ static inline jx_x64_operand_t jx64_opMemSymbol(jx_x64_size size, jx_x64_symbol_
 	return (jx_x64_operand_t){ .m_Type = JX64_OPERAND_MEM_SYM, .m_Size = size, .u.m_MemSym = { .m_Symbol = sym, .m_Displacement = disp } };
 }
 
+static inline bool jx64_immFitsIn32Bits(int64_t imm64)
+{
+	const uint64_t upperBits = (uint64_t)imm64 >> 32;
+	return false
+		|| upperBits == 0
+		|| upperBits == 0xFFFFFFFFull
+		;
+}
+
 #endif // JIT_H

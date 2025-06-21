@@ -6,6 +6,7 @@
 #include <jlib/dbg.h>
 #include <jlib/macros.h> // JX_PAD
 #include <jlib/string.h> // jx_strcmp
+#include <jlib/bitset.h>
 
 typedef struct jx_allocator_i jx_allocator_i;
 typedef struct jx_string_buffer_t jx_string_buffer_t;
@@ -417,7 +418,7 @@ typedef struct jx_mir_instruction_t
 	// Annotations
 	jx_mir_function_proto_t* m_FuncProto; // Only valid for call instructions
 	jx_mir_instr_usedef_t m_UseDef;
-	jx_bitset_t* m_LiveOutSet;
+	jx_bitset_t m_LiveOutSet;
 } jx_mir_instruction_t;
 
 typedef struct jx_mir_bb_scc_info_t
@@ -442,8 +443,8 @@ typedef struct jx_mir_basic_block_t
 	// Annotations
 	jx_mir_basic_block_t** m_PredArr;
 	jx_mir_basic_block_t** m_SuccArr;
-	jx_bitset_t* m_LiveInSet;
-	jx_bitset_t* m_LiveOutSet;
+	jx_bitset_t m_LiveInSet;
+	jx_bitset_t m_LiveOutSet;
 	jx_mir_bb_scc_info_t m_SCCInfo;
 } jx_mir_basic_block_t;
 
@@ -471,6 +472,7 @@ typedef struct jx_mir_function_t
 	jx_mir_function_proto_t* m_Prototype;
 	char* m_Name;
 	jx_mir_basic_block_t* m_BasicBlockListHead;
+	jx_mir_basic_block_t* m_BasicBlockListTail;
 	jx_mir_frame_info_t* m_FrameInfo;
 	jx_mir_operand_t** m_Args;
 	jx_mir_scc_t* m_SCCListHead;
@@ -533,6 +535,7 @@ void jx_mir_funcPrependBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func
 bool jx_mir_funcRemoveBasicBlock(jx_mir_context_t* ctx, jx_mir_function_t* func, jx_mir_basic_block_t* bb);
 void jx_mir_funcAllocStackForCall(jx_mir_context_t* ctx, jx_mir_function_t* func, uint32_t numArguments);
 bool jx_mir_funcUpdateCFG(jx_mir_context_t* ctx, jx_mir_function_t* func);
+bool jx_mir_funcRenumberVirtualRegs(jx_mir_context_t* ctx, jx_mir_function_t* func);
 bool jx_mir_funcUpdateLiveness(jx_mir_context_t* ctx, jx_mir_function_t* func);
 bool jx_mir_funcUpdateSCCs(jx_mir_context_t* ctx, jx_mir_function_t* func);
 uint32_t jx_mir_funcGetRegBitsetSize(jx_mir_context_t* ctx, jx_mir_function_t* func);

@@ -8,6 +8,7 @@
 #include <jlib/math.h>
 #include <jlib/memory.h>
 #include <jlib/string.h>
+#include <tracy/tracy/TracyC.h>
 
 #define JX_MIRGEN_CONFIG_INLINE_MEMSET_LIMIT 128
 #define JX_MIRGEN_CONFIG_INLINE_MEMCPY_LIMIT 128
@@ -344,6 +345,8 @@ static bool jmirgen_globalVarInitializer(jx_mirgen_context_t* ctx, jx_mir_global
 
 static bool jmirgen_funcBuild(jx_mirgen_context_t* ctx, const char* namePrefix, jx_ir_function_t* irFunc)
 {
+	TracyCZoneN(tracyCtx, "mirgen: Func Build", 1);
+
 	jx_ir_context_t* irctx = ctx->m_IRCtx;
 	jx_mir_context_t* mirctx = ctx->m_MIRCtx;
 
@@ -357,6 +360,7 @@ static bool jmirgen_funcBuild(jx_mirgen_context_t* ctx, const char* namePrefix, 
 	if (numArgs) {
 		args = JX_ALLOC(ctx->m_Allocator, sizeof(jx_mir_type_kind) * numArgs);
 		if (!args) {
+			TracyCZoneEnd(tracyCtx);
 			return false;
 		}
 
@@ -365,12 +369,7 @@ static bool jmirgen_funcBuild(jx_mirgen_context_t* ctx, const char* namePrefix, 
 		}
 	}
 
-#if 0
-	char funcName[256];
-	jx_snprintf(funcName, JX_COUNTOF(funcName), "%s:%s", namePrefix, irFunc->super.super.super.m_Name);
-#else
 	const char* funcName = jx_ir_funcToValue(irFunc)->m_Name;
-#endif
 
 	const bool isExternal = irFunc->m_BasicBlockListHead == NULL;
 	const uint32_t flags = 0
@@ -395,6 +394,7 @@ static bool jmirgen_funcBuild(jx_mirgen_context_t* ctx, const char* namePrefix, 
 			jx_ir_instruction_t* irInstr = irBB->m_InstrListHead;
 			while (irInstr) {
 				if (!jmirgen_instrBuild(ctx, irInstr)) {
+					TracyCZoneEnd(tracyCtx);
 					return false;
 				}
 				
@@ -410,6 +410,7 @@ static bool jmirgen_funcBuild(jx_mirgen_context_t* ctx, const char* namePrefix, 
 
 		// Process all phi instructions
 		if (!jmirgen_processPhis(ctx)) {
+			TracyCZoneEnd(tracyCtx);
 			return false;
 		}
 
@@ -421,6 +422,8 @@ static bool jmirgen_funcBuild(jx_mirgen_context_t* ctx, const char* namePrefix, 
 	}
 
 	JX_FREE(ctx->m_Allocator, args);
+
+	TracyCZoneEnd(tracyCtx);
 
 	return func != NULL;
 }

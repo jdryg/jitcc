@@ -490,22 +490,61 @@ void jx_ir_moduleEnd(jx_ir_context_t* ctx, jx_ir_module_t* mod)
 				jir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func);
 				jir_funcPassApply(ctx, ctx->m_FuncPass_removeRedundantPhis, func);
 				jir_funcPassApply(ctx, ctx->m_FuncPass_localValueNumbering, func);
+
+				uint32_t iter = 0;
+				bool changed = true;
+				while (changed && iter < 10) {
+					changed = false;
+
+					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_constantFolding, func);
+					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_canonicalizeOperands, func) || changed;
+					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_peephole, func) || changed;
+					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_removeRedundantPhis, func) || changed;
+					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCFG, func) || changed;
+					changed = jir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func) || changed;
+
+					++iter;
+				}
 			}
 
 			func = func->m_Next;
 		}
 	}
 
+#if 0
+	{
+		jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
+		jx_strbuf_printf(sb, "Pre-inlining\n");
+		jx_ir_modulePrint(ctx, mod, sb);
+		jx_strbuf_nullTerminate(sb);
+		JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
+		jx_strbuf_destroy(sb);
+	}
+#endif
+
 	// Apply whole module passes
 	{
 		jir_modulePassApply(ctx, ctx->m_ModulePass_inlineFuncs, mod);
 	}
+
+#if 0
+	{
+		jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
+		jx_strbuf_printf(sb, "Post-inlining\n");
+		jx_ir_modulePrint(ctx, mod, sb);
+		jx_strbuf_nullTerminate(sb);
+		JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
+		jx_strbuf_destroy(sb);
+	}
+#endif
 
 	// Apply post func passes
 	{
 		jx_ir_function_t* func = mod->m_FunctionListHead;
 		while (func) {
 			if (!jir_funcIsExternal(ctx, func)) {
+				jir_funcPassApply(ctx, ctx->m_FuncPass_reorderBasicBlocks, func);
+
 				uint32_t iter = 0;
 				bool changed = true;
 				while (changed && iter < 10) {
@@ -1489,11 +1528,35 @@ bool jx_ir_bbConvertCondBranch(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, bo
 	return true;
 }
 
+typedef struct jir_phi_val_t
+{
+	jx_ir_instruction_t* m_PhiInstr;
+	jx_ir_value_t* m_Value;
+} jir_phi_val_t;
+
 jx_ir_basic_block_t* jx_ir_bbSplitAt(jx_ir_context_t* ctx, jx_ir_basic_block_t* bb, jx_ir_instruction_t* instr)
 {
 	if (instr->m_ParentBB != bb) {
 		JX_CHECK(false, "Instruction not part of the specified basic block!");
 		return NULL;
+	}
+
+	jir_phi_val_t* phiVals = (jir_phi_val_t*)jx_array_create(ctx->m_Allocator);
+
+	jx_ir_use_t* bbUse = bb->super.m_UsesListHead;
+	while (bbUse) {
+		jx_ir_value_t* userValue = jx_ir_userToValue(bbUse->m_User);
+		if (userValue->m_Kind == JIR_VALUE_INSTRUCTION) {
+			jx_ir_instruction_t* userInstr = jx_ir_valueToInstr(userValue);
+			if (userInstr->m_OpCode == JIR_OP_PHI) {
+				jx_ir_value_t* val = jx_ir_instrPhiHasValue(ctx, userInstr, bb);
+				if (val) {
+					jx_array_push_back(phiVals, (jir_phi_val_t){ .m_PhiInstr = userInstr, .m_Value = val });
+				}
+			}
+		}
+
+		bbUse = bbUse->m_Next;
 	}
 
 	jx_ir_basic_block_t* contBB = jx_ir_bbAlloc(ctx, NULL);
@@ -1520,23 +1583,13 @@ jx_ir_basic_block_t* jx_ir_bbSplitAt(jx_ir_context_t* ctx, jx_ir_basic_block_t* 
 		bb->m_Next = contBB;
 	}
 
-	// Patch all phi instructions referencing the original block to have the same values
-	// but with the new block as the source.
-	jx_ir_use_t* bbUse = bb->super.m_UsesListHead;
-	while (bbUse) {
-		jx_ir_value_t* userValue = jx_ir_userToValue(bbUse->m_User);
-		if (userValue->m_Kind == JIR_VALUE_INSTRUCTION) {
-			jx_ir_instruction_t* userInstr = jx_ir_valueToInstr(userValue);
-			if (userInstr->m_OpCode == JIR_OP_PHI) {
-				if (jx_ir_instrPhiHasValue(ctx, userInstr, bb)) {
-					jx_ir_value_t* val = jx_ir_instrPhiRemoveValue(ctx, userInstr, bb);
-					jx_ir_instrPhiAddValue(ctx, userInstr, contBB, val);
-				}
-			}
-		}
-
-		bbUse = bbUse->m_Next;
+	const uint32_t numPhis = (uint32_t)jx_array_sizeu(phiVals);
+	for (uint32_t iPhi = 0; iPhi < numPhis; ++iPhi) {
+		jir_phi_val_t* phiVal = &phiVals[iPhi];
+		jx_ir_instrPhiAddValue(ctx, phiVal->m_PhiInstr, contBB, phiVal->m_Value);
 	}
+
+	jx_array_free(phiVals);
 
 	return contBB;
 }
