@@ -982,8 +982,8 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 		jx_cc_type_t* memberExprType = memberNode->m_Expr->m_Type;
 		if (memberExprType->m_Kind == JCC_TYPE_STRUCT) {
 			jx_ir_value_t* indices[] = {
-				jx_ir_constToValue(jx_ir_constGetI32(irctx, 0)),
-				jx_ir_constToValue(jx_ir_constGetI32(irctx, memberNode->m_Member->m_GEPIndex))
+				jx_ir_constToValue(jx_ir_constGetI64(irctx, 0)),
+				jx_ir_constToValue(jx_ir_constGetI64(irctx, memberNode->m_Member->m_GEPIndex))
 			};
 			jx_ir_instruction_t* gepInstr = jx_ir_instrGetElementPtr(irctx, ptr, 2, indices);
 			jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, gepInstr);
@@ -1211,8 +1211,8 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 					jx_ir_type_t* trueArgTypePtr = jx_ir_typeGetPointer(ctx->m_IRCtx, trueArgType);
 
 					jx_ir_value_t* gepIndices[2] = {
-						jx_ir_constToValue(jx_ir_constGetI32(irctx, 0)),
-						jx_ir_constToValue(jx_ir_constGetI32(irctx, 0)),
+						jx_ir_constToValue(jx_ir_constGetI64(irctx, 0)),
+						jx_ir_constToValue(jx_ir_constGetI64(irctx, 0)),
 					};
 
 					jx_ir_instruction_t* gepInstr = jx_ir_instrGetElementPtr(ctx->m_IRCtx, argVal, 2, gepIndices);
@@ -1376,13 +1376,13 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 		jx_ir_value_t* idxVal = jirgenGenExpression(ctx, gepNode->m_ExprIndex);
 
 		JX_CHECK(jx_ir_typeIsInteger(idxVal->m_Type), "Expected integer index.");
-		if (idxVal->m_Type->m_Kind != JIR_TYPE_I32 && idxVal->m_Type->m_Kind != JIR_TYPE_I64 && idxVal->m_Type->m_Kind != JIR_TYPE_U32 && idxVal->m_Type->m_Kind != JIR_TYPE_U64) {
+		if (/*idxVal->m_Type->m_Kind != JIR_TYPE_I32 &&*/ idxVal->m_Type->m_Kind != JIR_TYPE_I64 /*&& idxVal->m_Type->m_Kind != JIR_TYPE_U32 && idxVal->m_Type->m_Kind != JIR_TYPE_U64*/) {
 			idxVal = jirgenConvertType(ctx, idxVal, jx_ir_typeGetPrimitive(irctx, JIR_TYPE_I64));
 		}
 
 		// Make sure index type is signed.
 		if (jx_ir_typeIsUnsigned(idxVal->m_Type)) {
-			idxVal = jirgenConvertType(ctx, idxVal, jx_ir_typeGetPrimitive(irctx, idxVal->m_Type->m_Kind == JIR_TYPE_U64 ? JIR_TYPE_I64 : JIR_TYPE_I32));
+			idxVal = jirgenConvertType(ctx, idxVal, jx_ir_typeGetPrimitive(irctx, JIR_TYPE_I64 /*idxVal->m_Type->m_Kind == JIR_TYPE_U64 ? JIR_TYPE_I64 : JIR_TYPE_I32*/));
 		}
 
 		// If gepNode->m_ExprPtr is an array, use a 2 index GEP because the first index
@@ -1390,7 +1390,7 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 		const bool isArray = gepNode->m_ExprPtr->m_Type->m_Kind == JCC_TYPE_ARRAY;
 
 		jx_ir_value_t* indices[2] = {
-			jx_ir_constToValue(jx_ir_constGetI32(irctx, 0)),
+			jx_ir_constToValue(jx_ir_constGetI64(irctx, 0)),
 			idxVal
 		};
 		jx_ir_instruction_t* gepInstr = jx_ir_instrGetElementPtr(irctx, ptrVal, 1 + isArray, &indices[1 - isArray]);
@@ -1419,8 +1419,8 @@ static jx_ir_value_t* jirgenGenAddress(jx_irgen_context_t* ctx, jx_cc_ast_expr_t
 		jx_cc_type_t* memberExprType = memberNode->m_Expr->m_Type;
 		if (memberExprType->m_Kind == JCC_TYPE_STRUCT) {
 			jx_ir_value_t* indices[] = {
-				jx_ir_constToValue(jx_ir_constGetI32(irctx, 0)),
-				jx_ir_constToValue(jx_ir_constGetI32(irctx, memberNode->m_Member->m_GEPIndex))
+				jx_ir_constToValue(jx_ir_constGetI64(irctx, 0)),
+				jx_ir_constToValue(jx_ir_constGetI64(irctx, memberNode->m_Member->m_GEPIndex))
 			};
 			jx_ir_instruction_t* gepInstr = jx_ir_instrGetElementPtr(irctx, baseAddr, 2, indices);
 			jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, gepInstr);
@@ -1503,8 +1503,8 @@ static jx_ir_value_t* jirgenGenAddress(jx_irgen_context_t* ctx, jx_cc_ast_expr_t
 				jx_ir_bbPrependInstr(irctx, ctx->m_Func->m_BasicBlockListHead, structPtr);
 
 				jx_ir_value_t* indices[] = {
-					jx_ir_constToValue(jx_ir_constGetI32(irctx, 0)),
-					jx_ir_constToValue(jx_ir_constGetI32(irctx, 0)),
+					jx_ir_constToValue(jx_ir_constGetI64(irctx, 0)),
+					jx_ir_constToValue(jx_ir_constGetI64(irctx, 0)),
 				};
 				jx_ir_instruction_t* gepInstr = jx_ir_instrGetElementPtr(ctx->m_IRCtx, jx_ir_instrToValue(structPtr), JX_COUNTOF(indices), &indices[0]);
 				jx_ir_bbAppendInstr(ctx->m_IRCtx, ctx->m_BasicBlock, gepInstr);
@@ -1554,8 +1554,8 @@ static jx_ir_value_t* jirgenGenLoad(jx_irgen_context_t* ctx, jx_ir_value_t* ptr,
 		// Dereference of a pointer to an array should load the first element of the array
 		// (i.e. treat the array as pointer)
 		jx_ir_value_t* indices[] = {
-			jx_ir_constToValue(jx_ir_constGetI32(irctx, 0)),
-			jx_ir_constToValue(jx_ir_constGetI32(irctx, 0)),
+			jx_ir_constToValue(jx_ir_constGetI64(irctx, 0)),
+			jx_ir_constToValue(jx_ir_constGetI64(irctx, 0)),
 		};
 		jx_ir_instruction_t* gepInstr = jx_ir_instrGetElementPtr(irctx, ptr, 2, indices);
 		jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, gepInstr);
