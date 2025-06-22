@@ -1144,18 +1144,13 @@ static jx_mir_operand_t* jmirgen_instrBuild_call(jx_mirgen_context_t* ctx, jx_ir
 	// E.g. c-testsuite/00159.c zfunc
 	const char* funcName = funcPtrVal->m_Name;
 	if (funcName) {
-		if (!jx_strncmp(funcName, "jir.", 4)) {
-			// Intrinsic function
-			if (!jx_strncmp(funcName, "jir.memset.", 11)) {
-				if (jmirgen_genMemSet(ctx, irInstr)) {
-					return NULL;
-				}
-			} else if (!jx_strncmp(funcName, "jir.memcpy.", 11)) {
-				if (jmirgen_genMemCpy(ctx, irInstr)) {
-					return NULL;
-				}
-			} else {
-				JX_CHECK(false, "Unknown intrinsic function");
+		if (!jx_strncmp(funcName, "jir.memset.", 11)/* || !jx_strcmp(funcName, "memset")*/) {
+			if (jmirgen_genMemSet(ctx, irInstr)) {
+				return NULL;
+			}
+		} else if (!jx_strncmp(funcName, "jir.memcpy.", 11)/* || !jx_strcmp(funcName, "memcpy")*/) {
+			if (jmirgen_genMemCpy(ctx, irInstr)) {
+				return NULL;
 			}
 		} else if (!jx_strcmp(funcName, "__va_start")) {
 			if (jmirgen_genVAStart(ctx, irInstr)) {

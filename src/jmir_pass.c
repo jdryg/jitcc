@@ -2327,6 +2327,11 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 							src = srcRegDef->m_Operands[1];
 						}
 					}
+
+					jx_mir_instruction_t* srcRegDef = jmir_instrCombine_getRegDef(pass, src->u.m_Reg);
+					if (srcRegDef && srcRegDef->m_OpCode == JMIR_OP_MOV && srcRegDef->m_Operands[1]->m_Type == src->m_Type && (srcRegDef->m_Operands[1]->m_Kind == JMIR_OPERAND_CONST || srcRegDef->m_Operands[1]->m_Kind == JMIR_OPERAND_REGISTER)) {
+						src = srcRegDef->m_Operands[1];
+					}
 				} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF && src->m_Kind == JMIR_OPERAND_CONST) {
 					// mov [mem], const
 					jx_mir_memory_ref_t memRef = jmir_instrCombine_simplifyMemRef(pass, bb, dst->u.m_MemRef);
