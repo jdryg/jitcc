@@ -2396,7 +2396,9 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 				instr->m_Operands[1] = src;
 			} break;
 			case JMIR_OP_IMUL3: {
-				JX_NOT_IMPLEMENTED();
+				jx_mir_operand_t* dst = instr->m_Operands[0];
+				JX_CHECK(dst->m_Kind == JMIR_OPERAND_REGISTER, "Expected register dst for imul3");
+				jmir_instrCombine_removeRegDef(pass, dst->u.m_Reg);
 			} break;
 			case JMIR_OP_LEA: {
 				jx_mir_operand_t* dst = instr->m_Operands[0];
@@ -3405,7 +3407,8 @@ static bool jmir_funcPass_redundantConstEliminationRun(jx_mir_function_pass_o* i
 			} break;
 			case JMIR_OP_MOVSX:
 			case JMIR_OP_MOVZX:
-			case JMIR_OP_IMUL: 
+			case JMIR_OP_IMUL:
+			case JMIR_OP_IMUL3:
 			case JMIR_OP_ADD:
 			case JMIR_OP_SUB:
 			case JMIR_OP_LEA:
