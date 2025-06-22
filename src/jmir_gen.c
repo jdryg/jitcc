@@ -1104,8 +1104,12 @@ static jx_mir_operand_t* jmirgen_instrBuild_gep(jx_mirgen_context_t* ctx, jx_ir_
 				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstReg, memRef));
 			} else {
 				jx_mir_operand_t* tmp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64);
+#if 0
 				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, tmp, indexOperand));
 				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_imul(ctx->m_MIRCtx, tmp, jx_mir_opIConst(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64, itemSize)));
+#else
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_imul3(ctx->m_MIRCtx, tmp, indexOperand, jx_mir_opIConst(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64, itemSize)));
+#endif
 				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_add(ctx->m_MIRCtx, dstReg, tmp));
 			}
 
