@@ -80,8 +80,8 @@ static jx_mir_operand_t* jmirgen_instrBuild_ui2fp(jx_mirgen_context_t* ctx, jx_i
 static jx_mir_operand_t* jmirgen_instrBuild_si2fp(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
 static jx_mir_basic_block_t* jmirgen_getOrCreateBasicBlock(jx_mirgen_context_t* ctx, jx_ir_basic_block_t* irBB);
 static jx_mir_operand_t* jmirgen_getOperand(jx_mirgen_context_t* ctx, jx_ir_value_t* val);
-static bool jmirgen_genMemSet(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
-static bool jmirgen_genMemCpy(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
+static jx_mir_operand_t* jmirgen_genMemSet(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
+static jx_mir_operand_t* jmirgen_genMemCpy(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
 static bool jmirgen_genVAStart(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
 static bool jmirgen_genMov(jx_mirgen_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 static jx_mir_operand_t* jmirgen_ensureOperandRegOrMem(jx_mirgen_context_t* ctx, jx_mir_operand_t* operand);
@@ -1097,6 +1097,72 @@ static jx_mir_operand_t* jmirgen_instrBuild_gep(jx_mirgen_context_t* ctx, jx_ir_
 			}
 
 			const uint32_t itemSize = (uint32_t)jx_ir_typeGetSize(baseType);
+#if 0
+			switch (itemSize) {
+			case 1:
+			case 2:
+			case 4: 
+			case 8: {
+				// dst = dst + index * (1,2,4,8)
+				//  =>
+				// lea %dst, [%dst + %index * (1,2,4,8]
+				jx_mir_operand_t* tmp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
+				jx_mir_operand_t* memRef = jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, dstReg->u.m_Reg, indexOperand->u.m_Reg, itemSize, 0);
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmp, memRef));
+				dstReg = tmp;
+			} break;
+			case 3:
+			case 6:
+			case 12: 
+			case 24: {
+				// dst = dst + (index * 3) * (1,2,4,8)
+				//  =>
+				// lea %tmp, [%index + %index * 2]
+				// lea %dst, [%dst + %tmp * (1,2,4,8)]
+				jx_mir_operand_t* tmp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64);
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmp, jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64, indexOperand->u.m_Reg, indexOperand->u.m_Reg, 2, 0)));
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstReg, jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64, dstReg->u.m_Reg, tmp->u.m_Reg, itemSize / 3, 0)));
+			} break;
+			case 5: 
+			case 10: 
+			case 20: 
+			case 40: {
+				// dst = dst + (index * 5) * (1,2,4,8)
+				//  =>
+				// lea %tmp, [%index + %index * 4]
+				// lea %dst, [%dst + %tmp * (1,2,4,8)]
+				jx_mir_operand_t* tmp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64);
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmp, jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64, indexOperand->u.m_Reg, indexOperand->u.m_Reg, 4, 0)));
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstReg, jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64, dstReg->u.m_Reg, tmp->u.m_Reg, itemSize / 5, 0)));
+			} break;
+			case 9: 
+			case 18: 
+			case 36: 
+			case 72: {
+				// dst = dst + (index * 9) * (1,2,4,8)
+				//  =>
+				// lea %tmp, [%index + %index * 8]
+				// lea %dst, [%dst + %tmp * (1,2,4,8)]
+				jx_mir_operand_t* tmp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64);
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmp, jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64, indexOperand->u.m_Reg, indexOperand->u.m_Reg, 8, 0)));
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstReg, jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64, dstReg->u.m_Reg, tmp->u.m_Reg, itemSize / 9, 0)));
+			} break;
+			case 16: {
+				// dst = dst + (index * 2) * 8
+				//  =>
+				// lea %tmp, [%index + %index]
+				// lea %dst, [%dst + %tmp * 8]
+				jx_mir_operand_t* tmp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64);
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmp, jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64, indexOperand->u.m_Reg, indexOperand->u.m_Reg, 1, 0)));
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstReg, jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64, dstReg->u.m_Reg, tmp->u.m_Reg, itemSize / 2, 0)));
+			} break;
+			default: {
+				jx_mir_operand_t* tmp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64);
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_imul3(ctx->m_MIRCtx, tmp, indexOperand, jx_mir_opIConst(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64, itemSize)));
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_add(ctx->m_MIRCtx, dstReg, tmp));
+			} break;
+			}
+#else
 			if (itemSize <= 8 && jx_isPow2_u32(itemSize)) {
 				jx_mir_operand_t* memRef = jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, dstReg->u.m_Reg, indexOperand->u.m_Reg, itemSize, 0);
 
@@ -1112,6 +1178,7 @@ static jx_mir_operand_t* jmirgen_instrBuild_gep(jx_mirgen_context_t* ctx, jx_ir_
 #endif
 				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_add(ctx->m_MIRCtx, dstReg, tmp));
 			}
+#endif
 
 			dstRegType = baseType;
 		}
@@ -1144,13 +1211,15 @@ static jx_mir_operand_t* jmirgen_instrBuild_call(jx_mirgen_context_t* ctx, jx_ir
 	// E.g. c-testsuite/00159.c zfunc
 	const char* funcName = funcPtrVal->m_Name;
 	if (funcName) {
-		if (!jx_strncmp(funcName, "jir.memset.", 11)/* || !jx_strcmp(funcName, "memset")*/) {
-			if (jmirgen_genMemSet(ctx, irInstr)) {
-				return NULL;
+		if (!jx_strncmp(funcName, "jir.memset.", 11) || !jx_strcmp(funcName, "memset")) {
+			jx_mir_operand_t* res = jmirgen_genMemSet(ctx, irInstr);
+			if (res) {
+				return res;
 			}
-		} else if (!jx_strncmp(funcName, "jir.memcpy.", 11)/* || !jx_strcmp(funcName, "memcpy")*/) {
-			if (jmirgen_genMemCpy(ctx, irInstr)) {
-				return NULL;
+		} else if (!jx_strncmp(funcName, "jir.memcpy.", 11) || !jx_strcmp(funcName, "memcpy")) {
+			jx_mir_operand_t* res = jmirgen_genMemCpy(ctx, irInstr);
+			if (res) {
+				return res;
 			}
 		} else if (!jx_strcmp(funcName, "__va_start")) {
 			if (jmirgen_genVAStart(ctx, irInstr)) {
@@ -1816,7 +1885,7 @@ static jx_mir_operand_t* jmirgen_getOperand(jx_mirgen_context_t* ctx, jx_ir_valu
 	return operand;
 }
 
-static bool jmirgen_genMemSet(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr)
+static jx_mir_operand_t* jmirgen_genMemSet(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr)
 {
 	jx_ir_value_t* ptrVal = irInstr->super.m_OperandArr[1]->m_Value;
 	jx_ir_value_t* valVal = irInstr->super.m_OperandArr[2]->m_Value;
@@ -1834,9 +1903,15 @@ static bool jmirgen_genMemSet(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irI
 		jx_mir_operand_t* zeroReg64 = jx_mir_opHWReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_I64, kMIRRegGP_A);
 		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_xor(ctx->m_MIRCtx, zeroReg64, zeroReg64));
 
-		// lea vr, [ptr]
-		jx_mir_operand_t* ptrOp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
-		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, ptrOp, jmirgen_getOperand(ctx, ptrVal)));
+		jx_mir_operand_t* ptrOp = NULL;
+		jx_mir_operand_t* ptr = jmirgen_getOperand(ctx, ptrVal);
+		if (ptr->m_Kind == JMIR_OPERAND_MEMORY_REF || ptr->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+			// lea vr, [ptr]
+			ptrOp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, ptrOp, ptr));
+		} else if (ptr->m_Kind == JMIR_OPERAND_REGISTER) {
+			ptrOp = ptr;
+		}
 
 		int32_t offset = 0;
 		while (sz > 0) {
@@ -1859,13 +1934,13 @@ static bool jmirgen_genMemSet(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irI
 			offset += typeSz;
 		}
 
-		return true;
+		return ptrOp;
 	}
 
-	return false;
+	return NULL;
 }
 
-static bool jmirgen_genMemCpy(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr)
+static jx_mir_operand_t* jmirgen_genMemCpy(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr)
 {
 	jx_ir_constant_t* sizeConst = jx_ir_valueToConst(irInstr->super.m_OperandArr[3]->m_Value);
 	if (sizeConst && sizeConst->u.m_I64 <= JX_MIRGEN_CONFIG_INLINE_MEMCPY_LIMIT) {
@@ -1875,22 +1950,31 @@ static bool jmirgen_genMemCpy(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irI
 		// dst or src is a function argument.
 		// TODO: In this case it might be better to save the argument to its shadow space 
 		// and inline memcpy using the stack address as src/dst.
+		jx_mir_operand_t* dstPtrOp = NULL;
 		jx_mir_operand_t* dstOp = jmirgen_getOperand(ctx, irInstr->super.m_OperandArr[1]->m_Value);
-		if (dstOp->m_Kind != JMIR_OPERAND_MEMORY_REF && dstOp->m_Kind != JMIR_OPERAND_EXTERNAL_SYMBOL) {
-			return false;
+		if (dstOp->m_Kind == JMIR_OPERAND_MEMORY_REF || dstOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+			// lea dst_vr, [dstPtr]
+			dstPtrOp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstPtrOp, dstOp));
+		} else if (dstOp->m_Kind == JMIR_OPERAND_REGISTER) {
+			dstPtrOp = dstOp;
+		} else {
+			JX_CHECK(false, "Invalid destination!");
+			return NULL;
 		}
+
+		jx_mir_operand_t* srcPtrOp = NULL;
 		jx_mir_operand_t* srcOp = jmirgen_getOperand(ctx, irInstr->super.m_OperandArr[2]->m_Value);
-		if (srcOp->m_Kind != JMIR_OPERAND_MEMORY_REF && srcOp->m_Kind != JMIR_OPERAND_EXTERNAL_SYMBOL) {
-			return false;
+		if (srcOp->m_Kind == JMIR_OPERAND_MEMORY_REF || srcOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+			// lea src_vr, [srcPtr]
+			srcPtrOp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, srcPtrOp, srcOp));
+		} else if (srcOp->m_Kind == JMIR_OPERAND_REGISTER) {
+			srcPtrOp = srcOp;
+		} else {
+			JX_CHECK(false, "Invalid source!");
+			return NULL;
 		}
-
-		// lea dst_vr, [dstPtr]
-		jx_mir_operand_t* dstPtrOp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
-		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstPtrOp, dstOp));
-
-		// lea src_vr, [srcPtr]
-		jx_mir_operand_t* srcPtrOp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
-		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, srcPtrOp, srcOp));
 
 		int32_t offset = 0;
 		while (sz > 0) {
@@ -1916,10 +2000,10 @@ static bool jmirgen_genMemCpy(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irI
 			offset += typeSz;
 		}
 
-		return true; // memcpy call handled. 
+		return dstPtrOp; // memcpy call handled. 
 	}
 
-	return false; // let the caller generate a call to CRT's memcpy
+	return NULL; // let the caller generate a call to CRT's memcpy
 }
 
 static bool jmirgen_genVAStart(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr)
