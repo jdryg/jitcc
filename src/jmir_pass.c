@@ -1849,17 +1849,7 @@ static bool jmir_peephole_mov_x(jmir_func_pass_peephole_t* pass, jx_mir_instruct
 		JX_CHECK(dst->m_Kind == JMIR_OPERAND_REGISTER, "Expected register operand");
 		if (src->m_Kind == JMIR_OPERAND_REGISTER && instr->m_Prev) {
 			jx_mir_instruction_t* prevInstr = instr->m_Prev;
-			if (prevInstr->m_OpCode == JMIR_OP_MOV) {
-				// mov vr1, any
-				// movsx/movzx vr2, vr1
-				//  =>
-				// movsx/movzx vr2, any
-				jx_mir_operand_t* movDst = prevInstr->m_Operands[0];
-				if (jx_mir_opEqual(src, movDst) && instr->m_Operands[1]->m_Type == prevInstr->m_Operands[1]->m_Type) {
-					instr->m_Operands[1] = prevInstr->m_Operands[1];
-					res = true;
-				}
-			} else if (prevInstr->m_OpCode == JMIR_OP_ADD) {
+			if (prevInstr->m_OpCode == JMIR_OP_ADD) {
 				// mov vr1, any
 				// add vr1, const
 				// movsx/movzx vr2, vr1
