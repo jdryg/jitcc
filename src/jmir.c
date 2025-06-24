@@ -524,6 +524,7 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 #if 0
 	{
 		jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
+		jx_strbuf_printf(sb, "%s: pre-opt\n", func->m_Name);
 		jx_mir_funcPrint(ctx, func, sb);
 		jx_strbuf_nullTerminate(sb);
 		JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
@@ -591,7 +592,7 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 		changed = true;
 		while (changed) {
 			changed = jmir_funcPassApply(ctx, ctx->m_FuncPass_peephole, func);
-			changed = jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func) || changed;
+//			changed = jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func) || changed;
 		}
 	}
 

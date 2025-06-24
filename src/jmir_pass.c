@@ -1849,17 +1849,7 @@ static bool jmir_peephole_mov_x(jmir_func_pass_peephole_t* pass, jx_mir_instruct
 		JX_CHECK(dst->m_Kind == JMIR_OPERAND_REGISTER, "Expected register operand");
 		if (src->m_Kind == JMIR_OPERAND_REGISTER && instr->m_Prev) {
 			jx_mir_instruction_t* prevInstr = instr->m_Prev;
-			if (prevInstr->m_OpCode == JMIR_OP_MOV) {
-				// mov vr1, any
-				// movsx/movzx vr2, vr1
-				//  =>
-				// movsx/movzx vr2, any
-				jx_mir_operand_t* movDst = prevInstr->m_Operands[0];
-				if (jx_mir_opEqual(src, movDst) && instr->m_Operands[1]->m_Type == prevInstr->m_Operands[1]->m_Type) {
-					instr->m_Operands[1] = prevInstr->m_Operands[1];
-					res = true;
-				}
-			} else if (prevInstr->m_OpCode == JMIR_OP_ADD) {
+			if (prevInstr->m_OpCode == JMIR_OP_ADD) {
 				// mov vr1, any
 				// add vr1, const
 				// movsx/movzx vr2, vr1
@@ -2327,6 +2317,11 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 							src = srcRegDef->m_Operands[1];
 						}
 					}
+
+					jx_mir_instruction_t* srcRegDef = jmir_instrCombine_getRegDef(pass, src->u.m_Reg);
+					if (srcRegDef && srcRegDef->m_OpCode == JMIR_OP_MOV && srcRegDef->m_Operands[1]->m_Type == src->m_Type && (srcRegDef->m_Operands[1]->m_Kind == JMIR_OPERAND_CONST || srcRegDef->m_Operands[1]->m_Kind == JMIR_OPERAND_REGISTER)) {
+						src = srcRegDef->m_Operands[1];
+					}
 				} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF && src->m_Kind == JMIR_OPERAND_CONST) {
 					// mov [mem], const
 					jx_mir_memory_ref_t memRef = jmir_instrCombine_simplifyMemRef(pass, bb, dst->u.m_MemRef);
@@ -2396,7 +2391,9 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 				instr->m_Operands[1] = src;
 			} break;
 			case JMIR_OP_IMUL3: {
-				JX_NOT_IMPLEMENTED();
+				jx_mir_operand_t* dst = instr->m_Operands[0];
+				JX_CHECK(dst->m_Kind == JMIR_OPERAND_REGISTER, "Expected register dst for imul3");
+				jmir_instrCombine_removeRegDef(pass, dst->u.m_Reg);
 			} break;
 			case JMIR_OP_LEA: {
 				jx_mir_operand_t* dst = instr->m_Operands[0];
@@ -3405,7 +3402,8 @@ static bool jmir_funcPass_redundantConstEliminationRun(jx_mir_function_pass_o* i
 			} break;
 			case JMIR_OP_MOVSX:
 			case JMIR_OP_MOVZX:
-			case JMIR_OP_IMUL: 
+			case JMIR_OP_IMUL:
+			case JMIR_OP_IMUL3:
 			case JMIR_OP_ADD:
 			case JMIR_OP_SUB:
 			case JMIR_OP_LEA:

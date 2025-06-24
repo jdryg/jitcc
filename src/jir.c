@@ -2191,7 +2191,7 @@ static jx_ir_type_t* jir_getIndexedType(jx_ir_type_t* ptr, uint32_t numIndices, 
 		// and move on to the pointed type.
 		if (ptr->m_Kind == JIR_TYPE_ARRAY) {
 			const bool isValidIndexType = false
-				|| index->m_Type->m_Kind == JIR_TYPE_I32
+//				|| index->m_Type->m_Kind == JIR_TYPE_I32
 				|| index->m_Type->m_Kind == JIR_TYPE_I64
 				;
 			if (!isValidIndexType) {
@@ -2202,7 +2202,7 @@ static jx_ir_type_t* jir_getIndexedType(jx_ir_type_t* ptr, uint32_t numIndices, 
 			ptr = jx_ir_typeToArray(ptr)->m_BaseType;
 		} else if (ptr->m_Kind == JIR_TYPE_STRUCT) {
 			jx_ir_constant_t* constIndex = jx_ir_valueToConst(index);
-			if (!constIndex || index->m_Type->m_Kind != JIR_TYPE_I32) {
+			if (!constIndex || (/*index->m_Type->m_Kind != JIR_TYPE_I32 &&*/ index->m_Type->m_Kind != JIR_TYPE_I64)) {
 				JX_CHECK(false, "Expected const integer index");
 				return NULL;
 			}
@@ -2222,7 +2222,7 @@ static jx_ir_type_t* jir_getIndexedType(jx_ir_type_t* ptr, uint32_t numIndices, 
 			}
 
 			const bool isValidIndexType = false
-				|| index->m_Type->m_Kind == JIR_TYPE_I32
+//				|| index->m_Type->m_Kind == JIR_TYPE_I32
 				|| index->m_Type->m_Kind == JIR_TYPE_I64
 				;
 			if (!isValidIndexType) {
