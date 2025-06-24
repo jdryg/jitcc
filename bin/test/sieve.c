@@ -1,41 +1,33 @@
-#include <stdlib.h> // malloc/free
-#include <string.h> // memset
-#include <stdint.h>
+/* -*- mode: c -*-
+ * $Id: sieve.gcc,v 1.7 2001/05/06 04:37:45 doug Exp $
+ * http://www.bagley.org/~doug/shootout/
+ */
+
 #include <stdio.h>
-
-static void sieve(uint32_t n)
-{
-	uint8_t* status = (uint8_t*)malloc(n);
-	if (!status) {
-		return;
-	}
-
-	memset(status, 0, n);
-
-	uint32_t p = 2;
-	do {
-		status[p] = 1;
-		for (uint32_t i = p * p; i < n; i += p) {
-			status[i] = 2;
-		}
-
-		uint32_t next = p + 1;
-		while (next < n && status[next] != 0) {
-			++next;
-		}
-		p = next;
-	} while (p < n);
-
-	for (uint32_t i = 0; i < n; ++i) {
-		if (status[i] == 1) {
-			printf("%u ", i);
-		}
-	}
-
-	free(status);
-}
+#include <stdlib.h>
 
 int main(void)
 {
-	sieve(10000);
+    int NUM = 1;
+    static char flags[8192 + 1];
+    long i, k;
+    int count = 0;
+
+    while (NUM--) {
+        count = 0;
+        for (i = 2; i <= 8192; i++) {
+            flags[i] = 1;
+        }
+        for (i = 2; i <= 8192; i++) {
+            if (flags[i]) {
+                // remove all multiples of prime: i
+                for (k = i + i; k <= 8192; k += i) {
+                    flags[k] = 0;
+                }
+                count++;
+            }
+        }
+    }
+    printf("Count: %d\n", count);
+    return (0);
 }

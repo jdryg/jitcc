@@ -159,6 +159,7 @@ int main(int argc, char** argv)
 //	const char* sourceFile = "test/stb_sprintf_test.c";
 	const char* sourceFile = "test/stb_truetype_test.c";
 //	const char* sourceFile = "test/sieve.c";
+//	const char* sourceFile = "test/compute.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
 	TracyCZoneN(frontend, "Frontend", 1);
