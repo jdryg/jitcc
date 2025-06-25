@@ -264,27 +264,30 @@ bool jx_irgen_moduleGen(jx_irgen_context_t* ctx, const char* moduleName, jx_cc_t
 				}
 			} else {
 				// Global variable
-				jx_ir_global_variable_t* gv = jx_ir_moduleGetGlobalVar(irctx, mod, global->m_Name);
-				if (gv) {
-					uint8_t* initData = (uint8_t*)JX_ALLOC(ctx->m_Allocator, global->m_Type->m_Size);
-					if (!initData) {
+				const bool gvIsDefinition = (global->m_Flags & JCC_OBJECT_FLAGS_IS_DEFINITION_Msk) != 0;
+				if (gvIsDefinition) {
+					jx_ir_global_variable_t* gv = jx_ir_moduleGetGlobalVar(irctx, mod, global->m_Name);
+					if (gv) {
+						uint8_t* initData = (uint8_t*)JX_ALLOC(ctx->m_Allocator, global->m_Type->m_Size);
+						if (!initData) {
+							goto error;
+						}
+
+						jx_memset(initData, 0, global->m_Type->m_Size);
+						if (global->m_GlobalInitData) {
+							jx_memcpy(initData, global->m_GlobalInitData, global->m_Type->m_Size);
+						}
+
+						const jx_cc_relocation_t* gvReloc = global->m_GlobalRelocations;
+						jx_ir_constant_t* gvInitializer = jirgenGlobalVarInitializer(ctx, global->m_Type, initData, 0, &gvReloc);
+
+						JX_FREE(ctx->m_Allocator, initData);
+
+						const bool isConst = false; // TODO: 
+						jx_ir_globalVarDefine(irctx, gv, isConst, gvInitializer);
+					} else {
 						goto error;
 					}
-
-					jx_memset(initData, 0, global->m_Type->m_Size);
-					if (global->m_GlobalInitData) {
-						jx_memcpy(initData, global->m_GlobalInitData, global->m_Type->m_Size);
-					}
-
-					const jx_cc_relocation_t* gvReloc = global->m_GlobalRelocations;
-					jx_ir_constant_t* gvInitializer = jirgenGlobalVarInitializer(ctx, global->m_Type, initData, 0, &gvReloc);
-
-					JX_FREE(ctx->m_Allocator, initData);
-
-					const bool isConst = false; // TODO: 
-					jx_ir_globalVarDefine(irctx, gv, isConst, gvInitializer);
-				} else {
-					goto error;
 				}
 			}
 
