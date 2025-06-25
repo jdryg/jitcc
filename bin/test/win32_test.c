@@ -1,60 +1,90 @@
+//+---------------------------------------------------------------------------
+//
+//  HELLO_WIN.C - Windows GUI 'Hello World!' Example
+//
+//+---------------------------------------------------------------------------
+
 #include <windows.h>
-#include <stdio.h>
 
 #define APPNAME "HELLO_WIN"
 
 char szAppName[] = APPNAME; // The name of this application
 char szTitle[] = APPNAME; // The title bar text
+const char* pWindowText;
 
 void CenterWindow(HWND hWnd);
+
+//+---------------------------------------------------------------------------
+//
+//  Function:   WndProc
+//
+//  Synopsis:   very unusual type of function - gets called by system to
+//              process windows messages.
+//
+//  Arguments:  same as always.
+//----------------------------------------------------------------------------
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message) {
+
+        // ----------------------- first and last
     case WM_CREATE:
         CenterWindow(hwnd);
         break;
+
     case WM_DESTROY:
         PostQuitMessage(0);
         break;
+
+        // ----------------------- get out of it...
     case WM_RBUTTONUP:
         DestroyWindow(hwnd);
         break;
+
     case WM_KEYDOWN:
         if (VK_ESCAPE == wParam)
             DestroyWindow(hwnd);
         break;
-    case WM_PAINT: {
+
+        // ----------------------- display our minimal info
+    case WM_PAINT:
+    {
         PAINTSTRUCT ps;
-        HDC hdc;
-        RECT rc;
+        HDC         hdc;
+        RECT        rc;
         hdc = BeginPaint(hwnd, &ps);
 
         GetClientRect(hwnd, &rc);
         SetTextColor(hdc, RGB(240, 240, 96));
         SetBkMode(hdc, TRANSPARENT);
-        DrawTextA(hdc, "Hello Windows!", -1, &rc, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        DrawText(hdc, pWindowText, -1, &rc, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 
         EndPaint(hwnd, &ps);
         break;
     }
-    default:
-        return DefWindowProcA(hwnd, message, wParam, lParam);
-    }
 
+    // ----------------------- let windows do all other stuff
+    default:
+        return DefWindowProc(hwnd, message, wParam, lParam);
+    }
     return 0;
 }
 
-#if 0
-int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
-{
-#else
+//+---------------------------------------------------------------------------
+//
+//  Function:   WinMain
+//
+//  Synopsis:   standard entrypoint for GUI Win32 apps
+//
+//----------------------------------------------------------------------------
 int main(void)
 {
-#endif
     MSG msg;
-    WNDCLASSA wc;
+    WNDCLASS wc;
     HWND hwnd;
+
+    pWindowText = "Hello Windows!";
 
     // Fill in window class structure with parameters that describe
     // the main window.
@@ -65,40 +95,41 @@ int main(void)
     wc.lpfnWndProc = (WNDPROC)WndProc;
     wc.style = CS_DBLCLKS | CS_VREDRAW | CS_HREDRAW;
     wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
-    wc.hIcon = LoadIconA(NULL, (LPCSTR)IDI_APPLICATION);
-    wc.hCursor = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
+    wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
 
-    if (FALSE == RegisterClassA(&wc)) {
+    if (FALSE == RegisterClass(&wc))
         return 0;
-    }
 
     // create the browser
-    hwnd = CreateWindowExA(0,
-        wc.lpszClassName,
+    hwnd = CreateWindow(
+        szAppName,
         szTitle,
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
-        360, // CW_USEDEFAULT,
-        240, // CW_USEDEFAULT,
+        360,//CW_USEDEFAULT,
+        240,//CW_USEDEFAULT,
         0,
         0,
         NULL,
         0);
 
-    if (NULL == hwnd) {
+    if (NULL == hwnd)
         return 0;
-    }
 
     // Main message loop:
-    printf("Entering main loop\n");
-    while (GetMessageA(&msg, NULL, 0, 0) > 0) {
+    while (GetMessage(&msg, NULL, 0, 0) > 0) {
         TranslateMessage(&msg);
-        DispatchMessageA(&msg);
+        DispatchMessage(&msg);
     }
 
     return msg.wParam;
 }
+
+//+---------------------------------------------------------------------------
+
+//+---------------------------------------------------------------------------
 
 void CenterWindow(HWND hwnd_self)
 {
@@ -107,9 +138,8 @@ void CenterWindow(HWND hwnd_self)
     int xpos, ypos;
 
     hwnd_parent = GetParent(hwnd_self);
-    if (NULL == hwnd_parent) {
+    if (NULL == hwnd_parent)
         hwnd_parent = GetDesktopWindow();
-    }
 
     GetWindowRect(hwnd_parent, &rw_parent);
     GetClientRect(hwnd_parent, &rc_parent);
@@ -118,5 +148,11 @@ void CenterWindow(HWND hwnd_self)
     xpos = rw_parent.left + (rc_parent.right + rw_self.left - rw_self.right) / 2;
     ypos = rw_parent.top + (rc_parent.bottom + rw_self.top - rw_self.bottom) / 2;
 
-    SetWindowPos(hwnd_self, NULL, xpos, ypos, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(
+        hwnd_self, NULL,
+        xpos, ypos, 0, 0,
+        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+    );
 }
+
+//+---------------------------------------------------------------------------

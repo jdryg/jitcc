@@ -37,6 +37,9 @@
 #include <winbase.h>
 #include <wingdi.h>
 #include <winuser.h>
+#include <wincon.h>
+#include <winver.h>
+#include <winreg.h>
 
 #endif // _INC_WINDOWS
 #endif // _WINDOWS_

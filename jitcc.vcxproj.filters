@@ -231,6 +231,15 @@
     <ClInclude Include="bin\include\winapi\winuser.h">
       <Filter>bin\include\winapi</Filter>
     </ClInclude>
+    <ClInclude Include="bin\include\winapi\wincon.h">
+      <Filter>bin\include\winapi</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\include\winapi\winver.h">
+      <Filter>bin\include\winapi</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\include\winapi\winreg.h">
+      <Filter>bin\include\winapi</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\jcc.c">

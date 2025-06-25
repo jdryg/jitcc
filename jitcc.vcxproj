@@ -245,12 +245,15 @@
     <ClInclude Include="bin\include\winapi\basetsd.h" />
     <ClInclude Include="bin\include\winapi\guiddef.h" />
     <ClInclude Include="bin\include\winapi\winbase.h" />
+    <ClInclude Include="bin\include\winapi\wincon.h" />
     <ClInclude Include="bin\include\winapi\windef.h" />
     <ClInclude Include="bin\include\winapi\windows.h" />
     <ClInclude Include="bin\include\winapi\winerror.h" />
     <ClInclude Include="bin\include\winapi\wingdi.h" />
     <ClInclude Include="bin\include\winapi\winnt.h" />
+    <ClInclude Include="bin\include\winapi\winreg.h" />
     <ClInclude Include="bin\include\winapi\winuser.h" />
+    <ClInclude Include="bin\include\winapi\winver.h" />
     <ClInclude Include="bin\include\_jitcc.h" />
     <ClInclude Include="bin\test\stb\stb_image_write.h" />
     <ClInclude Include="bin\test\stb\stb_sprintf.h" />
