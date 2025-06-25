@@ -8,4 +8,6 @@ typedef long long ptrdiff_t;
 typedef unsigned short wchar_t;
 typedef long long max_align_t;
 
+#define offsetof(type, field) ((size_t)&((type*)0)->field)
+
 #endif // _STDDEF

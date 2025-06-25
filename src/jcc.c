@@ -600,6 +600,7 @@ jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_d
 		jcc_ppDefineMacro(ctx, tu, "__x86_64", "1");
 		jcc_ppDefineMacro(ctx, tu, "__x86_64__", "1");
 		jcc_ppDefineMacro(ctx, tu, "__LLP64__", "1");
+		jcc_ppDefineMacro(ctx, tu, "_WIN64", "1");
 	}
 
 	jx_cc_token_t* tok = jcc_tokenizeString(ctx, tu, source, sourceLen);
@@ -5514,9 +5515,11 @@ static bool jcc_parseAttributes(jx_cc_context_t* ctx, jcc_translation_unit_t* tu
 
 	while (jcc_tokExpect(&tok, JCC_TOKEN_ATTRIBUTE)) {
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_OPEN_PAREN)) {
+			jcc_logError(ctx, &tok->m_Loc, "Expected '(' after __attribute__");
 			return false;
 		}
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_OPEN_PAREN)) {
+			jcc_logError(ctx, &tok->m_Loc, "Expected '(' after __attribute__");
 			return false;
 		}
 		
@@ -5524,6 +5527,7 @@ static bool jcc_parseAttributes(jx_cc_context_t* ctx, jcc_translation_unit_t* tu
 		while (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
 			if (!first) {
 				if (!jcc_tokExpect(&tok, JCC_TOKEN_COMMA)) {
+					jcc_logError(ctx, &tok->m_Loc, "Expected ',' between attributes");
 					return false;
 				}
 			}
@@ -5533,24 +5537,29 @@ static bool jcc_parseAttributes(jx_cc_context_t* ctx, jcc_translation_unit_t* tu
 				ty->m_Flags |= JCC_TYPE_FLAGS_IS_PACKED_Msk;
 			} else if (jcc_tokExpect(&tok, JCC_TOKEN_ALIGNED)) {
 				if (!jcc_tokExpect(&tok, JCC_TOKEN_OPEN_PAREN)) {
+					jcc_logError(ctx, &tok->m_Loc, "Expected '(' after aligned");
 					return false;
 				}
 
 				bool err = false;
 				ty->m_Alignment = (uint32_t)jcc_parseConstExpression(ctx, tu, &tok, &err);
 				if (err) {
+					jcc_logError(ctx, &tok->m_Loc, "Failed to parse constant expression in aligned()");
 					return false;
 				}
 
 				if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
+					jcc_logError(ctx, &tok->m_Loc, "Expected ')' after aligned");
 					return false;
 				}
 			} else {
-				return false; // ERROR: unknown attribute
+				jcc_logError(ctx, &tok->m_Loc, "Unknown attribute %s", tok->m_String);
+				return false;
 			}
 		}
 		
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
+			jcc_logError(ctx, &tok->m_Loc, "Expected ')' after __attribute__");
 			return false;
 		}
 	}
@@ -6781,6 +6790,7 @@ static bool jcc_parseGlobalVariable(jx_cc_context_t* ctx, jcc_translation_unit_t
 			return false;
 		}
 
+		var->m_Flags &= ~(JCC_OBJECT_FLAGS_IS_DEFINITION_Msk | JCC_OBJECT_FLAGS_IS_STATIC_Msk | JCC_OBJECT_FLAGS_IS_TLS_Msk);
 		var->m_Flags |= (attr->m_Flags & JCC_VAR_ATTR_IS_EXTERN_Msk) == 0 ? JCC_OBJECT_FLAGS_IS_DEFINITION_Msk : 0;
 		var->m_Flags |= (attr->m_Flags & JCC_VAR_ATTR_IS_STATIC_Msk) != 0 ? JCC_OBJECT_FLAGS_IS_STATIC_Msk : 0;
 		var->m_Flags |= (attr->m_Flags & JCC_VAR_ATTR_IS_TLS_Msk) != 0 ? JCC_OBJECT_FLAGS_IS_TLS_Msk : 0;
@@ -6859,6 +6869,8 @@ static void jcc_scanGlobals(jcc_translation_unit_t* tu)
 static bool jcc_parse(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok)
 {
 	while (tok->m_Kind != JCC_TOKEN_EOF) {
+		jx_cc_token_t* start = tok;
+
 		jcc_var_attr_t attr = { 0 };
 		jx_cc_type_t* basety = jcc_parseDeclarationSpecifiers(ctx, tu, &tok, &attr);
 		if (!basety) {
@@ -6869,19 +6881,19 @@ static bool jcc_parse(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_to
 		if ((attr.m_Flags & JCC_VAR_ATTR_IS_TYPEDEF_Msk) != 0) {
 			// Typedef
 			if (!jcc_parseTypedef(ctx, tu, &tok, basety)) {
-				jcc_logError(ctx, &tok->m_Loc, "Failed to parse typedef");
+				jcc_logError(ctx, &start->m_Loc, "Failed to parse typedef");
 				return false;
 			}
 		} else if (jcc_isFunction(ctx, tu, tok)) {
 			// Function
 			if (!jcc_parseFunction(ctx, tu, &tok, basety, &attr)) {
-				jcc_logError(ctx, &tok->m_Loc, "Failed to parse function");
+				jcc_logError(ctx, &start->m_Loc, "Failed to parse function");
 				return false;
 			}
 		} else {
 			// Global variable
 			if (!jcc_parseGlobalVariable(ctx, tu, &tok, basety, &attr)) {
-				jcc_logError(ctx, &tok->m_Loc, "Failed to parse global variable");
+				jcc_logError(ctx, &start->m_Loc, "Failed to parse global variable");
 				return false;
 			}
 		}

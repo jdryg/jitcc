@@ -13,6 +13,7 @@
 #include <math.h>   // cosf/sinf
 #include <memory.h> // memset/memcpy
 #include <string.h> // strcpy
+#include <Windows.h>
 
 typedef bool (*jx64VoidFunc)(jx_x64_context_t* ctx);
 typedef bool (*jx64UnaryFunc)(jx_x64_context_t* ctx, jx_x64_operand_t op);
@@ -509,6 +510,29 @@ bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
 		jx_x64gen_setExternalSymbol(jitCtx, "strncmp", (void*)strncmp);
 		jx_x64gen_setExternalSymbol(jitCtx, "strncpy", (void*)strncpy);
 		jx_x64gen_setExternalSymbol(jitCtx, "strrchr", (void*)strrchr);
+
+		jx_x64gen_setExternalSymbol(jitCtx, "GetStockObject", (void*)GetStockObject);
+		jx_x64gen_setExternalSymbol(jitCtx, "LoadIconA", (void*)LoadIconA);
+		jx_x64gen_setExternalSymbol(jitCtx, "LoadCursorA", (void*)LoadCursorA);
+		jx_x64gen_setExternalSymbol(jitCtx, "RegisterClassA", (void*)RegisterClassA);
+		jx_x64gen_setExternalSymbol(jitCtx, "CreateWindowExA", (void*)CreateWindowExA);
+		jx_x64gen_setExternalSymbol(jitCtx, "GetMessageA", (void*)GetMessageA);
+		jx_x64gen_setExternalSymbol(jitCtx, "TranslateMessage", (void*)TranslateMessage);
+		jx_x64gen_setExternalSymbol(jitCtx, "DispatchMessageA", (void*)DispatchMessageA);
+		jx_x64gen_setExternalSymbol(jitCtx, "DefWindowProcA", (void*)DefWindowProcA);
+		jx_x64gen_setExternalSymbol(jitCtx, "PostQuitMessage", (void*)PostQuitMessage);
+		jx_x64gen_setExternalSymbol(jitCtx, "DestroyWindow", (void*)DestroyWindow);
+		jx_x64gen_setExternalSymbol(jitCtx, "EndPaint", (void*)EndPaint);
+		jx_x64gen_setExternalSymbol(jitCtx, "DrawTextA", (void*)DrawTextA);
+		jx_x64gen_setExternalSymbol(jitCtx, "SetBkMode", (void*)SetBkMode);
+		jx_x64gen_setExternalSymbol(jitCtx, "SetTextColor", (void*)SetTextColor);
+		jx_x64gen_setExternalSymbol(jitCtx, "GetClientRect", (void*)GetClientRect);
+		jx_x64gen_setExternalSymbol(jitCtx, "BeginPaint", (void*)BeginPaint);
+		jx_x64gen_setExternalSymbol(jitCtx, "SetWindowPos", (void*)SetWindowPos);
+		jx_x64gen_setExternalSymbol(jitCtx, "GetWindowRect", (void*)GetWindowRect);
+		jx_x64gen_setExternalSymbol(jitCtx, "GetClientRect", (void*)GetClientRect);
+		jx_x64gen_setExternalSymbol(jitCtx, "GetDesktopWindow", (void*)GetDesktopWindow);
+		jx_x64gen_setExternalSymbol(jitCtx, "GetParent", (void*)GetParent);
 	}
 
 	jx64_finalize(jitCtx);

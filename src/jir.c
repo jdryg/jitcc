@@ -1250,8 +1250,10 @@ void jx_ir_globalVarPrint(jx_ir_context_t* ctx, jx_ir_global_variable_t* gv, jx_
 	jx_strbuf_printf(sb, "@%s = %sglobal", gvValue->m_Name, gv->super.m_LinkageKind == JIR_LINKAGE_INTERNAL ? "internal " : "");
 	jx_strbuf_pushCStr(sb, " ");
 	jx_ir_typePrint(ctx, gvTypePtr->m_BaseType, sb);
-	jx_strbuf_pushCStr(sb, " ");
-	jx_ir_constPrint(ctx, jx_ir_valueToConst(gv->super.super.m_OperandArr[0]->m_Value), sb);
+	if (jx_array_sizeu(gv->super.super.m_OperandArr) != 0) {
+		jx_strbuf_pushCStr(sb, " ");
+		jx_ir_constPrint(ctx, jx_ir_valueToConst(gv->super.super.m_OperandArr[0]->m_Value), sb);
+	}
 	jx_strbuf_pushCStr(sb, "\n");
 }
 
@@ -3538,7 +3540,11 @@ size_t jx_ir_typeStructGetMemberOffset(jx_ir_type_struct_t* structType, uint32_t
 		offset += memberSize;
 	}
 
-	return offset;
+	const size_t memberAlignment = jx_ir_typeGetAlignment(structType->m_Members[memberID]);
+	return (offset & (memberAlignment - 1)) != 0
+		? (offset & ~(memberAlignment - 1)) + memberAlignment
+		: offset
+		;
 }
 
 jx_ir_type_pointer_t* jx_ir_typeToPointer(jx_ir_type_t* type)
