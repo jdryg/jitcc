@@ -19,43 +19,35 @@
 #include <jlib/string.h>
 #include <tracy/tracy/TracyC.h>
 
+static void runCTestSuiteTests(jx_allocator_i* allocator);
+static void runSingleFileCompile(jx_allocator_i* allocator);
+static bool redirectSystemLogger(void);
+
 int main(int argc, char** argv)
 {
 	jx_kernel_initAPI();
 
-	// Redirect system logger to file and console
-	{
-		// Change application directories.
-		if (os_api->fsSetBaseDir(JX_FILE_BASE_DIR_USERDATA, JX_FILE_BASE_DIR_USERDATA, "jitcc") != JX_ERROR_NONE || 
-			os_api->fsSetBaseDir(JX_FILE_BASE_DIR_USERAPPDATA, JX_FILE_BASE_DIR_USERAPPDATA, "jitcc") != JX_ERROR_NONE || 
-			os_api->fsSetBaseDir(JX_FILE_BASE_DIR_TEMP, JX_FILE_BASE_DIR_TEMP, "jitcc") != JX_ERROR_NONE) {
-			return -1;
-		}
-
-		jx_logger_i* sysLogger = logger_api->createCompositeLogger(allocator_api->m_SystemAllocator, 0);
-		if (sysLogger) {
-			jx_logger_i* fileLogger = logger_api->createFileLogger(allocator_api->m_SystemAllocator, JX_FILE_BASE_DIR_USERDATA, "jitcc.log", JX_LOGGER_FLAGS_MULTITHREADED | JX_LOGGER_FLAGS_APPEND_TIMESTAMP | JX_LOGGER_FLAGS_FLUSH_ON_EVERY_LOG);
-			if (fileLogger) {
-				logger_api->compositeLoggerAddChild(sysLogger, fileLogger);
-			}
-
-			jx_logger_i* consoleLogger = logger_api->createConsoleLogger(allocator_api->m_SystemAllocator, JX_LOGGER_FLAGS_MULTITHREADED);
-			if (consoleLogger) {
-				logger_api->compositeLoggerAddChild(sysLogger, consoleLogger);
-			}
-
-			// Replace system logger
-			{
-				logger_api->inMemoryLoggerDumpToLogger(logger_api->m_SystemLogger, fileLogger);
-				logger_api->destroyLogger(logger_api->m_SystemLogger);
-				logger_api->m_SystemLogger = sysLogger;
-			}
-		}
+	if (!redirectSystemLogger()) {
+		return -1;
 	}
 
 	jx_allocator_i* allocator = allocator_api->createAllocator("jcc");
 
 #if 0
+	runCTestSuiteTests(allocator);
+#elif 1
+	runSingleFileCompile(allocator);
+#endif
+
+	allocator_api->destroyAllocator(allocator);
+
+	jx_kernel_shutdownAPI();
+
+	return 0;
+}
+
+static void runCTestSuiteTests(jx_allocator_i* allocator)
+{
 	uint32_t totalTests = 0;
 	uint32_t numSkipped = 0;
 	uint32_t numPass = 0;
@@ -150,16 +142,21 @@ int main(int argc, char** argv)
 	JX_SYS_LOG_INFO(NULL, "Pass : %u\n", numPass);
 	JX_SYS_LOG_INFO(NULL, "Fail : %u\n", numFailed);
 	JX_SYS_LOG_INFO(NULL, "Skip : %u\n", numSkipped);
-#elif 1
+}
+
+static void runSingleFileCompile(jx_allocator_i* allocator)
+{
 	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
 	jx_cc_addIncludePath(ctx, JX_FILE_BASE_DIR_INSTALL, "include");
+	jx_cc_addIncludePath(ctx, JX_FILE_BASE_DIR_INSTALL, "include/winapi");
 
 //	const char* sourceFile = "test/c-testsuite/00144.c";
 //	const char* sourceFile = "test/stb_image_write_test.c";
 //	const char* sourceFile = "test/stb_sprintf_test.c";
-	const char* sourceFile = "test/stb_truetype_test.c";
+//	const char* sourceFile = "test/stb_truetype_test.c";
 //	const char* sourceFile = "test/sieve.c";
 //	const char* sourceFile = "test/compute.c";
+	const char* sourceFile = "test/win32_test.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
 	TracyCZoneN(frontend, "Frontend", 1);
@@ -216,20 +213,9 @@ int main(int argc, char** argv)
 					uint32_t bufferSize = 0;
 					const uint8_t* buffer = jx64_getBuffer(jitCtx, &bufferSize);
 
-#if 1
 					jx_os_file_t* binFile = jx_os_fileOpenWrite(JX_FILE_BASE_DIR_USERDATA, "output.bin");
 					jx_os_fileWrite(binFile, buffer, bufferSize);
 					jx_os_fileClose(binFile);
-
-#else
-					sb = jx_strbuf_create(allocator);
-					for (uint32_t i = 0; i < bufferSize; ++i) {
-						jx_strbuf_printf(sb, "%02X", buffer[i]);
-					}
-					jx_strbuf_nullTerminate(sb);
-					JX_SYS_LOG_INFO(NULL, "\n%s\n\n", jx_strbuf_getString(sb, NULL));
-					jx_strbuf_destroy(sb);
-#endif
 
 					typedef int32_t(*pfnMain)(void);
 					jx_x64_symbol_t* symMain = jx64_symbolGetByName(jitCtx, "main");
@@ -256,11 +242,39 @@ int main(int argc, char** argv)
 
 end:
 	jx_cc_destroyContext(ctx);
-#endif
+}
 
-	allocator_api->destroyAllocator(allocator);
+static bool redirectSystemLogger(void)
+{
+	// Change application directories.
+	const bool redir = true
+		&& os_api->fsSetBaseDir(JX_FILE_BASE_DIR_USERDATA, JX_FILE_BASE_DIR_USERDATA, "jitcc") == JX_ERROR_NONE
+		&& os_api->fsSetBaseDir(JX_FILE_BASE_DIR_USERAPPDATA, JX_FILE_BASE_DIR_USERAPPDATA, "jitcc") == JX_ERROR_NONE
+		&& os_api->fsSetBaseDir(JX_FILE_BASE_DIR_TEMP, JX_FILE_BASE_DIR_TEMP, "jitcc") == JX_ERROR_NONE
+		;
+	if (!redir) {
+		return false;
+	}
 
-	jx_kernel_shutdownAPI();
+	jx_logger_i* sysLogger = logger_api->createCompositeLogger(allocator_api->m_SystemAllocator, 0);
+	if (sysLogger) {
+		jx_logger_i* fileLogger = logger_api->createFileLogger(allocator_api->m_SystemAllocator, JX_FILE_BASE_DIR_USERDATA, "jitcc.log", JX_LOGGER_FLAGS_MULTITHREADED | JX_LOGGER_FLAGS_APPEND_TIMESTAMP | JX_LOGGER_FLAGS_FLUSH_ON_EVERY_LOG);
+		if (fileLogger) {
+			logger_api->compositeLoggerAddChild(sysLogger, fileLogger);
+		}
 
-	return 0;
+		jx_logger_i* consoleLogger = logger_api->createConsoleLogger(allocator_api->m_SystemAllocator, JX_LOGGER_FLAGS_MULTITHREADED);
+		if (consoleLogger) {
+			logger_api->compositeLoggerAddChild(sysLogger, consoleLogger);
+		}
+
+		// Replace system logger
+		{
+			logger_api->inMemoryLoggerDumpToLogger(logger_api->m_SystemLogger, fileLogger);
+			logger_api->destroyLogger(logger_api->m_SystemLogger);
+			logger_api->m_SystemLogger = sysLogger;
+		}
+	}
+
+	return true;
 }

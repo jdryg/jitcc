@@ -52,6 +52,9 @@
     <Filter Include="3rdparty\jlib\3rdparty\tracy">
       <UniqueIdentifier>{a67e738b-ac2e-4cb5-a26c-0b1ca8fe5b27}</UniqueIdentifier>
     </Filter>
+    <Filter Include="bin\include\winapi">
+      <UniqueIdentifier>{4aedc86e-d35e-49bb-904a-59f86faa6c73}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\jcc.h">
@@ -194,6 +197,39 @@
     </ClInclude>
     <ClInclude Include="3rdparty\jlib\include\jlib\bitset.h">
       <Filter>3rdparty\jlib\include\jlib</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\include\winapi\windows.h">
+      <Filter>bin\include\winapi</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\include\winapi\windef.h">
+      <Filter>bin\include\winapi</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\include\winapi\winnt.h">
+      <Filter>bin\include\winapi</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\include\_jitcc.h">
+      <Filter>bin\include</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\include\winapi\guiddef.h">
+      <Filter>bin\include\winapi</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\include\winapi\basetsd.h">
+      <Filter>bin\include\winapi</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\include\excpt.h">
+      <Filter>bin\include</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\include\winapi\winbase.h">
+      <Filter>bin\include\winapi</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\include\winapi\winerror.h">
+      <Filter>bin\include\winapi</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\include\winapi\wingdi.h">
+      <Filter>bin\include\winapi</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\include\winapi\winuser.h">
+      <Filter>bin\include\winapi</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -1014,6 +1050,9 @@
       <Filter>bin\test</Filter>
     </ClCompile>
     <ClCompile Include="bin\test\compute.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\win32_test.c">
       <Filter>bin\test</Filter>
     </ClCompile>
   </ItemGroup>
