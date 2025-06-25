@@ -299,9 +299,6 @@
     <ClCompile Include="src\jir.c">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="src\jit_tests.c">
-      <Filter>src</Filter>
-    </ClCompile>
     <ClCompile Include="src\jir_gen.c">
       <Filter>src</Filter>
     </ClCompile>
