@@ -269,11 +269,18 @@ typedef struct jx_ir_type_array_t
 	JX_PAD(4);
 } jx_ir_type_array_t;
 
+typedef struct jx_ir_struct_member_t
+{
+	jx_ir_type_t* m_Type;
+	uint32_t m_Offset;
+	uint32_t m_Alignment;
+} jx_ir_struct_member_t;
+
 typedef struct jx_ir_type_struct_t
 {
 	JX_INHERITS(jx_ir_type_t);
 	uint64_t m_UniqueID;
-	jx_ir_type_t** m_Members;
+	jx_ir_struct_member_t* m_Members;
 	uint32_t m_NumMembers;
 	uint32_t m_Flags; // JIR_TYPE_STRUCT_FLAGS_xxx
 } jx_ir_type_struct_t;
@@ -509,7 +516,7 @@ jx_ir_type_t* jx_ir_typeGetArray(jx_ir_context_t* ctx, jx_ir_type_t* baseType, u
 jx_ir_type_t* jx_ir_typeGetStruct(jx_ir_context_t* ctx, uint64_t uniqueID);
 jx_ir_type_struct_t* jx_ir_typeStructBegin(jx_ir_context_t* ctx, uint64_t uniqueID, uint32_t structFlags);
 jx_ir_type_t* jx_ir_typeStructEnd(jx_ir_context_t* ctx, jx_ir_type_struct_t* structType);
-bool jx_ir_typeStructSetMembers(jx_ir_context_t* ctx, jx_ir_type_struct_t* structType, uint32_t numMembers, jx_ir_type_t** members);
+bool jx_ir_typeStructSetMembers(jx_ir_context_t* ctx, jx_ir_type_struct_t* structType, uint32_t numMembers, const jx_ir_struct_member_t* members);
 size_t jx_ir_typeStructGetMemberOffset(jx_ir_type_struct_t* structType, uint32_t memberID);
 void jx_ir_typePrint(jx_ir_context_t* ctx, jx_ir_type_t* type, jx_string_buffer_t* sb);
 bool jx_ir_typeIsSigned(jx_ir_type_t* type);

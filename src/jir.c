@@ -572,7 +572,7 @@ jx_ir_global_value_t* jx_ir_moduleDeclareGlobalVal(jx_ir_context_t* ctx, jx_ir_m
 {
 	jx_ir_global_value_t* existingDecl = jx_ir_moduleGetGlobalVal(ctx, mod, name);
 	if (existingDecl) {
-		return type == jx_ir_globalValToValue(existingDecl)->m_Type
+		return type == jx_ir_typeToPointer(jx_ir_globalValToValue(existingDecl)->m_Type)->m_BaseType
 			? existingDecl
 			: NULL
 			;
@@ -1236,6 +1236,7 @@ bool jx_ir_globalVarDefine(jx_ir_context_t* ctx, jx_ir_global_variable_t* gv, bo
 	gv->m_IsConstantGlobal = isConst;
 	
 	if (initializer) {
+		JX_CHECK(jx_ir_typeToPointer(jx_ir_globalVarToValue(gv)->m_Type)->m_BaseType == jx_ir_constToValue(initializer)->m_Type, "Invalid initializer?");
 		jir_userAddOperand(ctx, jx_ir_globalVarToUser(gv), jx_ir_constToValue(initializer));
 	}
 
@@ -2215,7 +2216,7 @@ static jx_ir_type_t* jir_getIndexedType(jx_ir_type_t* ptr, uint32_t numIndices, 
 				return NULL;
 			}
 
-			ptr = structType->m_Members[constIndex->u.m_I64];
+			ptr = structType->m_Members[constIndex->u.m_I64].m_Type;
 		} else if (ptr->m_Kind == JIR_TYPE_POINTER) {
 			// Can only index into pointer types at the first index!
 			if (curIndex != 1) {
@@ -3144,17 +3145,17 @@ jx_ir_type_t* jx_ir_typeStructEnd(jx_ir_context_t* ctx, jx_ir_type_struct_t* typ
 	return &type->super;
 }
 
-bool jx_ir_typeStructSetMembers(jx_ir_context_t* ctx, jx_ir_type_struct_t* structType, uint32_t numMembers, jx_ir_type_t** members)
+bool jx_ir_typeStructSetMembers(jx_ir_context_t* ctx, jx_ir_type_struct_t* structType, uint32_t numMembers, const jx_ir_struct_member_t* members)
 {
 	JX_CHECK((structType->m_Flags & JIR_TYPE_STRUCT_FLAGS_IS_INCOMPLETE_Msk) != 0, "Expected incomplete struct type!");
 	JX_CHECK(structType->m_NumMembers == 0 && !structType->m_Members, "Expected empty struct!");
 
-	structType->m_Members = (jx_ir_type_t**)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_ir_type_t*) * numMembers);
+	structType->m_Members = (jx_ir_struct_member_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_ir_struct_member_t) * numMembers);
 	if (!structType->m_Members) {
 		return false;
 	}
 
-	jx_memcpy(structType->m_Members, members, sizeof(jx_ir_type_t*) * numMembers);
+	jx_memcpy(structType->m_Members, members, sizeof(jx_ir_struct_member_t) * numMembers);
 	structType->m_NumMembers = numMembers;
 
 	return true;
@@ -3346,13 +3347,12 @@ size_t jx_ir_typeGetAlignment(jx_ir_type_t* type)
 		align = sizeof(double);
 	} break;
 	case JIR_TYPE_STRUCT: {
-		// TODO: Packed structs
 		size_t largestMemberAlignment = 1;
 		jx_ir_type_struct_t* structType = jx_ir_typeToStruct(type);
 		const uint32_t numMembers = structType->m_NumMembers;
 		for (uint32_t iMember = 0; iMember < numMembers; ++iMember) {
-			jx_ir_type_t* memberType = structType->m_Members[iMember];
-			const size_t memberAlignment = jx_ir_typeGetAlignment(memberType);
+			jx_ir_struct_member_t* member = &structType->m_Members[iMember];
+			const uint32_t memberAlignment = member->m_Alignment;
 			if (memberAlignment > largestMemberAlignment) {
 				largestMemberAlignment = memberAlignment;
 			}
@@ -3412,13 +3412,12 @@ size_t jx_ir_typeGetSize(jx_ir_type_t* type)
 		sz = sizeof(double);
 	} break;
 	case JIR_TYPE_STRUCT: {
-		// TODO: Packed structs
 		jx_ir_type_struct_t* structType = jx_ir_typeToStruct(type);
 		const uint32_t numMembers = structType->m_NumMembers;
 		for (uint32_t iMember = 0; iMember < numMembers; ++iMember) {
-			jx_ir_type_t* memberType = structType->m_Members[iMember];
-			const size_t memberSize = jx_ir_typeGetSize(memberType);
-			const size_t memberAlignment = jx_ir_typeGetAlignment(memberType);
+			jx_ir_struct_member_t* member = &structType->m_Members[iMember];
+			const size_t memberSize = jx_ir_typeGetSize(member->m_Type);
+			const uint32_t memberAlignment = member->m_Alignment;
 
 			// Make sure current size is aligned to the member alignment.
 			if ((sz & (memberAlignment - 1)) != 0) {
@@ -3525,26 +3524,7 @@ jx_ir_type_kind jx_ir_typeToUnsigned(jx_ir_type_kind type)
 size_t jx_ir_typeStructGetMemberOffset(jx_ir_type_struct_t* structType, uint32_t memberID)
 {
 	JX_CHECK(memberID < structType->m_NumMembers, "Invalid struct member index");
-
-	size_t offset = 0;
-	const uint32_t numMembers = structType->m_NumMembers;
-	for (uint32_t iMember = 0; iMember < memberID; ++iMember) {
-		jx_ir_type_t* memberType = structType->m_Members[iMember];
-		const size_t memberSize = jx_ir_typeGetSize(memberType);
-		const size_t memberAlignment = jx_ir_typeGetAlignment(memberType);
-
-		// Make sure current size is aligned to the member alignment.
-		if ((offset & (memberAlignment - 1)) != 0) {
-			offset = (offset & ~(memberAlignment - 1)) + memberAlignment;
-		}
-		offset += memberSize;
-	}
-
-	const size_t memberAlignment = jx_ir_typeGetAlignment(structType->m_Members[memberID]);
-	return (offset & (memberAlignment - 1)) != 0
-		? (offset & ~(memberAlignment - 1)) + memberAlignment
-		: offset
-		;
+	return structType->m_Members[memberID].m_Offset;
 }
 
 jx_ir_type_pointer_t* jx_ir_typeToPointer(jx_ir_type_t* type)
