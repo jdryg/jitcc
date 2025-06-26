@@ -118,9 +118,9 @@ bool jx_irgen_moduleGen(jx_irgen_context_t* ctx, const char* moduleName, jx_cc_t
 	{
 		jx_cc_object_t* global = tu->m_Globals;
 		while (global) {
+			const bool isFunction = (global->m_Flags & JCC_OBJECT_FLAGS_IS_FUNCTION_Msk) != 0;
 			const bool isLive = (global->m_Flags & JCC_OBJECT_FLAGS_IS_LIVE_Msk) != 0;
-//			if (isLive) 
-			{
+			if (!isFunction || isLive) {
 				const char* name = global->m_Name;
 				const bool isStatic = (global->m_Flags & JCC_OBJECT_FLAGS_IS_STATIC_Msk) != 0;
 				jx_ir_type_t* type = jccTypeToIRType(ctx, global->m_Type);

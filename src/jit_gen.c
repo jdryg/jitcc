@@ -419,7 +419,9 @@ bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
 		jx_mir_global_variable_t* mirGV = jx_mir_getGlobalVarByID(mirCtx, iGV);
 
 		const uint32_t dataSize = (uint32_t)jx_array_sizeu(mirGV->m_DataArr);
-		jx64_globalVarDefine(jitCtx, ctx->m_GlobalVars[iGV], mirGV->m_DataArr, dataSize, mirGV->m_Alignment);
+		if (dataSize) {
+			jx64_globalVarDefine(jitCtx, ctx->m_GlobalVars[iGV], mirGV->m_DataArr, dataSize, mirGV->m_Alignment);
+		}
 
 		const uint32_t numRelocations = (uint32_t)jx_array_sizeu(mirGV->m_RelocationsArr);
 		for (uint32_t iReloc = 0; iReloc < numRelocations; ++iReloc) {

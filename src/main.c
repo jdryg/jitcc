@@ -157,10 +157,11 @@ static void runSingleFileCompile(jx_allocator_i* allocator)
 //	const char* sourceFile = "test/c-testsuite/00049.c";
 //	const char* sourceFile = "test/stb_image_write_test.c";
 //	const char* sourceFile = "test/stb_sprintf_test.c";
-	const char* sourceFile = "test/stb_truetype_test.c";
+//	const char* sourceFile = "test/stb_truetype_test.c";
 //	const char* sourceFile = "test/sieve.c";
 //	const char* sourceFile = "test/compute.c";
 //	const char* sourceFile = "test/win32_test.c";
+	const char* sourceFile = "test/extern_global.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
 	TracyCZoneN(frontend, "Frontend", 1);
@@ -326,6 +327,12 @@ static void* getExternalSymbolCallback(const char* symName, void* userData)
 	if (!jx_strcmp(symName, "GetClientRect")) { return (void*)GetClientRect; }
 	if (!jx_strcmp(symName, "GetDesktopWindow")) { return (void*)GetDesktopWindow; }
 	if (!jx_strcmp(symName, "GetParent")) { return (void*)GetParent; }
+
+	static int32_t g_ExternalVar = 1000;
+	if (!jx_strcmp(symName, "g_ExternalVar")) { return (void*)&g_ExternalVar; }
+
+	static int32_t g_ExternalArr[10] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+	if (!jx_strcmp(symName, "g_ExternalArr")) { return (void*)g_ExternalArr; }
 
 	return NULL;
 }

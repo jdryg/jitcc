@@ -70,9 +70,6 @@ typedef enum jx_ir_type_kind
 typedef enum jx_ir_linkage_kind
 {
 	JIR_LINKAGE_EXTERNAL,
-	JIR_LINKAGE_LINK_ONCE,
-	JIR_LINKAGE_WEAK,
-	JIR_LINKAGE_APPENDING,
 	JIR_LINKAGE_INTERNAL,
 } jx_ir_linkage_kind;
 
@@ -122,9 +119,6 @@ typedef enum jx_ir_opcode
 
 static const char* kLinkageName[] = {
 	[JIR_LINKAGE_EXTERNAL]  = "external",
-	[JIR_LINKAGE_LINK_ONCE] = "link_once",
-	[JIR_LINKAGE_WEAK]      = "weak",
-	[JIR_LINKAGE_APPENDING] = "appending",
 	[JIR_LINKAGE_INTERNAL]  = "internal",
 };
 

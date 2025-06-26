@@ -238,17 +238,21 @@ bool jx64_finalize(jx_x64_context_t* ctx, jx64GetExternalSymbolAddrCallback exte
 	// Emit stubs for all external functions
 	for (uint32_t iSym = 0; iSym < numSymbols; ++iSym) {
 		jx_x64_symbol_t* sym = ctx->m_SymbolArr[iSym];
-		if (sym->m_Kind == JX64_SYMBOL_FUNCTION && sym->m_Size == 0) {
+		if (sym->m_Size == 0) {
 			void* symAddr = externalSymCb(sym->m_Name, userData);
 
-			char iatEntryName[256];
-			jx_snprintf(iatEntryName, JX_COUNTOF(iatEntryName), "__iat_%s", sym->m_Name);
-			jx_x64_symbol_t* iatEntry = jx64_globalVarDeclare(ctx, iatEntryName);
-			jx64_globalVarDefine(ctx, iatEntry, (const uint8_t*)&symAddr, sizeof(void*), 8);
+			if (sym->m_Kind == JX64_SYMBOL_FUNCTION) {
+				char iatEntryName[256];
+				jx_snprintf(iatEntryName, JX_COUNTOF(iatEntryName), "__iat_%s", sym->m_Name);
+				jx_x64_symbol_t* iatEntry = jx64_globalVarDeclare(ctx, iatEntryName);
+				jx64_globalVarDefine(ctx, iatEntry, (const uint8_t*)&symAddr, sizeof(void*), 8);
 
-			jx64_funcBegin(ctx, sym);
-			jx64_jmp(ctx, jx64_opMemSymbol(JX64_SIZE_64, iatEntry, 0));
-			jx64_funcEnd(ctx);
+				jx64_funcBegin(ctx, sym);
+				jx64_jmp(ctx, jx64_opMemSymbol(JX64_SIZE_64, iatEntry, 0));
+				jx64_funcEnd(ctx);
+			} else {
+				jx64_globalVarDefine(ctx, sym, (const uint8_t*)&symAddr, sizeof(void*), 8);
+			}
 		}
 	}
 
@@ -416,6 +420,8 @@ bool jx64_globalVarDefine(jx_x64_context_t* ctx, jx_x64_symbol_t* gv, const uint
 	}
 
 	jx64_labelBind(ctx, gv->m_Label);
+
+	gv->m_Size = sz;
 
 	return jx64_emitBytes(ctx, JX64_SECTION_DATA, data, sz);
 }

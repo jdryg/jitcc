@@ -505,9 +505,18 @@ static jx_mir_operand_t* jmirgen_instrBuild_ret(jx_mirgen_context_t* ctx, jx_ir_
 		jx_mir_operand_t* mirRetVal = jmirgen_getOperand(ctx, retVal);
 		jx_mir_type_kind mirType = jmirgen_convertType(retVal->m_Type);
 
-		if (jx_mir_opIsStackObj(mirRetVal) || mirRetVal->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+		if (jx_mir_opIsStackObj(mirRetVal)) {
 			retReg = jx_mir_opHWReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, kMIRRegGP_A);
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, retReg, mirRetVal));
+		} else if (mirRetVal->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+			jx_mir_global_variable_t* gv = jx_mir_getGlobalVarByName(ctx->m_MIRCtx, mirRetVal->u.m_ExternalSymbol.m_Name);
+			const bool hasData = !gv || jx_array_sizeu(gv->m_DataArr) != 0;
+			retReg = jx_mir_opHWReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR, kMIRRegGP_A);
+			if (hasData) {
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, retReg, mirRetVal));
+			} else {
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, retReg, mirRetVal));
+			}
 		} else {
 			if (jx_mir_typeIsFloatingPoint(mirType)) {
 				retReg = jx_mir_opHWReg(ctx->m_MIRCtx, ctx->m_Func, mirType, kMIRRegXMM_0);
@@ -958,10 +967,23 @@ static jx_mir_operand_t* jmirgen_instrBuild_load(jx_mirgen_context_t* ctx, jx_ir
 	dstReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, regType);
 
 	if (srcOperand->m_Kind != JMIR_OPERAND_REGISTER) {
-		if (jx_mir_opIsStackObj(srcOperand) || srcOperand->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+		if (jx_mir_opIsStackObj(srcOperand)) {
 			jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmpReg, srcOperand));
 			srcOperand = tmpReg;
+		} else if (srcOperand->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+			jx_mir_global_variable_t* gv = jx_mir_getGlobalVarByName(ctx->m_MIRCtx, srcOperand->u.m_ExternalSymbol.m_Name);
+			JX_CHECK(gv, "Global variable not found");
+			const bool hasData = jx_array_sizeu(gv->m_DataArr) != 0;
+			if (hasData) {
+				jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmpReg, srcOperand));
+				srcOperand = tmpReg;
+			} else {
+				jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, tmpReg, srcOperand));
+				srcOperand = tmpReg;
+			}
 		} else {
 			jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, regType);
 			if (regType == JMIR_TYPE_F32) {
@@ -1006,17 +1028,26 @@ static jx_mir_operand_t* jmirgen_instrBuild_store(jx_mirgen_context_t* ctx, jx_i
 	} else if (jx_mir_opIsStackObj(dstOperand)) {
 		memRef = dstOperand;
 	} else if (dstOperand->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+		jx_mir_global_variable_t* gv = jx_mir_getGlobalVarByName(ctx->m_MIRCtx, dstOperand->u.m_ExternalSymbol.m_Name);
+		JX_CHECK(gv, "Global variable not found");
+		const bool hasData = jx_array_sizeu(gv->m_DataArr) != 0;
 		jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
-		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmpReg, dstOperand));
+		if (hasData) {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmpReg, dstOperand));
+		} else {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, tmpReg, dstOperand));
+		}
 		memRef = jx_mir_opMemoryRef(ctx->m_MIRCtx, ctx->m_Func, regType, tmpReg->u.m_Reg, kMIRRegGPNone, 1, 0);
 	} else {
 		JX_CHECK(false, "Unhandle store destination operand.");
 	}
 
-	if (jx_mir_opIsStackObj(srcOperand) || srcOperand->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+	if (jx_mir_opIsStackObj(srcOperand)) {
 		jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
 		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmpReg, srcOperand));
 		srcOperand = tmpReg;
+	} else if (srcOperand->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+		JX_NOT_IMPLEMENTED();
 	} else if (srcOperand->m_Kind == JMIR_OPERAND_MEMORY_REF) {
 		jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, regType);
 		if (regType == JMIR_TYPE_F32) {
@@ -1058,8 +1089,17 @@ static jx_mir_operand_t* jmirgen_instrBuild_gep(jx_mirgen_context_t* ctx, jx_ir_
 	JX_CHECK(basePtrType, "Expected pointer type");
 
 	jx_mir_operand_t* basePtrOperand = jmirgen_getOperand(ctx, basePtrVal);
-	if (jx_mir_opIsStackObj(basePtrOperand) || basePtrOperand->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+	if (jx_mir_opIsStackObj(basePtrOperand)) {
 		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstReg, basePtrOperand));
+	} else if (basePtrOperand->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+		jx_mir_global_variable_t* gv = jx_mir_getGlobalVarByName(ctx->m_MIRCtx, basePtrOperand->u.m_ExternalSymbol.m_Name);
+		JX_CHECK(gv, "Global variable not found");
+		const bool hasData = jx_array_sizeu(gv->m_DataArr) != 0;
+		if (hasData) {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstReg, basePtrOperand));
+		} else {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, dstReg, basePtrOperand));
+		}
 	} else {
 		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, dstReg, basePtrOperand));
 	}
@@ -1951,10 +1991,12 @@ static jx_mir_operand_t* jmirgen_genMemSet(jx_mirgen_context_t* ctx, jx_ir_instr
 
 		jx_mir_operand_t* ptrOp = NULL;
 		jx_mir_operand_t* ptr = jmirgen_getOperand(ctx, ptrVal);
-		if (ptr->m_Kind == JMIR_OPERAND_MEMORY_REF || ptr->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+		if (ptr->m_Kind == JMIR_OPERAND_MEMORY_REF) {
 			// lea vr, [ptr]
 			ptrOp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, ptrOp, ptr));
+		} else if (ptr->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+			JX_NOT_IMPLEMENTED();
 		} else if (ptr->m_Kind == JMIR_OPERAND_REGISTER) {
 			ptrOp = ptr;
 		}
@@ -1998,10 +2040,12 @@ static jx_mir_operand_t* jmirgen_genMemCpy(jx_mirgen_context_t* ctx, jx_ir_instr
 		// and inline memcpy using the stack address as src/dst.
 		jx_mir_operand_t* dstPtrOp = NULL;
 		jx_mir_operand_t* dstOp = jmirgen_getOperand(ctx, irInstr->super.m_OperandArr[1]->m_Value);
-		if (dstOp->m_Kind == JMIR_OPERAND_MEMORY_REF || dstOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+		if (dstOp->m_Kind == JMIR_OPERAND_MEMORY_REF) {
 			// lea dst_vr, [dstPtr]
 			dstPtrOp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, dstPtrOp, dstOp));
+		} else if (dstOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+			JX_NOT_IMPLEMENTED();
 		} else if (dstOp->m_Kind == JMIR_OPERAND_REGISTER) {
 			dstPtrOp = dstOp;
 		} else {
@@ -2011,10 +2055,20 @@ static jx_mir_operand_t* jmirgen_genMemCpy(jx_mirgen_context_t* ctx, jx_ir_instr
 
 		jx_mir_operand_t* srcPtrOp = NULL;
 		jx_mir_operand_t* srcOp = jmirgen_getOperand(ctx, irInstr->super.m_OperandArr[2]->m_Value);
-		if (srcOp->m_Kind == JMIR_OPERAND_MEMORY_REF || srcOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+		if (srcOp->m_Kind == JMIR_OPERAND_MEMORY_REF) {
 			// lea src_vr, [srcPtr]
 			srcPtrOp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
 			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, srcPtrOp, srcOp));
+		} else if (srcOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+			jx_mir_global_variable_t* gv = jx_mir_getGlobalVarByName(ctx->m_MIRCtx, srcOp->u.m_ExternalSymbol.m_Name);
+			JX_CHECK(gv, "Global variable not found");
+			const bool hasData = jx_array_sizeu(gv->m_DataArr) != 0;
+			srcPtrOp = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
+			if (hasData) {
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, srcPtrOp, srcOp));
+			} else {
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, srcPtrOp, srcOp));
+			}
 		} else if (srcOp->m_Kind == JMIR_OPERAND_REGISTER) {
 			srcPtrOp = srcOp;
 		} else {
@@ -2101,9 +2155,19 @@ static jx_mir_operand_t* jmirgen_ensureOperandRegOrMem(jx_mirgen_context_t* ctx,
 {
 	JX_CHECK(operand, "Invalid operand!");
 
-	if (jx_mir_opIsStackObj(operand) || operand->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+	if (jx_mir_opIsStackObj(operand)) {
 		jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
 		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmpReg, operand));
+		operand = tmpReg;
+	} else if (operand->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+		jx_mir_global_variable_t* gv = jx_mir_getGlobalVarByName(ctx->m_MIRCtx, operand->u.m_ExternalSymbol.m_Name);
+		const bool hasData = !gv || jx_array_sizeu(gv->m_DataArr) != 0;
+		jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
+		if (hasData) {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmpReg, operand));
+		} else {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, tmpReg, operand));
+		}
 		operand = tmpReg;
 	} else if (operand->m_Kind != JMIR_OPERAND_MEMORY_REF && operand->m_Kind != JMIR_OPERAND_REGISTER) {
 		jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, operand->m_Type);
@@ -2118,9 +2182,19 @@ static jx_mir_operand_t* jmirgen_ensureOperandReg(jx_mirgen_context_t* ctx, jx_m
 {
 	JX_CHECK(operand, "Invalid operand!");
 
-	if (jx_mir_opIsStackObj(operand) || operand->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+	if (jx_mir_opIsStackObj(operand)) {
 		jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
 		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmpReg, operand));
+		operand = tmpReg;
+	} else if (operand->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+		jx_mir_global_variable_t* gv = jx_mir_getGlobalVarByName(ctx->m_MIRCtx, operand->u.m_ExternalSymbol.m_Name);
+		const bool hasData = !gv || jx_array_sizeu(gv->m_DataArr) != 0;
+		jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
+		if (hasData) {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmpReg, operand));
+		} else {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, tmpReg, operand));
+		}
 		operand = tmpReg;
 	} else if (operand->m_Kind != JMIR_OPERAND_REGISTER) {
 		jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, operand->m_Type);
@@ -2254,8 +2328,10 @@ static bool jmirgen_processPhis(jx_mirgen_context_t* ctx)
 				} else {
 					movInstr = jx_mir_mov(ctx->m_MIRCtx, dstReg, srcOp);
 				}
-			} else if (srcOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL || jx_mir_opIsStackObj(srcOp)) {
+			} else if (jx_mir_opIsStackObj(srcOp)) {
 				movInstr = jx_mir_lea(ctx->m_MIRCtx, dstReg, srcOp);
+			} else if (srcOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+				JX_NOT_IMPLEMENTED();
 			} else {
 				JX_CHECK(false, "TODO?");
 			}

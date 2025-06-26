@@ -412,7 +412,7 @@ jx_ir_module_t* jx_ir_moduleBegin(jx_ir_context_t* ctx, const char* name)
 				jx_ir_typeGetPrimitive(ctx, JIR_TYPE_I32)
 			};
 			jx_ir_type_t* memcpyType = jx_ir_typeGetFunction(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID), JX_COUNTOF(args), args, false);
-			jx_ir_global_value_t* gv = jx_ir_moduleDeclareGlobalVal(ctx, mod, "jir.memcpy.p0.p0.i32", memcpyType, JIR_LINKAGE_EXTERNAL);
+			jx_ir_global_value_t* gv = jx_ir_moduleDeclareGlobalVal(ctx, mod, "jir.memcpy.p0.p0.i32", memcpyType, JIR_LINKAGE_INTERNAL);
 			if (!gv) {
 				return NULL;
 			}
@@ -427,7 +427,7 @@ jx_ir_module_t* jx_ir_moduleBegin(jx_ir_context_t* ctx, const char* name)
 				jx_ir_typeGetPrimitive(ctx, JIR_TYPE_I64)
 			};
 			jx_ir_type_t* memcpyType = jx_ir_typeGetFunction(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID), JX_COUNTOF(args), args, false);
-			jx_ir_global_value_t* gv = jx_ir_moduleDeclareGlobalVal(ctx, mod, "jir.memcpy.p0.p0.i64", memcpyType, JIR_LINKAGE_EXTERNAL);
+			jx_ir_global_value_t* gv = jx_ir_moduleDeclareGlobalVal(ctx, mod, "jir.memcpy.p0.p0.i64", memcpyType, JIR_LINKAGE_INTERNAL);
 			if (!gv) {
 				return NULL;
 			}
@@ -442,7 +442,7 @@ jx_ir_module_t* jx_ir_moduleBegin(jx_ir_context_t* ctx, const char* name)
 				jx_ir_typeGetPrimitive(ctx, JIR_TYPE_I32)
 			};
 			jx_ir_type_t* memcpyType = jx_ir_typeGetFunction(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID), JX_COUNTOF(args), args, false);
-			jx_ir_global_value_t* gv = jx_ir_moduleDeclareGlobalVal(ctx, mod, "jir.memset.p0.i32", memcpyType, JIR_LINKAGE_EXTERNAL);
+			jx_ir_global_value_t* gv = jx_ir_moduleDeclareGlobalVal(ctx, mod, "jir.memset.p0.i32", memcpyType, JIR_LINKAGE_INTERNAL);
 			if (!gv) {
 				return NULL;
 			}
@@ -457,7 +457,7 @@ jx_ir_module_t* jx_ir_moduleBegin(jx_ir_context_t* ctx, const char* name)
 				jx_ir_typeGetPrimitive(ctx, JIR_TYPE_I64)
 			};
 			jx_ir_type_t* memcpyType = jx_ir_typeGetFunction(ctx, jx_ir_typeGetPrimitive(ctx, JIR_TYPE_VOID), JX_COUNTOF(args), args, false);
-			jx_ir_global_value_t* gv = jx_ir_moduleDeclareGlobalVal(ctx, mod, "jir.memset.p0.i64", memcpyType, JIR_LINKAGE_EXTERNAL);
+			jx_ir_global_value_t* gv = jx_ir_moduleDeclareGlobalVal(ctx, mod, "jir.memset.p0.i64", memcpyType, JIR_LINKAGE_INTERNAL);
 			if (!gv) {
 				return NULL;
 			}
