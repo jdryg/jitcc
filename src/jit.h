@@ -288,7 +288,8 @@ typedef struct jx_x64_symbol_t
 	jx_x64_relocation_t* m_RelocArr;
 } jx_x64_symbol_t;
 
-typedef struct jx_x64_code_buffer_t jx_x64_code_buffer_t;
+typedef void* (*jx64GetExternalSymbolAddrCallback)(const char* symName, void* userData);
+
 typedef struct jx_x64_context_t jx_x64_context_t;
 
 jx_x64_context_t* jx_x64_createContext(jx_allocator_i* allocator);
@@ -296,7 +297,7 @@ void jx_x64_destroyContext(jx_x64_context_t* ctx);
 
 void jx64_resetBuffer(jx_x64_context_t* ctx);
 const uint8_t* jx64_getBuffer(jx_x64_context_t* ctx, uint32_t* sz);
-bool jx64_finalize(jx_x64_context_t* ctx);
+bool jx64_finalize(jx_x64_context_t* ctx, jx64GetExternalSymbolAddrCallback externalSymCb, void* userData);
 
 jx_x64_label_t* jx64_labelAlloc(jx_x64_context_t* ctx, jx_x64_section_kind section);
 void jx64_labelFree(jx_x64_context_t* ctx, jx_x64_label_t* lbl);

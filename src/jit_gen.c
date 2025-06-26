@@ -8,13 +8,6 @@
 #include <jlib/memory.h>
 #include <jlib/string.h>
 
-#include <stdlib.h> // calloc
-#include <stdio.h>  // printf
-#include <math.h>   // cosf/sinf
-#include <memory.h> // memset/memcpy
-#include <string.h> // strcpy
-#include <Windows.h>
-
 typedef bool (*jx64VoidFunc)(jx_x64_context_t* ctx);
 typedef bool (*jx64UnaryFunc)(jx_x64_context_t* ctx, jx_x64_operand_t op);
 typedef bool (*jx64BinaryFunc)(jx_x64_context_t* ctx, jx_x64_operand_t op1, jx_x64_operand_t op2);
@@ -189,6 +182,8 @@ typedef struct jx_x64gen_context_t
 	jx_x64_symbol_t** m_GlobalVars;
 	jx_x64_symbol_t** m_Funcs;
 	jx_x64_label_t** m_BasicBlocks;
+	jx64GetExternalSymbolAddrCallback m_ExternalSymCallback;
+	void* m_ExternalSymCallbackUserData;
 } jx_x64gen_context_t;
 
 static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64gen_context_t* ctx, const jx_mir_operand_t* mirOp);
@@ -254,7 +249,7 @@ static Struct2 func8(int a, double b, int c, float d)
 		;
 }
 
-jx_x64gen_context_t* jx_x64gen_createContext(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx_allocator_i* allocator)
+jx_x64gen_context_t* jx_x64gen_createContext(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx64GetExternalSymbolAddrCallback externalSymCb, void* userData, jx_allocator_i* allocator)
 {
 	jx_x64gen_context_t* ctx = (jx_x64gen_context_t*)JX_ALLOC(allocator, sizeof(jx_x64gen_context_t));
 	if (!ctx) {
@@ -265,6 +260,8 @@ jx_x64gen_context_t* jx_x64gen_createContext(jx_x64_context_t* jitCtx, jx_mir_co
 	ctx->m_Allocator = allocator;
 	ctx->m_JITCtx = jitCtx;
 	ctx->m_MIRCtx = mirCtx;
+	ctx->m_ExternalSymCallback = externalSymCb;
+	ctx->m_ExternalSymCallbackUserData = userData;
 	ctx->m_GlobalVars = (jx_x64_symbol_t**)jx_array_create(allocator);
 	if (!ctx->m_GlobalVars) {
 		jx_x64gen_destroyContext(ctx);
@@ -319,15 +316,7 @@ bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
 	const uint32_t numGlobalVars = jx_mir_getNumGlobalVars(mirCtx);
 	for (uint32_t iGV = 0; iGV < numGlobalVars; ++iGV) {
 		jx_mir_global_variable_t* mirGV = jx_mir_getGlobalVarByID(mirCtx, iGV);
-
-		const char* gvName = jx_strrchr(mirGV->m_Name, ':');
-		if (gvName) {
-			++gvName;
-		} else {
-			gvName = mirGV->m_Name;
-		}
-
-		jx_x64_symbol_t* gv = jx64_globalVarDeclare(jitCtx, gvName);
+		jx_x64_symbol_t* gv = jx64_globalVarDeclare(jitCtx, mirGV->m_Name);
 		if (!gv) {
 			return false;
 		}
@@ -339,15 +328,7 @@ bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
 	const uint32_t numFuncs = jx_mir_getNumFunctions(mirCtx);
 	for (uint32_t iFunc = 0; iFunc < numFuncs; ++iFunc) {
 		jx_mir_function_t* mirFunc = jx_mir_getFunctionByID(mirCtx, iFunc);
-
-		const char* funcName = jx_strrchr(mirFunc->m_Name, ':');
-		if (funcName) {
-			++funcName;
-		} else {
-			funcName = mirFunc->m_Name;
-		}
-
-		jx_x64_symbol_t* func = jx64_funcDeclare(jitCtx, funcName);
+		jx_x64_symbol_t* func = jx64_funcDeclare(jitCtx, mirFunc->m_Name);
 		if (!func) {
 			return false;
 		}
@@ -430,8 +411,6 @@ bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
 				jx64_labelFree(jitCtx, ctx->m_BasicBlocks[iBB]);
 			}
 			jx_array_resize(ctx->m_BasicBlocks, 0);
-		} else {
-			// TODO: Emit external function stub here instead of jx64_finalize()?
 		}
 	}
 
@@ -449,6 +428,7 @@ bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
 		}
 	}
 
+#if 0
 	// DEBUG/TEST
 	{
 		jx_x64gen_setExternalSymbol(jitCtx, "abs", (void*)abs);
@@ -534,10 +514,9 @@ bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
 		jx_x64gen_setExternalSymbol(jitCtx, "GetDesktopWindow", (void*)GetDesktopWindow);
 		jx_x64gen_setExternalSymbol(jitCtx, "GetParent", (void*)GetParent);
 	}
+#endif
 
-	jx64_finalize(jitCtx);
-
-	return true;
+	return jx64_finalize(jitCtx, ctx->m_ExternalSymCallback, ctx->m_ExternalSymCallbackUserData);
 }
 
 static jx_x64_operand_t jx_x64gen_convertMIROperand(jx_x64gen_context_t* ctx, const jx_mir_operand_t* mirOp)

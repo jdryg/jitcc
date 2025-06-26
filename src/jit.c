@@ -231,7 +231,7 @@ const uint8_t* jx64_getBuffer(jx_x64_context_t* ctx, uint32_t* sz)
 	return ctx->m_CodeBuffer.m_Buffer;
 }
 
-bool jx64_finalize(jx_x64_context_t* ctx)
+bool jx64_finalize(jx_x64_context_t* ctx, jx64GetExternalSymbolAddrCallback externalSymCb, void* userData)
 {
 	const uint32_t numSymbols = (uint32_t)jx_array_sizeu(ctx->m_SymbolArr);
 
@@ -239,12 +239,12 @@ bool jx64_finalize(jx_x64_context_t* ctx)
 	for (uint32_t iSym = 0; iSym < numSymbols; ++iSym) {
 		jx_x64_symbol_t* sym = ctx->m_SymbolArr[iSym];
 		if (sym->m_Kind == JX64_SYMBOL_FUNCTION && sym->m_Size == 0) {
+			void* symAddr = externalSymCb(sym->m_Name, userData);
+
 			char iatEntryName[256];
 			jx_snprintf(iatEntryName, JX_COUNTOF(iatEntryName), "__iat_%s", sym->m_Name);
 			jx_x64_symbol_t* iatEntry = jx64_globalVarDeclare(ctx, iatEntryName);
-			jx64_globalVarDefine(ctx, iatEntry, (const uint8_t*)&sym->m_Label->m_Offset, sizeof(void*), 8);
-
-			sym->m_Label->m_Offset = JX64_LABEL_OFFSET_UNBOUND;
+			jx64_globalVarDefine(ctx, iatEntry, (const uint8_t*)&symAddr, sizeof(void*), 8);
 
 			jx64_funcBegin(ctx, sym);
 			jx64_jmp(ctx, jx64_opMemSymbol(JX64_SIZE_64, iatEntry, 0));
