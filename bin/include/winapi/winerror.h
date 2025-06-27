@@ -1982,11 +1982,7 @@ __CRT_INLINE HRESULT HRESULT_FROM_WIN32(long x) { return x <= 0 ? (HRESULT)x : (
 #define GetScode(hr) ((SCODE) (hr))
 #define ResultFromScode(sc) ((HRESULT) (sc))
 #define PropagateResult(hrPrevious,scBase) ((HRESULT) scBase)
-#ifdef RC_INVOKED
-#define _HRESULT_TYPEDEF_(_sc) _sc
-#else
 #define _HRESULT_TYPEDEF_(_sc) ((HRESULT)_sc)
-#endif
 #define NOERROR 0
 #define E_UNEXPECTED _HRESULT_TYPEDEF_(0x8000FFFFL)
 #define E_NOTIMPL _HRESULT_TYPEDEF_(0x80004001L)

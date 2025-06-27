@@ -2319,8 +2319,10 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 					}
 
 					jx_mir_instruction_t* srcRegDef = jmir_instrCombine_getRegDef(pass, src->u.m_Reg);
-					if (srcRegDef && srcRegDef->m_OpCode == JMIR_OP_MOV && srcRegDef->m_Operands[1]->m_Type == src->m_Type && (srcRegDef->m_Operands[1]->m_Kind == JMIR_OPERAND_CONST || srcRegDef->m_Operands[1]->m_Kind == JMIR_OPERAND_REGISTER)) {
-						src = srcRegDef->m_Operands[1];
+					if (srcRegDef && srcRegDef->m_OpCode == JMIR_OP_MOV && srcRegDef->m_Operands[1]->m_Type == src->m_Type) {
+						if ((srcRegDef->m_Operands[1]->m_Kind == JMIR_OPERAND_CONST && jx64_immFitsIn32Bits(srcRegDef->m_Operands[1]->u.m_ConstI64)) || srcRegDef->m_Operands[1]->m_Kind == JMIR_OPERAND_REGISTER) {
+							src = srcRegDef->m_Operands[1];
+						}
 					}
 				} else if (dst->m_Kind == JMIR_OPERAND_MEMORY_REF && src->m_Kind == JMIR_OPERAND_CONST) {
 					// mov [mem], const

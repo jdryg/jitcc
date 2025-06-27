@@ -539,7 +539,7 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCondJmp, func);
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCFG, func);
 
-#if 0
+#if 1
 		{
 			jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
 			jx_strbuf_printf(sb, "%s pre-instrCombine\n", func->m_Name);
@@ -560,7 +560,7 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 			++numIter;
 		}
 
-#if 0
+#if 1
 		{
 			jx_mir_funcRenumberVirtualRegs(ctx, func);
 			jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);

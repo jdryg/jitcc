@@ -299,9 +299,6 @@
     <ClCompile Include="src\jir.c">
       <Filter>src</Filter>
     </ClCompile>
-    <ClCompile Include="src\jit_tests.c">
-      <Filter>src</Filter>
-    </ClCompile>
     <ClCompile Include="src\jir_gen.c">
       <Filter>src</Filter>
     </ClCompile>
@@ -1062,6 +1059,9 @@
       <Filter>bin\test</Filter>
     </ClCompile>
     <ClCompile Include="bin\test\win32_test.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\extern_global.c">
       <Filter>bin\test</Filter>
     </ClCompile>
   </ItemGroup>

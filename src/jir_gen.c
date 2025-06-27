@@ -118,9 +118,9 @@ bool jx_irgen_moduleGen(jx_irgen_context_t* ctx, const char* moduleName, jx_cc_t
 	{
 		jx_cc_object_t* global = tu->m_Globals;
 		while (global) {
+			const bool isFunction = (global->m_Flags & JCC_OBJECT_FLAGS_IS_FUNCTION_Msk) != 0;
 			const bool isLive = (global->m_Flags & JCC_OBJECT_FLAGS_IS_LIVE_Msk) != 0;
-//			if (isLive) 
-			{
+			if (!isFunction || isLive) {
 				const char* name = global->m_Name;
 				const bool isStatic = (global->m_Flags & JCC_OBJECT_FLAGS_IS_STATIC_Msk) != 0;
 				jx_ir_type_t* type = jccTypeToIRType(ctx, global->m_Type);
@@ -1911,12 +1911,16 @@ static jx_ir_type_t* jccTypeToIRType(jx_irgen_context_t* ctx, jx_cc_type_t* ccTy
 		if (!irType) {
 			jx_ir_type_struct_t* structType = jx_ir_typeStructBegin(irctx, structUniqueID, 0);
 			if (structType) {
-				jx_ir_type_t** members = (jx_ir_type_t**)jx_array_create(ctx->m_Allocator);
+				jx_ir_struct_member_t* members = (jx_ir_struct_member_t*)jx_array_create(ctx->m_Allocator);
 
 				jx_cc_struct_member_t* ccMember = ccType->m_StructMembers;
 				while (ccMember) {
 					if (ccMember->m_BitOffset == 0) {
-						jx_array_push_back(members, jccTypeToIRType(ctx, ccMember->m_Type));
+						jx_array_push_back(members, (jx_ir_struct_member_t){
+							.m_Type = jccTypeToIRType(ctx, ccMember->m_Type),
+							.m_Alignment = ccMember->m_Alignment,
+							.m_Offset = ccMember->m_Offset
+						});
 					}
 					ccMember = ccMember->m_Next;
 				}
@@ -1988,9 +1992,9 @@ static jx_ir_type_t* jccTypeToIRType(jx_irgen_context_t* ctx, jx_cc_type_t* ccTy
 					: NULL
 					;
 
-				jx_ir_type_t* members[] = {
-					firstMemberType,
-					secondMemberType
+				jx_ir_struct_member_t members[] = {
+					{ .m_Type = firstMemberType, .m_Offset = 0, .m_Alignment = maxMemberAlignment },
+					{ .m_Type = secondMemberType, .m_Offset = firstMemberSize, .m_Alignment = 1 }
 				};
 
 				const uint32_t numMembers = secondMemberSize != 0 ? 2 : 1;

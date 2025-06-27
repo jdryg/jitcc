@@ -600,7 +600,6 @@ jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_d
 		jcc_ppDefineMacro(ctx, tu, "__x86_64", "1");
 		jcc_ppDefineMacro(ctx, tu, "__x86_64__", "1");
 		jcc_ppDefineMacro(ctx, tu, "__LLP64__", "1");
-		jcc_ppDefineMacro(ctx, tu, "_WIN64", "1");
 	}
 
 	jx_cc_token_t* tok = jcc_tokenizeString(ctx, tu, source, sourceLen);

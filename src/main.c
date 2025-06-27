@@ -21,6 +21,7 @@
 
 static void runCTestSuiteTests(jx_allocator_i* allocator);
 static void runSingleFileCompile(jx_allocator_i* allocator);
+static void* getExternalSymbolCallback(const char* symName, void* userData);
 static bool redirectSystemLogger(void);
 
 int main(int argc, char** argv)
@@ -104,7 +105,7 @@ static void runCTestSuiteTests(jx_allocator_i* allocator)
 			jx_mirgen_destroyContext(mirGenCtx);
 
 			jx_x64_context_t* jitCtx = jx_x64_createContext(allocator);
-			jx_x64gen_context_t* jitgenCtx = jx_x64gen_createContext(jitCtx, mirCtx, allocator);
+			jx_x64gen_context_t* jitgenCtx = jx_x64gen_createContext(jitCtx, mirCtx, getExternalSymbolCallback, NULL, allocator);
 
 			if (jx_x64gen_codeGen(jitgenCtx)) {
 				uint32_t execBufSize = 0;
@@ -125,6 +126,9 @@ static void runCTestSuiteTests(jx_allocator_i* allocator)
 				} else {
 					JX_SYS_LOG_ERROR(NULL, "main() not found!\n", sourceFile);
 				}
+			} else {
+				++numFailed;
+				JX_SYS_LOG_ERROR(NULL, "Codegen failed. Unresolved external symbol?\n");
 			}
 
 			jx_x64gen_destroyContext(jitgenCtx);
@@ -150,13 +154,14 @@ static void runSingleFileCompile(jx_allocator_i* allocator)
 	jx_cc_addIncludePath(ctx, JX_FILE_BASE_DIR_INSTALL, "include");
 	jx_cc_addIncludePath(ctx, JX_FILE_BASE_DIR_INSTALL, "include/winapi");
 
-//	const char* sourceFile = "test/c-testsuite/00144.c";
+//	const char* sourceFile = "test/c-testsuite/00049.c";
 //	const char* sourceFile = "test/stb_image_write_test.c";
 //	const char* sourceFile = "test/stb_sprintf_test.c";
 //	const char* sourceFile = "test/stb_truetype_test.c";
 //	const char* sourceFile = "test/sieve.c";
 //	const char* sourceFile = "test/compute.c";
 	const char* sourceFile = "test/win32_test.c";
+//	const char* sourceFile = "test/extern_global.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
 	TracyCZoneN(frontend, "Frontend", 1);
@@ -207,7 +212,7 @@ static void runSingleFileCompile(jx_allocator_i* allocator)
 
 				TracyCZoneN(x64gen, "x64 Gen", 1);
 				jx_x64_context_t* jitCtx = jx_x64_createContext(allocator);
-				jx_x64gen_context_t* jitgenCtx = jx_x64gen_createContext(jitCtx, mirCtx, allocator);
+				jx_x64gen_context_t* jitgenCtx = jx_x64gen_createContext(jitCtx, mirCtx, getExternalSymbolCallback, NULL, allocator);
 				if (jx_x64gen_codeGen(jitgenCtx)) {
 					TracyCZoneEnd(x64gen);
 					uint32_t bufferSize = 0;
@@ -230,6 +235,8 @@ static void runSingleFileCompile(jx_allocator_i* allocator)
 					} else {
 						JX_SYS_LOG_ERROR(NULL, "main() not found!\n");
 					}
+				} else {
+					JX_SYS_LOG_ERROR(NULL, "Codegen failed. Unresolved external symbol?\n");
 				}
 
 				jx_x64gen_destroyContext(jitgenCtx);
@@ -242,6 +249,92 @@ static void runSingleFileCompile(jx_allocator_i* allocator)
 
 end:
 	jx_cc_destroyContext(ctx);
+}
+
+#include <stdlib.h> // calloc
+#include <stdio.h>  // printf
+#include <math.h>   // cosf/sinf
+#include <memory.h> // memset/memcpy
+#include <string.h> // strcpy
+#include <Windows.h>
+
+static void* getExternalSymbolCallback(const char* symName, void* userData)
+{
+	if (!jx_strcmp(symName, "abs")) { return (void*)abs; }
+	if (!jx_strcmp(symName, "abort")) { return (void*)abort; }
+	if (!jx_strcmp(symName, "acos")) { return (void*)acos; }
+	if (!jx_strcmp(symName, "atoi")) { return (void*)atoi; }
+	if (!jx_strcmp(symName, "calloc")) { return (void*)calloc; }
+	if (!jx_strcmp(symName, "ceil")) { return (void*)ceil; }
+	if (!jx_strcmp(symName, "cos")) { return (void*)cos; }
+	if (!jx_strcmp(symName, "cosf")) { return (void*)cosf; }
+	if (!jx_strcmp(symName, "fabs")) { return (void*)fabs; }
+	if (!jx_strcmp(symName, "fclose")) { return (void*)fclose; }
+	if (!jx_strcmp(symName, "fgetc")) { return (void*)fgetc; }
+	if (!jx_strcmp(symName, "fgets")) { return (void*)fgets; }
+	if (!jx_strcmp(symName, "floor")) { return (void*)floor; }
+	if (!jx_strcmp(symName, "fmod")) { return (void*)fmod; }
+	if (!jx_strcmp(symName, "fopen")) { return (void*)fopen; }
+	if (!jx_strcmp(symName, "fprintf")) { return (void*)fprintf; }
+	if (!jx_strcmp(symName, "fread")) { return (void*)fread; }
+	if (!jx_strcmp(symName, "free")) { return (void*)free; }
+	if (!jx_strcmp(symName, "frexp")) { return (void*)frexp; }
+	if (!jx_strcmp(symName, "fseek")) { return (void*)fseek; }
+	if (!jx_strcmp(symName, "ftell")) { return (void*)ftell; }
+	if (!jx_strcmp(symName, "fwrite")) { return (void*)fwrite; }
+	if (!jx_strcmp(symName, "getc")) { return (void*)getc; }
+	if (!jx_strcmp(symName, "malloc")) { return (void*)malloc; }
+	if (!jx_strcmp(symName, "memcmp")) { return (void*)memcmp; }
+	if (!jx_strcmp(symName, "memcpy")) { return (void*)memcpy; }
+	if (!jx_strcmp(symName, "memmove")) { return (void*)memmove; }
+	if (!jx_strcmp(symName, "memset")) { return (void*)memset; }
+	if (!jx_strcmp(symName, "pow")) { return (void*)pow; }
+	if (!jx_strcmp(symName, "printf")) { return (void*)printf; }
+	if (!jx_strcmp(symName, "putchar")) { return (void*)putchar; }
+	if (!jx_strcmp(symName, "realloc")) { return (void*)realloc; }
+	if (!jx_strcmp(symName, "roundf")) { return (void*)roundf; }
+	if (!jx_strcmp(symName, "sin")) { return (void*)sin; }
+	if (!jx_strcmp(symName, "sinf")) { return (void*)sinf; }
+	if (!jx_strcmp(symName, "sprintf")) { return (void*)sprintf; }
+	if (!jx_strcmp(symName, "sqrt")) { return (void*)sqrt; }
+	if (!jx_strcmp(symName, "strcat")) { return (void*)strcat; }
+	if (!jx_strcmp(symName, "strchr")) { return (void*)strchr; }
+	if (!jx_strcmp(symName, "strcmp")) { return (void*)strcmp; }
+	if (!jx_strcmp(symName, "strcpy")) { return (void*)strcpy; }
+	if (!jx_strcmp(symName, "strlen")) { return (void*)strlen; }
+	if (!jx_strcmp(symName, "strncmp")) { return (void*)strncmp; }
+	if (!jx_strcmp(symName, "strncpy")) { return (void*)strncpy; }
+	if (!jx_strcmp(symName, "strrchr")) { return (void*)strrchr; }
+	if (!jx_strcmp(symName, "GetStockObject")) { return (void*)GetStockObject; }
+	if (!jx_strcmp(symName, "LoadIconA")) { return (void*)LoadIconA; }
+	if (!jx_strcmp(symName, "LoadCursorA")) { return (void*)LoadCursorA; }
+	if (!jx_strcmp(symName, "RegisterClassA")) { return (void*)RegisterClassA; }
+	if (!jx_strcmp(symName, "CreateWindowExA")) { return (void*)CreateWindowExA; }
+	if (!jx_strcmp(symName, "GetMessageA")) { return (void*)GetMessageA; }
+	if (!jx_strcmp(symName, "TranslateMessage")) { return (void*)TranslateMessage; }
+	if (!jx_strcmp(symName, "DispatchMessageA")) { return (void*)DispatchMessageA; }
+	if (!jx_strcmp(symName, "DefWindowProcA")) { return (void*)DefWindowProcA; }
+	if (!jx_strcmp(symName, "PostQuitMessage")) { return (void*)PostQuitMessage; }
+	if (!jx_strcmp(symName, "DestroyWindow")) { return (void*)DestroyWindow; }
+	if (!jx_strcmp(symName, "EndPaint")) { return (void*)EndPaint; }
+	if (!jx_strcmp(symName, "DrawTextA")) { return (void*)DrawTextA; }
+	if (!jx_strcmp(symName, "SetBkMode")) { return (void*)SetBkMode; }
+	if (!jx_strcmp(symName, "SetTextColor")) { return (void*)SetTextColor; }
+	if (!jx_strcmp(symName, "GetClientRect")) { return (void*)GetClientRect; }
+	if (!jx_strcmp(symName, "BeginPaint")) { return (void*)BeginPaint; }
+	if (!jx_strcmp(symName, "SetWindowPos")) { return (void*)SetWindowPos; }
+	if (!jx_strcmp(symName, "GetWindowRect")) { return (void*)GetWindowRect; }
+	if (!jx_strcmp(symName, "GetClientRect")) { return (void*)GetClientRect; }
+	if (!jx_strcmp(symName, "GetDesktopWindow")) { return (void*)GetDesktopWindow; }
+	if (!jx_strcmp(symName, "GetParent")) { return (void*)GetParent; }
+
+	static int32_t g_ExternalVar = 1000;
+	if (!jx_strcmp(symName, "g_ExternalVar")) { return (void*)&g_ExternalVar; }
+
+	static int32_t g_ExternalArr[10] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+	if (!jx_strcmp(symName, "g_ExternalArr")) { return (void*)g_ExternalArr; }
+
+	return NULL;
 }
 
 static bool redirectSystemLogger(void)

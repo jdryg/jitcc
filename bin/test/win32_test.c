@@ -84,7 +84,7 @@ int main(void)
     WNDCLASS wc;
     HWND hwnd;
 
-    pWindowText = "Hello Windows!";
+    pWindowText = "Hello Win32 from jitcc!";
 
     // Fill in window class structure with parameters that describe
     // the main window.
