@@ -58,12 +58,15 @@ typedef char* PSZ;
 #ifndef CDECL
 #define CDECL
 #endif // CDECL
+
 #ifndef CALLBACK
 #define CALLBACK __stdcall
 #endif // CALLBACK
+
 #ifndef WINAPI
 #define WINAPI __stdcall
 #endif // WINAPI
+
 #define WINAPIV __cdecl
 #define APIENTRY WINAPI
 #define APIPRIVATE WINAPI
@@ -74,6 +77,7 @@ typedef char* PSZ;
 #undef NEAR
 #define FAR
 #define NEAR
+
 #ifndef CONST
 #define CONST const
 #endif // CONST
@@ -189,55 +193,48 @@ typedef DWORD* LPCOLORREF;
 #define HFILE_ERROR ((HFILE)-1)
 
 typedef struct tagRECT {
-	LONG left;
-	LONG top;
-	LONG right;
-	LONG bottom;
+  LONG left;
+  LONG top;
+  LONG right;
+  LONG bottom;
 } RECT, *PRECT, *NPRECT, *LPRECT;
-
 typedef const RECT *LPCRECT;
 
-typedef struct _RECTL
-{
-	LONG left;
-	LONG top;
-	LONG right;
-	LONG bottom;
+typedef struct _RECTL {
+  LONG left;
+  LONG top;
+  LONG right;
+  LONG bottom;
 } RECTL, *PRECTL, *LPRECTL;
-
 typedef const RECTL *LPCRECTL;
 
-typedef struct tagPOINT
-{
-    LONG x;
-    LONG y;
+typedef struct tagPOINT {
+  LONG x;
+  LONG y;
 } POINT, *PPOINT, *NPPOINT, *LPPOINT;
 
-typedef struct _POINTL
-{
-    LONG x;
-    LONG y;
+typedef struct _POINTL {
+  LONG x;
+  LONG y;
 } POINTL, *PPOINTL;
 
-typedef struct tagSIZE
-{
-    LONG cx;
-    LONG cy;
+typedef struct tagSIZE {
+  LONG cx;
+  LONG cy;
 } SIZE, *PSIZE, *LPSIZE;
 
 typedef SIZE SIZEL;
 typedef SIZE *PSIZEL, *LPSIZEL;
 
-typedef struct tagPOINTS
-{
-    SHORT x;
-    SHORT y;
+typedef struct tagPOINTS {
+  SHORT x;
+  SHORT y;
 } POINTS, *PPOINTS, *LPPOINTS;
 
 typedef struct _FILETIME
 {
-    DWORD dwLowDateTime;
-    DWORD dwHighDateTime;
+  DWORD dwLowDateTime;
+  DWORD dwHighDateTime;
 } FILETIME, *PFILETIME, *LPFILETIME;
 #define _FILETIME_
 
@@ -269,6 +266,5 @@ typedef struct _FILETIME
 #define DC_PAPERNAMES 16
 #define DC_ORIENTATION 17
 #define DC_COPIES 18
-
 
 #endif // _WINDEF_

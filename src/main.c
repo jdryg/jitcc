@@ -160,8 +160,8 @@ static void runSingleFileCompile(jx_allocator_i* allocator)
 //	const char* sourceFile = "test/stb_truetype_test.c";
 //	const char* sourceFile = "test/sieve.c";
 //	const char* sourceFile = "test/compute.c";
-//	const char* sourceFile = "test/win32_test.c";
-	const char* sourceFile = "test/extern_global.c";
+	const char* sourceFile = "test/win32_test.c";
+//	const char* sourceFile = "test/extern_global.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
 	TracyCZoneN(frontend, "Frontend", 1);
