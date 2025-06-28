@@ -435,7 +435,9 @@ static jx_ir_constant_t* jirgenGlobalVarInitializer(jx_irgen_context_t* ctx, jx_
 		uint32_t numMembers = 0;
 		jx_cc_struct_member_t* ccMember = type->m_StructMembers;
 		while (ccMember) {
-			numMembers++;
+			if (ccMember->m_BitOffset == 0) {
+				++numMembers;
+			}
 			ccMember = ccMember->m_Next;
 		}
 
@@ -447,7 +449,9 @@ static jx_ir_constant_t* jirgenGlobalVarInitializer(jx_irgen_context_t* ctx, jx_
 		jx_ir_constant_t** nextMember = members;
 		ccMember = type->m_StructMembers;
 		while (ccMember) {
-			*nextMember++ = jirgenGlobalVarInitializer(ctx, ccMember->m_Type, data, offset + ccMember->m_Offset, relocations);
+			if (ccMember->m_BitOffset == 0) {
+				*nextMember++ = jirgenGlobalVarInitializer(ctx, ccMember->m_Type, data, offset + ccMember->m_Offset, relocations);
+			}
 			ccMember = ccMember->m_Next;
 		}
 		c = jx_ir_constStruct(irctx, jccTypeToIRType(ctx, type), numMembers, members);
@@ -1378,7 +1382,7 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 		jx_ir_value_t* ptrVal = jirgenGenExpression(ctx, gepNode->m_ExprPtr);
 		jx_ir_value_t* idxVal = jirgenGenExpression(ctx, gepNode->m_ExprIndex);
 
-		JX_CHECK(jx_ir_typeIsInteger(idxVal->m_Type), "Expected integer index.");
+		JX_CHECK(jx_ir_typeIsIntegral(idxVal->m_Type), "Expected integer index.");
 		if (/*idxVal->m_Type->m_Kind != JIR_TYPE_I32 &&*/ idxVal->m_Type->m_Kind != JIR_TYPE_I64 /*&& idxVal->m_Type->m_Kind != JIR_TYPE_U32 && idxVal->m_Type->m_Kind != JIR_TYPE_U64*/) {
 			idxVal = jirgenConvertType(ctx, idxVal, jx_ir_typeGetPrimitive(irctx, JIR_TYPE_I64));
 		}
