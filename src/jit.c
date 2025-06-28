@@ -3210,7 +3210,7 @@ static bool jx64_mov_mem_imm(jx_x64_instr_encoding_t* enc, const jx_x64_mem_t* d
 		// mov [base + (disp)], reg
 		const bool invalidOperands = false
 			|| JX64_REG_GET_SIZE(base_r) < JX64_SIZE_32 // Cannot use 16-bit or 8-bit base reg
-			|| (src_imm_sz == JX64_SIZE_64 && (src_imm < INT32_MIN || src_imm > INT32_MAX)) // Only 32-bit immediates are supported
+			|| (src_imm_sz == JX64_SIZE_64 && !jx64_immFitsIn32Bits(src_imm)) // Only 32-bit immediates are supported
 			;
 		if (invalidOperands) {
 			JX_CHECK(false, "Invalid operands.");
