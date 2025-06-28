@@ -98,6 +98,7 @@ typedef enum jx_cc_token_kind
 	JCC_TOKEN_ONCE,          // "once"
 	JCC_TOKEN_ERROR,         // "error"
 	JCC_TOKEN_DEFINED,       // "defined"
+	JCC_TOKEN_WARNING,       // "warning"
 	JCC_TOKEN_VA_OPT,        // "__VA_OPT__"
 
 	// punctuators

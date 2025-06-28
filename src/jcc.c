@@ -126,6 +126,7 @@ static const jcc_known_token_t kKeywords[] = {
 	JCC_DEFINE_KNOWN_TOKEN("once", JCC_TOKEN_ONCE),
 	JCC_DEFINE_KNOWN_TOKEN("error", JCC_TOKEN_ERROR),
 	JCC_DEFINE_KNOWN_TOKEN("defined", JCC_TOKEN_DEFINED),
+	JCC_DEFINE_KNOWN_TOKEN("warning", JCC_TOKEN_WARNING),
 	JCC_DEFINE_KNOWN_TOKEN("__VA_OPT__", JCC_TOKEN_VA_OPT),
 };
 
@@ -427,7 +428,11 @@ static int32_t jcc_macroEntryCompareCallback(const void* a, const void* b, void*
 static uint64_t jcc_s2sMapItemHashCallback(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
 static int32_t jcc_s2sMapItemCompareCallback(const void* a, const void* b, void* udata);
 
+typedef jx_cc_token_t* (*jccMacroHandlerCallback)(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok);
 static void jcc_ppDefineMacro(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* name, const char* str);
+static void jcc_ppDefineDynamicMacro(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* name, jccMacroHandlerCallback cb);
+
+jx_cc_token_t* jcc_ppDynMacro_Line(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok);
 
 jx_cc_context_t* jx_cc_createContext(jx_allocator_i* allocator, jx_logger_i* logger)
 {
@@ -587,6 +592,7 @@ jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_d
 	}
 
 	{
+		jcc_ppDefineDynamicMacro(ctx, tu, "__LINE__", jcc_ppDynMacro_Line);
 		jcc_ppDefineMacro(ctx, tu, "__STDC__", "1");
 		jcc_ppDefineMacro(ctx, tu, "__STDC_HOSTED__", "1"); // TODO: Is this true in my case?
 		jcc_ppDefineMacro(ctx, tu, "__STDC_VERSION__", "201112L");
@@ -595,11 +601,21 @@ jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_d
 		jcc_ppDefineMacro(ctx, tu, "__STDC_NO_THREADS__", "1");
 		jcc_ppDefineMacro(ctx, tu, "__STDC_NO_VLA__", "1");
 		jcc_ppDefineMacro(ctx, tu, "__C99_MACRO_WITH_VA_ARGS", "1");
+		jcc_ppDefineMacro(ctx, tu, "HAVE_STDINT_H", "1");
 		jcc_ppDefineMacro(ctx, tu, "__amd64", "1");
 		jcc_ppDefineMacro(ctx, tu, "__amd64__", "1");
 		jcc_ppDefineMacro(ctx, tu, "__x86_64", "1");
 		jcc_ppDefineMacro(ctx, tu, "__x86_64__", "1");
 		jcc_ppDefineMacro(ctx, tu, "__LLP64__", "1");
+		jcc_ppDefineMacro(ctx, tu, "_WIN32", "1");
+		jcc_ppDefineMacro(ctx, tu, "_MSC_VER", "1300");
+		jcc_ppDefineMacro(ctx, tu, "__int8", "char");
+		jcc_ppDefineMacro(ctx, tu, "__int16", "short");
+		jcc_ppDefineMacro(ctx, tu, "__int32", "int");
+		jcc_ppDefineMacro(ctx, tu, "__int64", "long long");
+		jcc_ppDefineMacro(ctx, tu, "SQLITE_THREADSAFE", "0");
+		jcc_ppDefineMacro(ctx, tu, "SQLITE_DISABLE_INTRINSIC", "1");
+		jcc_ppDefineMacro(ctx, tu, "SQLITE_OMIT_SEH", "1");
 	}
 
 	jx_cc_token_t* tok = jcc_tokenizeString(ctx, tu, source, sourceLen);
@@ -1205,6 +1221,10 @@ static jx_cc_ast_stmt_t* jcc_astAllocStmtAsm(jx_cc_context_t* ctx, const char* a
 // expr can be NULL
 static jx_cc_ast_stmt_t* jcc_astAllocStmtReturn(jx_cc_context_t* ctx, jx_cc_ast_expr_t* expr, jx_cc_token_t* tok)
 {
+	if (expr && !jcc_astAddType(ctx, &expr->super)) {
+		return NULL;
+	}
+
 	jx_cc_ast_stmt_expr_t* node = (jx_cc_ast_stmt_expr_t*)jcc_astAllocStmt(ctx, JCC_NODE_STMT_RETURN, tok, sizeof(jx_cc_ast_stmt_expr_t));
 	if (!node) {
 		return NULL;
@@ -1219,6 +1239,10 @@ static jx_cc_ast_stmt_t* jcc_astAllocStmtReturn(jx_cc_context_t* ctx, jx_cc_ast_
 static jx_cc_ast_stmt_t* jcc_astAllocStmtIf(jx_cc_context_t* ctx, jx_cc_ast_expr_t* condExpr, jx_cc_ast_stmt_t* thenStmt, jx_cc_ast_stmt_t* elseStmt, jx_cc_label_t thenLbl, jx_cc_label_t elseLbl, jx_cc_label_t endLbl, jx_cc_token_t* tok)
 {
 	if (!condExpr || !thenStmt) {
+		return NULL;
+	}
+
+	if (!jcc_astAddType(ctx, &condExpr->super)) {
 		return NULL;
 	}
 
@@ -1263,6 +1287,10 @@ static jx_cc_ast_stmt_t* jcc_astAllocStmtSwitch(jx_cc_context_t* ctx, jx_cc_ast_
 		return NULL;
 	}
 
+	if (!jcc_astAddType(ctx, &condExpr->super)) {
+		return false;
+	}
+
 	jx_cc_ast_stmt_switch_t* node = (jx_cc_ast_stmt_switch_t*)jcc_astAllocStmt(ctx, JCC_NODE_STMT_SWITCH, tok, sizeof(jx_cc_ast_stmt_switch_t));
 	if (!node) {
 		return NULL;
@@ -1299,6 +1327,13 @@ static jx_cc_ast_stmt_t* jcc_astAllocStmtFor(jx_cc_context_t* ctx, jx_cc_label_t
 		return NULL;
 	}
 
+	if (condExpr && !jcc_astAddType(ctx, &condExpr->super)) {
+		return NULL;
+	}
+	if (incExpr && !jcc_astAddType(ctx, &incExpr->super)) {
+		return NULL;
+	}
+
 	jx_cc_ast_stmt_for_t* node = (jx_cc_ast_stmt_for_t*)jcc_astAllocStmt(ctx, JCC_NODE_STMT_FOR, tok, sizeof(jx_cc_ast_stmt_for_t));
 	if (!node) {
 		return NULL;
@@ -1318,6 +1353,10 @@ static jx_cc_ast_stmt_t* jcc_astAllocStmtFor(jx_cc_context_t* ctx, jx_cc_label_t
 static jx_cc_ast_stmt_t* jcc_astAllocStmtDo(jx_cc_context_t* ctx, jx_cc_label_t brkLbl, jx_cc_label_t continueLbl, jx_cc_label_t bodyLbl, jx_cc_ast_expr_t* condExpr, jx_cc_ast_stmt_t* bodyStmt, jx_cc_token_t* tok)
 {
 	if (!bodyStmt || !condExpr) {
+		return NULL;
+	}
+
+	if (!jcc_astAddType(ctx, &condExpr->super)) {
 		return NULL;
 	}
 
@@ -1384,6 +1423,10 @@ static jx_cc_ast_stmt_t* jcc_astAllocStmtLabel(jx_cc_context_t* ctx, const char*
 static jx_cc_ast_stmt_t* jcc_astAllocStmtExpr(jx_cc_context_t* ctx, jx_cc_ast_expr_t* expr, jx_cc_token_t* tok)
 {
 	if (!expr) {
+		return NULL;
+	}
+
+	if (!jcc_astAddType(ctx, &expr->super)) {
 		return NULL;
 	}
 
@@ -4671,6 +4714,11 @@ static int64_t jcc_astEvalConstExpression2(jx_cc_context_t* ctx, jcc_translation
 		jx_cc_ast_expr_member_t* memberNode = (jx_cc_ast_expr_member_t*)node;
 		return jcc_astEvalRValue(ctx, tu, memberNode->m_Expr, label, err) + memberNode->m_Member->m_Offset;
 	} break;
+	case JCC_NODE_EXPR_GET_ELEMENT_PTR: {
+		jx_cc_ast_expr_get_element_ptr_t* gepNode = (jx_cc_ast_expr_get_element_ptr_t*)node;
+		int64_t index = jcc_astEvalConstExpression(ctx, tu, gepNode->m_ExprIndex, err);
+		return jcc_astEvalRValue(ctx, tu, gepNode->m_ExprPtr, label, err) + index * node->m_Type->m_BaseType->m_Size;
+	} break;
 	case JCC_NODE_VARIABLE:
 		if (!label) {
 			jcc_logError(ctx, &node->super.m_Token->m_Loc, "Not a compile-time constant");
@@ -4780,9 +4828,15 @@ static bool jcc_astIsConstExpression(jx_cc_context_t* ctx, jcc_translation_unit_
 	case JCC_NODE_EXPR_NEG:
 	case JCC_NODE_EXPR_NOT:
 	case JCC_NODE_EXPR_BITWISE_NOT:
-	case JCC_NODE_EXPR_CAST: {
+	case JCC_NODE_EXPR_CAST: 
+	case JCC_NODE_EXPR_ADDR:
+	case JCC_NODE_EXPR_DEREF: {
 		jx_cc_ast_expr_unary_t* unaryNode = (jx_cc_ast_expr_unary_t*)node;
 		return jcc_astIsConstExpression(ctx, tu, unaryNode->m_Expr);
+	} break;
+	case JCC_NODE_EXPR_MEMBER: {
+		jx_cc_ast_expr_member_t* memberNode = (jx_cc_ast_expr_member_t*)node;
+		return jcc_astIsConstExpression(ctx, tu, memberNode->m_Expr);
 	} break;
 	case JCC_NODE_NUMBER:
 		return true;
@@ -5714,6 +5768,10 @@ static jx_cc_type_t* jcc_parseStructDeclaration(jx_cc_context_t* ctx, jcc_transl
 			mem = mem->m_Next;
 		}
 
+		if (slotOffset != 0) {
+			byteOffset += slotSize / 8;
+		}
+
 		ty->m_Size = jcc_alignTo(byteOffset, ty->m_Alignment);
 #else
 		// Assign offsets within the struct to members.
@@ -6034,20 +6092,20 @@ static jx_cc_ast_expr_t* jcc_parseFuncCall(jx_cc_context_t* ctx, jcc_translation
 		return NULL;
 	}
 	
-	bool first = true;
+	uint32_t argID = 0;
 	while (!jcc_tokExpect(&tok, JCC_TOKEN_CLOSE_PAREN)) {
-		if (!first) {
+		if (argID) {
 			if (!jcc_tokExpect(&tok, JCC_TOKEN_COMMA)) {
 				jcc_logError(ctx, &tok->m_Loc, "Expected ','");
 				jx_array_free(argsArr);
 				return NULL;
 			}
 		}
-		first = false;
+		++argID;
 		
 		jx_cc_ast_expr_t* arg = jcc_parseAssignment(ctx, tu, &tok);
 		if (!arg) {
-			jcc_logError(ctx, &tok->m_Loc, "Failed to parse function call argument.");
+			jcc_logError(ctx, &tok->m_Loc, "Failed to parse function call argument %u.", argID);
 			jx_array_free(argsArr);
 			return NULL;
 		}
@@ -7002,7 +7060,36 @@ static bool jcc_typeIsSame(const jx_cc_type_t* t1, const jx_cc_type_t* t2)
 		return jcc_typeIsSame(t1->m_BaseType, t2->m_BaseType);
 	}
 
-	return t1->m_Kind == t2->m_Kind;
+	if (t1->m_Kind != t2->m_Kind) {
+		return false;
+	}
+
+	if (t1->m_Kind == JCC_TYPE_FUNC) {
+		// TODO: Check arguments
+		return false;
+	} else if (t1->m_Kind == JCC_TYPE_STRUCT || t1->m_Kind == JCC_TYPE_UNION) {
+		// Check members
+		if (t1->m_Size != t2->m_Size) {
+			return false;
+		}
+
+		jx_cc_struct_member_t* t1Mem = t1->m_StructMembers;
+		jx_cc_struct_member_t* t2Mem = t2->m_StructMembers;
+		while (t1Mem && t2Mem) {
+			if (t1Mem->m_GEPIndex != t2Mem->m_GEPIndex || t1Mem->m_Offset != t2Mem->m_Offset) {
+				return false;
+			}
+
+			t1Mem = t1Mem->m_Next;
+			t2Mem = t2Mem->m_Next;
+		}
+
+		return t1Mem == t2Mem;
+	} else if (t1->m_Kind == JCC_TYPE_ARRAY) {
+		return false;
+	}
+
+	return true;
 }
 
 static jx_cc_type_t* jcc_typeCopy(jx_cc_context_t* ctx, const jx_cc_type_t* ty)
@@ -7447,81 +7534,18 @@ static bool jcc_astAddType(jx_cc_context_t* ctx, jx_cc_ast_node_t* node)
 		}
 	} break;
 	case JCC_NODE_STMT_IF: {
-		jx_cc_ast_stmt_if_t* ifNode = (jx_cc_ast_stmt_if_t*)node;
-		if (!jcc_astAddType(ctx, &ifNode->m_CondExpr->super)) {
-			return false;
-		}
-		if (!jcc_astAddType(ctx, &ifNode->m_ThenStmt->super)) {
-			return false;
-		}
-		if (ifNode->m_ElseStmt && !jcc_astAddType(ctx, &ifNode->m_ElseStmt->super)) {
-			return false;
-		}
 	} break;
 	case JCC_NODE_STMT_FOR: {
-		jx_cc_ast_stmt_for_t* forNode = (jx_cc_ast_stmt_for_t*)node;
-		if (forNode->m_InitStmt && !jcc_astAddType(ctx, &forNode->m_InitStmt->super)) {
-			return false;
-		}
-		if (forNode->m_CondExpr && !jcc_astAddType(ctx, &forNode->m_CondExpr->super)) {
-			return false;
-		}
-		if (forNode->m_IncExpr && !jcc_astAddType(ctx, &forNode->m_IncExpr->super)) {
-			return false;
-		}
-		if (!jcc_astAddType(ctx, &forNode->m_BodyStmt->super)) {
-			return false;
-		}
 	} break;
 	case JCC_NODE_STMT_DO: {
-		jx_cc_ast_stmt_do_t* doNode = (jx_cc_ast_stmt_do_t*)node;
-		if (!jcc_astAddType(ctx, &doNode->m_CondExpr->super)) {
-			return false;
-		}
-		if (!jcc_astAddType(ctx, &doNode->m_BodyStmt->super)) {
-			return false;
-		}
 	} break;
 	case JCC_NODE_STMT_SWITCH: {
-		jx_cc_ast_stmt_switch_t* switchNode = (jx_cc_ast_stmt_switch_t*)node;
-		if (!jcc_astAddType(ctx, &switchNode->m_CondExpr->super)) {
-			return false;
-		}
-		if (!jcc_astAddType(ctx, &switchNode->m_BodyStmt->super)) {
-			return false;
-		}
-		if (!jcc_astAddType(ctx, &switchNode->m_CaseListHead->super.super)) {
-			return false;
-		}
-		if (switchNode->m_DefaultCase) {
-			if (!jcc_astAddType(ctx, &switchNode->m_DefaultCase->super.super)) {
-				return false;
-			}
-		}
 	} break;
 	case JCC_NODE_STMT_CASE: {
-		jx_cc_ast_stmt_case_t* caseNode = (jx_cc_ast_stmt_case_t*)node;
-		if (!jcc_astAddType(ctx, &caseNode->m_BodyStmt->super)) {
-			return false;
-		}
-		if (caseNode->m_NextCase != NULL && !jcc_astAddType(ctx, &caseNode->m_NextCase->super.super)) {
-			return false;
-		}
 	} break;
 	case JCC_NODE_STMT_BLOCK: {
-		jx_cc_ast_stmt_block_t* blockNode = (jx_cc_ast_stmt_block_t*)node;
-		const uint32_t numChildren = blockNode->m_NumChildren;
-		for (uint32_t iChild = 0; iChild < numChildren; ++iChild) {
-			if (!jcc_astAddType(ctx, (jx_cc_ast_node_t*)blockNode->m_Children[iChild])) {
-				return false;
-			}
-		}
 	} break;
 	case JCC_NODE_STMT_LABEL: {
-		jx_cc_ast_stmt_label_t* lblNode = (jx_cc_ast_stmt_label_t*)node;
-		if (!jcc_astAddType(ctx, (jx_cc_ast_node_t*)lblNode->m_Stmt)) {
-			return false;
-		}
 	} break;
 	case JCC_NODE_STMT_GOTO:
 	case JCC_NODE_EXPR_CAST:
@@ -8772,8 +8796,6 @@ typedef struct jcc_macro_param_t jcc_macro_param_t;
 typedef struct jcc_macro_arg_t jcc_macro_arg_t;
 typedef struct jcc_macro_t jcc_macro_t;
 
-typedef jx_cc_token_t* (*jccMacroHandlerCallback)(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok);
-
 typedef struct jx_cc_hideset_t
 {
 	jx_cc_hideset_t* m_Next;
@@ -8986,6 +9008,8 @@ static jx_cc_token_t* jcc_preprocess(jx_cc_context_t* ctx, jcc_translation_unit_
 			if (jcc_tokIs(tok->m_Next, JCC_TOKEN_ONCE)) {
 				jx_hashmapSet(tu->m_PragmaOnceMap, &(jcc_s2s_map_item_t){ .m_Key = tok->m_Loc.m_Filename, .m_Value = NULL });
 				tok = jcc_ppSkipLine(ctx, tu, tok->m_Next->m_Next);
+			} else if (jcc_tokIs(tok->m_Next, JCC_TOKEN_WARNING)) {
+				tok = jcc_ppSkipLine(ctx, tu, tok->m_Next->m_Next);
 			} else {
 				JX_NOT_IMPLEMENTED();
 			}
@@ -9020,6 +9044,7 @@ static jx_cc_token_t* jcc_preprocess(jx_cc_context_t* ctx, jcc_translation_unit_
 				|| jcc_tokIs(tok, JCC_TOKEN_ONCE)
 				|| jcc_tokIs(tok, JCC_TOKEN_ERROR)
 				|| jcc_tokIs(tok, JCC_TOKEN_DEFINED)
+				|| jcc_tokIs(tok, JCC_TOKEN_WARNING)
 				;
 			if (isPreproc) {
 				tok->m_Kind = JCC_TOKEN_IDENTIFIER;
@@ -10070,6 +10095,24 @@ static void jcc_ppDefineMacro(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, 
 	jx_cc_token_t* tok = jcc_tokenizeString(ctx, tu, str, jx_strlen(str));
 	jcc_ppAddMacro(ctx, tu, name, true, tok);
 	JX_FREE(ctx->m_Allocator, str);
+}
+
+static void jcc_ppDefineDynamicMacro(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* name, jccMacroHandlerCallback cb)
+{
+	jcc_macro_t* macro = jcc_ppAddMacro(ctx, tu, name, true, NULL);
+	macro->m_Callback = cb;
+}
+
+jx_cc_token_t* jcc_ppDynMacro_Line(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_token_t* tok)
+{
+	while (tok->m_Origin) {
+		tok = tok->m_Origin;
+	}
+
+	int i = tok->m_Loc.m_LineNum;// + tok->file->line_delta;
+	char str[256];
+	const int32_t len = jx_snprintf(str, JX_COUNTOF(str), "%d", i);
+	return jcc_allocToken(ctx, tu, JCC_TOKEN_PREPROC_NUMBER, str, str + len);
 }
 
 static jx_cc_hideset_t* jcc_hidesetCreate(jx_cc_context_t* ctx, const char* name)
