@@ -539,7 +539,7 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCondJmp, func);
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCFG, func);
 
-#if 1
+#if 0
 		{
 			jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
 			jx_strbuf_printf(sb, "%s pre-instrCombine\n", func->m_Name);
@@ -560,9 +560,9 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 			++numIter;
 		}
 
-#if 1
+#if 0
 		{
-			jx_mir_funcRenumberVirtualRegs(ctx, func);
+//			jx_mir_funcRenumberVirtualRegs(ctx, func);
 			jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
 			jx_strbuf_printf(sb, "%s pre-RA\n", func->m_Name);
 			jx_mir_funcPrint(ctx, func, sb);
@@ -588,12 +588,9 @@ void jx_mir_funcEnd(jx_mir_context_t* ctx, jx_mir_function_t* func)
 #endif
 
 		jmir_funcPassApply(ctx, ctx->m_FuncPass_simplifyCondJmp, func);
-		
-		changed = true;
-		while (changed) {
-			changed = jmir_funcPassApply(ctx, ctx->m_FuncPass_peephole, func);
-//			changed = jmir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func) || changed;
-		}
+	
+		// NOTE: Don't run any other pass which might add 
+		// new virtual registers to the function. 
 	}
 
 	// Store all callee-saved registers used by the function on the stack.

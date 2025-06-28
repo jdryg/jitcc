@@ -393,8 +393,10 @@ static bool jmirgen_funcBuild(jx_mirgen_context_t* ctx, const char* namePrefix, 
 
 	const char* funcName = jx_ir_funcToValue(irFunc)->m_Name;
 	if (!jx_strncmp(funcName, "jir.", 4)) {
+		TracyCZoneEnd(tracyCtx);
 		return true;
 	} else if (!jx_strcmp(funcName, "__va_start")) {
+		TracyCZoneEnd(tracyCtx);
 		return true;
 	}
 
@@ -1047,7 +1049,16 @@ static jx_mir_operand_t* jmirgen_instrBuild_store(jx_mirgen_context_t* ctx, jx_i
 		jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmpReg, srcOperand));
 		srcOperand = tmpReg;
 	} else if (srcOperand->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
-		JX_NOT_IMPLEMENTED();
+		jx_mir_global_variable_t* gv = jx_mir_getGlobalVarByName(ctx->m_MIRCtx, srcOperand->u.m_ExternalSymbol.m_Name);
+		JX_CHECK(gv, "Global variable not found");
+		const bool hasData = jx_array_sizeu(gv->m_DataArr) != 0;
+		jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, JMIR_TYPE_PTR);
+		if (hasData) {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_lea(ctx->m_MIRCtx, tmpReg, srcOperand));
+		} else {
+			jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_mov(ctx->m_MIRCtx, tmpReg, srcOperand));
+		}
+		srcOperand = tmpReg;
 	} else if (srcOperand->m_Kind == JMIR_OPERAND_MEMORY_REF) {
 		jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, regType);
 		if (regType == JMIR_TYPE_F32) {
@@ -2331,7 +2342,13 @@ static bool jmirgen_processPhis(jx_mirgen_context_t* ctx)
 			} else if (jx_mir_opIsStackObj(srcOp)) {
 				movInstr = jx_mir_lea(ctx->m_MIRCtx, dstReg, srcOp);
 			} else if (srcOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
-				JX_NOT_IMPLEMENTED();
+				jx_mir_global_variable_t* gv = jx_mir_getGlobalVarByName(ctx->m_MIRCtx, srcOp->u.m_ExternalSymbol.m_Name);
+				const bool hasData = !gv || jx_array_sizeu(gv->m_DataArr) != 0;
+				if (hasData) {
+					movInstr = jx_mir_lea(ctx->m_MIRCtx, dstReg, srcOp);
+				} else {
+					movInstr = jx_mir_mov(ctx->m_MIRCtx, dstReg, srcOp);
+				}
 			} else {
 				JX_CHECK(false, "TODO?");
 			}

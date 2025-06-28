@@ -219,6 +219,7 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 											&& movInstr->m_Operands[0]->m_Kind == JMIR_OPERAND_REGISTER
 											&& jx_mir_regEqual(movInstr->m_Operands[0]->u.m_Reg, cmpInstr->m_Operands[1]->u.m_Reg)
 											&& movInstr->m_Operands[1]->m_Kind == JMIR_OPERAND_CONST
+											&& jx64_immFitsIn32Bits(movInstr->m_Operands[1]->u.m_ConstI64)
 											;
 										if (isMovRegConst) {
 											jx_mir_bbInsertInstrBefore(ctx, bb, cmpInstr, jx_mir_cmp(ctx, cmpInstr->m_Operands[0], movInstr->m_Operands[1]));
@@ -240,10 +241,10 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 									jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_jcc(ctx, setCC, instr->m_Operands[0]));
 
 									jx_mir_bbRemoveInstr(ctx, bb, testInstr);
-									jx_mir_bbRemoveInstr(ctx, bb, setccInstr);
+//									jx_mir_bbRemoveInstr(ctx, bb, setccInstr);
 									jx_mir_bbRemoveInstr(ctx, bb, instr);
 									jx_mir_instrFree(ctx, testInstr);
-									jx_mir_instrFree(ctx, setccInstr);
+//									jx_mir_instrFree(ctx, setccInstr);
 									jx_mir_instrFree(ctx, instr);
 
 									++numJumpsSimplified;
@@ -263,8 +264,9 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 					if (isCmpWithZero && cmpInstr->m_Prev && cmpInstr->m_Prev->m_OpCode == JMIR_OP_AND) {
 						jx_mir_instruction_t* andInstr = cmpInstr->m_Prev;
 						jx_mir_operand_t* and_op0 = andInstr->m_Operands[0];
+						jx_mir_operand_t* and_op1 = andInstr->m_Operands[1];
 
-						if (and_op0->m_Kind == JMIR_OPERAND_REGISTER && !jx_bitsetIsBitSet(&bb->m_LiveOutSet, jx_mir_funcMapRegToBitsetID(ctx, func, and_op0->u.m_Reg))) {
+						if (and_op0->m_Kind == JMIR_OPERAND_REGISTER && (and_op1->m_Kind == JMIR_OPERAND_CONST || and_op1->m_Kind == JMIR_OPERAND_REGISTER) && !jx_bitsetIsBitSet(&bb->m_LiveOutSet, jx_mir_funcMapRegToBitsetID(ctx, func, and_op0->u.m_Reg))) {
 							andInstr->m_OpCode = JMIR_OP_TEST;
 						}
 
