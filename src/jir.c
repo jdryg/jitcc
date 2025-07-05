@@ -2762,6 +2762,34 @@ void jx_ir_valueAddUse(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_use_t* us
 	}
 }
 
+#if 1
+void jx_ir_valueKillUse(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_use_t* use)
+{
+	JX_UNUSED(ctx);
+
+	JX_CHECK(use->m_Value == val, "Invalid use!");
+
+	jx_ir_use_t* next = use->m_Next;
+	jx_ir_use_t* prev = use->m_Prev;
+	if (prev) {
+		prev->m_Next = next;
+	}
+	if (next) {
+		next->m_Prev = prev;
+	}
+
+	if (use == val->m_UsesListHead) {
+		val->m_UsesListHead = next;
+	}
+	if (use == val->m_UsesListTail) {
+		val->m_UsesListTail = prev;
+	}
+
+	use->m_Value = NULL;
+	use->m_Next = NULL;
+	use->m_Prev = NULL;
+}
+#else
 void jx_ir_valueKillUse(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_use_t* use)
 {
 	JX_UNUSED(ctx);
@@ -2799,6 +2827,7 @@ void jx_ir_valueKillUse(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_use_t* u
 
 	JX_CHECK(found, "Use not found in value's use list");
 }
+#endif
 
 void jx_ir_valueReplaceAllUsesWith(jx_ir_context_t* ctx, jx_ir_value_t* val, jx_ir_value_t* newVal)
 {
