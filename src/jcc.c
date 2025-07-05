@@ -355,6 +355,7 @@ static bool jx_cc_typeIsInteger(const jx_cc_type_t* ty);
 static bool jx_cc_typeIsNumeric(const jx_cc_type_t* ty);
 static bool jcc_typeIsCompatible(const jx_cc_type_t* t1, const jx_cc_type_t* t2);
 static bool jcc_typeIsSame(const jx_cc_type_t* t1, const jx_cc_type_t* t2);
+static void jcc_typePrint(jx_cc_context_t* ctx, jx_cc_type_t* ty, bool isPtr, jx_string_buffer_t* sb);
 
 static jcc_initializer_t* jcc_allocInitializer(jx_cc_context_t* ctx, jx_cc_type_t* ty, bool is_flexible);
 static jx_cc_object_t* jcc_tuVarAlloc(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, const char* name, jx_cc_type_t* ty);
@@ -613,9 +614,12 @@ jx_cc_translation_unit_t* jx_cc_compileFile(jx_cc_context_t* ctx, jx_file_base_d
 		jcc_ppDefineMacro(ctx, tu, "__int16", "short");
 		jcc_ppDefineMacro(ctx, tu, "__int32", "int");
 		jcc_ppDefineMacro(ctx, tu, "__int64", "long long");
+
+		// SQL Specific macros
 		jcc_ppDefineMacro(ctx, tu, "SQLITE_THREADSAFE", "0");
 		jcc_ppDefineMacro(ctx, tu, "SQLITE_DISABLE_INTRINSIC", "1");
 		jcc_ppDefineMacro(ctx, tu, "SQLITE_OMIT_SEH", "1");
+		jcc_ppDefineMacro(ctx, tu, "SQLITE_MUTEX_NOOP", "1");
 	}
 
 	jx_cc_token_t* tok = jcc_tokenizeString(ctx, tu, source, sourceLen);
@@ -1645,6 +1649,12 @@ static jx_cc_object_t* jcc_tuVarAllocAnonGlobal(jx_cc_context_t* ctx, jcc_transl
 
 static void jcc_tuAppendGlobal(jx_cc_context_t* ctx, jcc_translation_unit_t* tu, jx_cc_object_t* var)
 {
+	if ((var->m_Flags & JCC_OBJECT_FLAGS_IS_STATIC_Msk) != 0) {
+		char staticName[256];
+		jx_snprintf(staticName, JX_COUNTOF(staticName), "%s:%s", tu->m_CurFilename, var->m_Name);
+		var->m_Name = jx_strtable_insert(ctx->m_StringTable, staticName, UINT32_MAX);
+	}
+
 	if (!tu->m_GlobalsHead) {
 		JX_CHECK(!tu->m_GlobalsTail, "Globals linked list in invalid state");
 		tu->m_GlobalsHead = var;
@@ -5629,10 +5639,12 @@ static jx_cc_type_t* jcc_parseStructUnionDeclaration(jx_cc_context_t* ctx, jcc_t
 
 	jx_cc_type_t* ty = jcc_typeAllocStruct(ctx);
 	if (!ty) {
+		jcc_logError(ctx, &tok->m_Loc, "Failed to allocate new struct type.");
 		return NULL;
 	}
 
 	if (!jcc_parseAttributes(ctx, tu, &tok, ty)) {
+		jcc_logError(ctx, &tok->m_Loc, "Failed to parse struct/union attributes.");
 		return NULL;
 	}
 	
@@ -5654,15 +5666,18 @@ static jx_cc_type_t* jcc_parseStructUnionDeclaration(jx_cc_context_t* ctx, jcc_t
 		jcc_tuScopeAddTag(tu, tag, ty);
 	} else {
 		if (!jcc_tokExpect(&tok, JCC_TOKEN_OPEN_CURLY_BRACKET)) {
+			jcc_logError(ctx, &tok->m_Loc, "Expecting '{' after struct/union.");
 			return NULL;
 		}
 
 		// Construct a struct object.
 		if (!jcc_parseStructMembers(ctx, tu, &tok, ty)) {
+			jcc_logError(ctx, &tok->m_Loc, "Failed to parse struct/union members.");
 			return NULL;
 		}
 
 		if (!jcc_parseAttributes(ctx, tu, &tok, ty)) {
+			jcc_logError(ctx, &tok->m_Loc, "Failed to parse struct/union attributes after struct declaration.");
 			return NULL;
 		}
 
@@ -5671,6 +5686,10 @@ static jx_cc_type_t* jcc_parseStructUnionDeclaration(jx_cc_context_t* ctx, jcc_t
 			// Otherwise, register the struct type.
 			jcc_scope_entry_t* entry = jx_hashmapGet(tu->m_Scope->m_Tags, &(jcc_scope_entry_t){.m_Key = tag->m_String, .m_KeyLen = tag->m_Length});
 			if (entry) {
+				jx_cc_token_t* prevDeclName = ((jx_cc_type_t*)entry->m_Value)->m_DeclName;
+				if (prevDeclName && !ty->m_DeclName) {
+					ty->m_DeclName = prevDeclName;
+				}
 				jx_memcpy(entry->m_Value, ty, sizeof(jx_cc_type_t));
 				*tokenListPtr = tok;
 				return (jx_cc_type_t*)entry->m_Value;
@@ -5694,6 +5713,7 @@ static jx_cc_type_t* jcc_parseStructDeclaration(jx_cc_context_t* ctx, jcc_transl
 
 	jx_cc_type_t* ty = jcc_parseStructUnionDeclaration(ctx, tu, &tok);
 	if (!ty) {
+		jcc_logError(ctx, &tok->m_Loc, "Failed to parse struct declaration.");
 		return NULL;
 	}
 
@@ -5708,6 +5728,7 @@ static jx_cc_type_t* jcc_parseStructDeclaration(jx_cc_context_t* ctx, jcc_transl
 
 		jx_cc_struct_member_t* mem = ty->m_StructMembers;
 		while (mem) {
+			JX_CHECK(mem->m_Type->m_Size > 0 || (!mem->m_Next && mem->m_Type->m_Size >= 0 && (ty->m_Flags & JCC_TYPE_FLAGS_IS_FLEXIBLE_Msk) != 0), "!!!");
 			if (mem->m_IsBitfield) {
 				if (mem->m_BitWidth == 0) {
 					// Zero-width anonymous bitfield has a special meaning.
@@ -5722,7 +5743,11 @@ static jx_cc_type_t* jcc_parseStructDeclaration(jx_cc_context_t* ctx, jcc_transl
 						// Otherwise, skip the remaining bits in the current slot,
 						// increase the struct size by the slot size and allocate
 						// a new slot large enough to hold the current bitfield.
+#if 0
 						uint32_t bitWidth = jx_max_u32(jx_nextPowerOf2_u32(mem->m_BitWidth), 8);
+#else
+						uint32_t bitWidth = mem->m_Type->m_Size * 8;
+#endif
 
 						gepIndex += slotSize != 0 ? 1 : 0;
 						byteOffset += slotSize / 8;
@@ -5765,6 +5790,11 @@ static jx_cc_type_t* jcc_parseStructDeclaration(jx_cc_context_t* ctx, jcc_transl
 				gepIndex++;
 			}
 
+			const bool isStructPacked = (ty->m_Flags & JCC_TYPE_FLAGS_IS_PACKED_Msk) != 0;
+			if (!isStructPacked && ty->m_Alignment < mem->m_Alignment) {
+				ty->m_Alignment = mem->m_Alignment;
+			}
+
 			mem = mem->m_Next;
 		}
 
@@ -5773,6 +5803,17 @@ static jx_cc_type_t* jcc_parseStructDeclaration(jx_cc_context_t* ctx, jcc_transl
 		}
 
 		ty->m_Size = jcc_alignTo(byteOffset, ty->m_Alignment);
+
+#if 0
+		// DEBUG: Dump struct
+		{
+			jx_string_buffer_t* sb = jx_strbuf_create(ctx->m_Allocator);
+			jcc_typePrint(ctx, ty, false, sb);
+			jx_strbuf_nullTerminate(sb);
+			JX_SYS_LOG_INFO(NULL, "\n%s\n", jx_strbuf_getString(sb, NULL));
+			jx_strbuf_destroy(sb);
+		}
+#endif
 #else
 		// Assign offsets within the struct to members.
 		int bits = 0;
@@ -7090,6 +7131,137 @@ static bool jcc_typeIsSame(const jx_cc_type_t* t1, const jx_cc_type_t* t2)
 	}
 
 	return true;
+}
+
+static void jcc_typePrint(jx_cc_context_t* ctx, jx_cc_type_t* ty, bool isPtr, jx_string_buffer_t* sb)
+{
+	switch (ty->m_Kind) {
+	case JCC_TYPE_VOID: {
+		jx_strbuf_printf(sb, "void");
+		if (isPtr) {
+			jx_strbuf_pushCStr(sb, "*");
+		}
+	} break;
+	case JCC_TYPE_BOOL: {
+		JX_NOT_IMPLEMENTED();
+	} break;
+	case JCC_TYPE_CHAR: {
+		jx_strbuf_printf(sb, "%s char", (ty->m_Flags & JCC_TYPE_FLAGS_IS_UNSIGNED_Msk) != 0 ? "unsigned" : "signed");
+		if (isPtr) {
+			jx_strbuf_pushCStr(sb, "*");
+		}
+	} break;
+	case JCC_TYPE_SHORT: {
+		jx_strbuf_printf(sb, "%s short", (ty->m_Flags & JCC_TYPE_FLAGS_IS_UNSIGNED_Msk) != 0 ? "unsigned" : "signed");
+		if (isPtr) {
+			jx_strbuf_pushCStr(sb, "*");
+		}
+	} break;
+	case JCC_TYPE_INT: {
+		jx_strbuf_printf(sb, "%s int", (ty->m_Flags & JCC_TYPE_FLAGS_IS_UNSIGNED_Msk) != 0 ? "unsigned" : "signed");
+		if (isPtr) {
+			jx_strbuf_pushCStr(sb, "*");
+		}
+	} break;
+	case JCC_TYPE_LONG: {
+		jx_strbuf_printf(sb, "%s long long", (ty->m_Flags & JCC_TYPE_FLAGS_IS_UNSIGNED_Msk) != 0 ? "unsigned" : "signed");
+		if (isPtr) {
+			jx_strbuf_pushCStr(sb, "*");
+		}
+	} break;
+	case JCC_TYPE_FLOAT: {
+		jx_strbuf_printf(sb, "double");
+		if (isPtr) {
+			jx_strbuf_pushCStr(sb, "*");
+		}
+	} break;
+	case JCC_TYPE_DOUBLE: {
+		jx_strbuf_printf(sb, "double");
+		if (isPtr) {
+			jx_strbuf_pushCStr(sb, "*");
+		}
+	} break;
+	case JCC_TYPE_ENUM: {
+		jx_strbuf_printf(sb, "enum %s", ty->m_DeclName->m_String);
+		if (isPtr) {
+			jx_strbuf_pushCStr(sb, "*");
+		}
+	} break;
+	case JCC_TYPE_PTR: {
+		jcc_typePrint(ctx, ty->m_BaseType, true, sb);
+	} break;
+	case JCC_TYPE_FUNC: {
+		jx_strbuf_printf(sb, "func"); // TODO: 
+		if (isPtr) {
+			jx_strbuf_pushCStr(sb, "*");
+		}
+	} break;
+	case JCC_TYPE_ARRAY: {
+		jcc_typePrint(ctx, ty->m_BaseType, false, sb);
+		jx_strbuf_printf(sb, "[%d]", ty->m_ArrayLen);
+	} break;
+	case JCC_TYPE_STRUCT: {
+		if (isPtr) {
+			if (ty->m_DeclName) {
+				jx_strbuf_printf(sb, "%s*", ty->m_DeclName->m_String);
+			} else {
+				jx_strbuf_printf(sb, "struct_%p*", ty);
+			}
+		} else {
+			if (ty->m_DeclName) {
+				jx_strbuf_printf(sb, "struct %s {\n", ty->m_DeclName->m_String);
+			} else {
+				jx_strbuf_printf(sb, "struct struct_%p {\n", ty);
+			}
+
+			jx_cc_struct_member_t* mem = ty->m_StructMembers;
+			while (mem) {
+				jcc_typePrint(ctx, mem->m_Type, false, sb);
+				jx_strbuf_pushCStr(sb, " ");
+				if (mem->m_Name) {
+					jx_strbuf_printf(sb, "%s", mem->m_Name->m_String);
+				}
+				if (mem->m_IsBitfield) {
+					jx_strbuf_printf(sb, ": %u", mem->m_BitWidth);
+				}
+				jx_strbuf_printf(sb, "; %u %u %u %u\n", mem->m_Offset, mem->m_Alignment, mem->m_BitOffset, mem->m_GEPIndex);
+
+				mem = mem->m_Next;
+			}
+
+			jx_strbuf_printf(sb, "} size: %u, align: %u", ty->m_Size, ty->m_Alignment);
+		}
+	} break;
+	case JCC_TYPE_UNION: {
+		if (isPtr) {
+			if (ty->m_DeclName) {
+				jx_strbuf_printf(sb, "%s*\n", ty->m_DeclName->m_String);
+			} else {
+				jx_strbuf_printf(sb, "union_%p*\n", ty);
+			}
+		} else {
+			if (ty->m_DeclName) {
+				jx_strbuf_printf(sb, "union %s\n", ty->m_DeclName->m_String);
+			} else {
+				jx_strbuf_printf(sb, "union union_%p\n", ty);
+			}
+
+			jx_cc_struct_member_t* mem = ty->m_StructMembers;
+			while (mem) {
+				jcc_typePrint(ctx, mem->m_Type, false, sb);
+				jx_strbuf_pushCStr(sb, " ");
+				if (mem->m_Name) {
+					jx_strbuf_printf(sb, "%s", mem->m_Name);
+				}
+				jx_strbuf_pushCStr(sb, ";\n");
+
+				mem = mem->m_Next;
+			}
+
+			jx_strbuf_pushCStr(sb, "}");
+		}
+	} break;
+	}
 }
 
 static jx_cc_type_t* jcc_typeCopy(jx_cc_context_t* ctx, const jx_cc_type_t* ty)
