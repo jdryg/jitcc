@@ -320,11 +320,13 @@ void jx_mir_destroyContext(jx_mir_context_t* ctx)
 
 void jx_mir_print(jx_mir_context_t* ctx, jx_string_buffer_t* sb)
 {
+	TracyCZoneN(tracyCtx, "MIR: Print", 1);
 	const uint32_t numFunctions = (uint32_t)jx_array_sizeu(ctx->m_FuncArr);
 	for (uint32_t iFunc = 0; iFunc < numFunctions; ++iFunc) {
 		jx_mir_funcPrint(ctx, ctx->m_FuncArr[iFunc], sb);
 		jx_strbuf_pushCStr(sb, "\n");
 	}
+	TracyCZoneEnd(tracyCtx);
 }
 
 uint32_t jx_mir_getNumGlobalVars(jx_mir_context_t* ctx)
@@ -375,6 +377,15 @@ jx_mir_function_t* jx_mir_getFunctionByName(jx_mir_context_t* ctx, const char* n
 
 jx_mir_global_variable_t* jx_mir_globalVarBegin(jx_mir_context_t* ctx, const char* name, uint32_t alignment)
 {
+	jx_mir_global_variable_t* existingDecl = jx_mir_getGlobalVarByName(ctx, name);
+	if (existingDecl) {
+		return existingDecl->m_Alignment == alignment && jx_array_sizeu(existingDecl->m_DataArr) == 0
+			? existingDecl
+			: NULL
+			;
+	}
+
+//	JX_TRACE("mir: GlobalVar: %s", name);
 	jx_mir_global_variable_t* gv = (jx_mir_global_variable_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_mir_global_variable_t));
 	if (!gv) {
 		return NULL;
@@ -472,6 +483,15 @@ jx_mir_function_proto_t* jx_mir_funcProto(jx_mir_context_t* ctx, jx_mir_type_kin
 
 jx_mir_function_t* jx_mir_funcBegin(jx_mir_context_t* ctx, const char* name, jx_mir_function_proto_t* proto)
 {
+	jx_mir_function_t* existingDecl = jx_mir_getFunctionByName(ctx, name);
+	if (existingDecl) {
+		return existingDecl->m_Prototype == proto && existingDecl->m_BasicBlockListHead == NULL
+			? existingDecl
+			: NULL
+			;
+	}
+
+//	JX_TRACE("mir: Func: %s", name);
 	jx_mir_function_t* func = (jx_mir_function_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_mir_function_t));
 	if (!func) {
 		return NULL;
@@ -2492,6 +2512,11 @@ jx_mir_instruction_t* jx_mir_cqo(jx_mir_context_t* ctx)
 	return jmir_instrAlloc(ctx, JMIR_OP_CQO, 0, NULL);
 }
 
+jx_mir_instruction_t* jx_mir_int3(jx_mir_context_t* ctx)
+{
+	return jmir_instrAlloc(ctx, JMIR_OP_INT3, 0, NULL);
+}
+
 jx_mir_instruction_t* jx_mir_movss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	return jmir_instrAlloc2(ctx, JMIR_OP_MOVSS, dst, src);
@@ -3289,6 +3314,9 @@ static bool jmir_instrUpdateUseDefInfo(jx_mir_context_t* ctx, jx_mir_function_t*
 	case JMIR_OP_JMP: {
 		jx_mir_operand_t* src = instr->m_Operands[0];
 		JX_CHECK(src->m_Kind == JMIR_OPERAND_BASIC_BLOCK, "I don't know how to handle non-basic block jump targets atm!");
+	} break;
+	case JMIR_OP_INT3: {
+		// No-op
 	} break;
 	default:
 		JX_CHECK(false, "Unknown mir opcode!");

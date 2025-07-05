@@ -83,6 +83,7 @@ static jx_mir_operand_t* jmirgen_getOperand(jx_mirgen_context_t* ctx, jx_ir_valu
 static jx_mir_operand_t* jmirgen_genMemSet(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
 static jx_mir_operand_t* jmirgen_genMemCpy(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
 static bool jmirgen_genVAStart(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
+static bool jmirgen_genDebugBreak(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr);
 static bool jmirgen_genMov(jx_mirgen_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 static jx_mir_operand_t* jmirgen_ensureOperandRegOrMem(jx_mirgen_context_t* ctx, jx_mir_operand_t* operand);
 static jx_mir_operand_t* jmirgen_ensureOperandReg(jx_mirgen_context_t* ctx, jx_mir_operand_t* operand);
@@ -255,7 +256,7 @@ static bool jmirgen_globalVarBuild(jx_mirgen_context_t* ctx, const char* namePre
 	const size_t alignment = jx_ir_typeGetAlignment(ptrType->m_BaseType);
 	jx_mir_global_variable_t* gv = jx_mir_globalVarBegin(ctx->m_MIRCtx, jx_ir_globalVarToValue(irGV)->m_Name, (uint32_t)alignment);
 	if (!gv) {
-		return false;
+		return jx_array_sizeu(irGV->super.super.m_OperandArr) == 0;
 	}
 
 	if (jx_array_sizeu(irGV->super.super.m_OperandArr)) {
@@ -304,11 +305,11 @@ static uint32_t jmirgen_globalVarInitializer(jx_mirgen_context_t* ctx, jx_mir_gl
 	} break;
 	case JIR_TYPE_POINTER: {
 		if ((init->super.super.m_Flags & JIR_VALUE_FLAGS_CONST_GLOBAL_VAL_PTR_Msk) != 0) {
-			jx_ir_global_value_t* irGV = (jx_ir_global_value_t*)init->u.m_I64;
+			jx_ir_global_value_t* irGV = init->u.m_GlobalVal.m_GlobalVal;
 			const char* symbolName = irGV->super.super.m_Name;
 			
-			const uint64_t placeholder = 0ull;
-			const uint32_t offset = jx_mir_globalVarAppendData(mirctx, gv, (const uint8_t*)&placeholder, sizeof(uint64_t));
+			const int64_t placeholder = init->u.m_GlobalVal.m_Offset;
+			const uint32_t offset = jx_mir_globalVarAppendData(mirctx, gv, (const uint8_t*)&placeholder, sizeof(int64_t));
 
 			jx_mir_globalVarAddRelocation(mirctx, gv, offset, symbolName);
 		} else {
@@ -398,6 +399,9 @@ static bool jmirgen_funcBuild(jx_mirgen_context_t* ctx, const char* namePrefix, 
 	} else if (!jx_strcmp(funcName, "__va_start")) {
 		TracyCZoneEnd(tracyCtx);
 		return true;
+	} else if (!jx_strcmp(funcName, "__debugbreak")) {
+		TracyCZoneEnd(tracyCtx);
+		return true;
 	}
 
 	jx_ir_type_function_t* irFuncType = jx_ir_funcGetType(irctx, irFunc);
@@ -473,7 +477,7 @@ static bool jmirgen_funcBuild(jx_mirgen_context_t* ctx, const char* namePrefix, 
 
 	TracyCZoneEnd(tracyCtx);
 
-	return func != NULL;
+	return func != NULL || irFunc->m_BasicBlockListHead == NULL;
 }
 
 static bool jmirgen_instrBuild(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr)
@@ -1322,6 +1326,10 @@ static jx_mir_operand_t* jmirgen_instrBuild_call(jx_mirgen_context_t* ctx, jx_ir
 			if (jmirgen_genVAStart(ctx, irInstr)) {
 				return NULL;
 			}
+		} else if (!jx_strcmp(funcName, "__debugbreak")) {
+			if (jmirgen_genDebugBreak(ctx, irInstr)) {
+				return NULL;
+			}
 		}
 	}
 
@@ -2130,6 +2138,12 @@ static bool jmirgen_genVAStart(jx_mirgen_context_t* ctx, jx_ir_instruction_t* ir
 	return true;
 }
 
+static bool jmirgen_genDebugBreak(jx_mirgen_context_t* ctx, jx_ir_instruction_t* irInstr)
+{
+	jx_mir_bbAppendInstr(ctx->m_MIRCtx, ctx->m_BasicBlock, jx_mir_int3(ctx->m_MIRCtx));
+	return true;
+}
+
 static bool jmirgen_genMov(jx_mirgen_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src)
 {
 	if (jx_mir_typeIsFloatingPoint(dst->m_Type)) {
@@ -2305,6 +2319,95 @@ static jx_mir_function_proto_t* jmirgen_funcTypeToProto(jx_mirgen_context_t* ctx
 	return funcProto;
 }
 
+#if 1
+// NOTE: Inserts temporaries to predecessors and a mov to dstReg in the phi's bb.
+// This creates too many temporaries and possibly redundant moves but it should work
+// in case of cyclic references without further analysis.
+// TODO: If it works with cyclic references (test/swap_pointers.c) see if I can 
+// do that only when a cycle exists.
+static bool jmirgen_processPhis(jx_mirgen_context_t* ctx)
+{
+	const uint32_t numPhiInstructions = (uint32_t)jx_array_sizeu(ctx->m_PhiInstrArr);
+	for (uint32_t iPhi = 0; iPhi < numPhiInstructions; ++iPhi) {
+		jx_ir_instruction_t* phiInstr = ctx->m_PhiInstrArr[iPhi];
+
+		jx_mir_operand_t* dstReg = jmirgen_getOperand(ctx, jx_ir_instrToValue(phiInstr));
+		jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(ctx->m_MIRCtx, ctx->m_Func, dstReg->m_Type);
+
+		const uint32_t numOperands = (uint32_t)jx_array_sizeu(phiInstr->super.m_OperandArr);
+		for (uint32_t iOperand = 0; iOperand < numOperands; iOperand += 2) {
+			jx_ir_value_t* irVal = phiInstr->super.m_OperandArr[iOperand + 0]->m_Value;
+			jx_ir_basic_block_t* irBB = jx_ir_valueToBasicBlock(phiInstr->super.m_OperandArr[iOperand + 1]->m_Value);
+
+			jx_mir_operand_t* srcOp = jmirgen_getOperand(ctx, irVal);
+			if (!srcOp) {
+				JX_CHECK(false, "Operand not found!");
+				return false;
+			}
+
+			jx_mir_basic_block_t* bb = jmirgen_getBasicBlock(ctx, irBB);
+			if (!bb) {
+				JX_CHECK(false, "Basic block not found!");
+				return false;
+			}
+
+			jx_mir_instruction_t* movInstr = NULL;
+			if (srcOp->m_Kind == JMIR_OPERAND_REGISTER || srcOp->m_Kind == JMIR_OPERAND_CONST || (srcOp->m_Kind == JMIR_OPERAND_MEMORY_REF && !jx_mir_opIsStackObj(srcOp))) {
+				if (dstReg->m_Type == JMIR_TYPE_F32) {
+					movInstr = jx_mir_movss(ctx->m_MIRCtx, tmpReg, srcOp);
+				} else if (dstReg->m_Type == JMIR_TYPE_F64) {
+					movInstr = jx_mir_movsd(ctx->m_MIRCtx, tmpReg, srcOp);
+				} else {
+					movInstr = jx_mir_mov(ctx->m_MIRCtx, tmpReg, srcOp);
+				}
+			} else if (jx_mir_opIsStackObj(srcOp)) {
+				movInstr = jx_mir_lea(ctx->m_MIRCtx, tmpReg, srcOp);
+			} else if (srcOp->m_Kind == JMIR_OPERAND_EXTERNAL_SYMBOL) {
+				jx_mir_global_variable_t* gv = jx_mir_getGlobalVarByName(ctx->m_MIRCtx, srcOp->u.m_ExternalSymbol.m_Name);
+				const bool hasData = !gv || jx_array_sizeu(gv->m_DataArr) != 0;
+				if (hasData) {
+					movInstr = jx_mir_lea(ctx->m_MIRCtx, tmpReg, srcOp);
+				} else {
+					movInstr = jx_mir_mov(ctx->m_MIRCtx, tmpReg, srcOp);
+				}
+			} else {
+				JX_CHECK(false, "TODO?");
+			}
+
+			jx_mir_instruction_t* firstTerminator = jx_mir_bbGetFirstTerminatorInstr(ctx->m_MIRCtx, bb);
+			if (!firstTerminator) {
+				jx_mir_bbAppendInstr(ctx->m_MIRCtx, bb, movInstr);
+			} else {
+				// If terminator is a conditional jump find the cmp instruction 
+				// and insert all movs before the cmp. This helps simplifying conditionals.
+				if (jx_mir_opcodeIsJcc(firstTerminator->m_OpCode)) {
+					jx_mir_instruction_t* cmpInstr = firstTerminator->m_Prev;
+					while (cmpInstr && !jx_mir_opcodeIsComparison(cmpInstr->m_OpCode)) {
+						cmpInstr = cmpInstr->m_Prev;
+					}
+					cmpInstr = cmpInstr != NULL
+						? cmpInstr
+						: firstTerminator
+						;
+					jx_mir_bbInsertInstrBefore(ctx->m_MIRCtx, bb, cmpInstr, movInstr);
+				} else {
+					jx_mir_bbInsertInstrBefore(ctx->m_MIRCtx, bb, firstTerminator, movInstr);
+				}
+			}
+		}
+
+		if (dstReg->m_Type == JMIR_TYPE_F32) {
+			jx_mir_bbPrependInstr(ctx->m_MIRCtx, jmirgen_getBasicBlock(ctx, phiInstr->m_ParentBB), jx_mir_movss(ctx->m_MIRCtx, dstReg, tmpReg));
+		} else if (dstReg->m_Type == JMIR_TYPE_F64) {
+			jx_mir_bbPrependInstr(ctx->m_MIRCtx, jmirgen_getBasicBlock(ctx, phiInstr->m_ParentBB), jx_mir_movsd(ctx->m_MIRCtx, dstReg, tmpReg));
+		} else {
+			jx_mir_bbPrependInstr(ctx->m_MIRCtx, jmirgen_getBasicBlock(ctx, phiInstr->m_ParentBB), jx_mir_mov(ctx->m_MIRCtx, dstReg, tmpReg));
+		}
+	}
+
+	return true;
+}
+#else
 static bool jmirgen_processPhis(jx_mirgen_context_t* ctx)
 {
 	const uint32_t numPhiInstructions = (uint32_t)jx_array_sizeu(ctx->m_PhiInstrArr);
@@ -2378,6 +2481,7 @@ static bool jmirgen_processPhis(jx_mirgen_context_t* ctx)
 
 	return true;
 }
+#endif
 
 static jx_mir_type_kind jmirgen_convertType(jx_ir_type_t* irType)
 {
