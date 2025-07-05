@@ -69,6 +69,7 @@ static const jx64gen_instr_desc_t kInstrDesc[] = {
 	[JMIR_OP_POP]        = { .m_Kind = JX64GEN_INSTR_UNARY,   .u.m_UnaryFunc = jx64_pop },
 	[JMIR_OP_CDQ]        = { .m_Kind = JX64GEN_INSTR_VOID,    .u.m_VoidFunc = jx64_cdq },
 	[JMIR_OP_CQO]        = { .m_Kind = JX64GEN_INSTR_VOID,    .u.m_VoidFunc = jx64_cqo },
+	[JMIR_OP_INT3]       = { .m_Kind = JX64GEN_INSTR_VOID,    .u.m_VoidFunc = jx64_int3 },
 	[JMIR_OP_SETO]       = { .m_Kind = JX64GEN_INSTR_COND,    .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_O },
 	[JMIR_OP_SETNO]      = { .m_Kind = JX64GEN_INSTR_COND,    .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_NO },
 	[JMIR_OP_SETB]       = { .m_Kind = JX64GEN_INSTR_COND,    .u.m_Cond.m_Func = jx64_setcc, .u.m_Cond.m_Code = JMIR_CC_B },
@@ -171,7 +172,6 @@ static const jx64gen_instr_desc_t kInstrDesc[] = {
 	[JMIR_OP_PUNPCKHWD]  = { .m_Kind = JX64GEN_INSTR_BINARY,  .u.m_BinaryFunc = jx64_punpckhwd },
 	[JMIR_OP_PUNPCKHDQ]  = { .m_Kind = JX64GEN_INSTR_BINARY,  .u.m_BinaryFunc = jx64_punpckhdq },
 	[JMIR_OP_PUNPCKHQDQ] = { .m_Kind = JX64GEN_INSTR_BINARY,  .u.m_BinaryFunc = jx64_punpckhqdq },
-
 };
 
 typedef struct jx_x64gen_context_t
@@ -191,63 +191,6 @@ static jx_x64_size jx_x64gen_convertMIRTypeToSize(jx_mir_type_kind type);
 static jx_x64_reg jx_x64gen_convertMIRReg(jx_mir_reg_t mirReg, jx_x64_size sz);
 static jx_x64_scale jx_x64gen_convertMIRScale(uint32_t mirScale);
 static void jx_x64gen_setExternalSymbol(jx_x64_context_t* ctx, const char* name, void* addr);
-
-// TEST/DEBUG
-static int func1(int a, int b, int c, int d, int e, int f)
-{
-	return a == 1 && b == 2 && c == 3 && d == 4 && e == 5 && f == 6
-		? 0
-		: 1
-		;
-}
-
-static int func2(float a, double b, float c, double d, float e, float f)
-{
-	return a == 1.0f && b == 2.0 && c == 3.0f && d == 4.0 && e == 5.0f && f == 6.0f
-		? 0
-		: 1
-		;
-}
-
-static int func3(int a, double b, int c, float d, int e, float f)
-{
-	return a == 1 && b == 2.0 && c == 3 && d == 4.0f && e == 5 && f == 6.0f
-		? 0
-		: 1
-		;
-}
-
-static int64_t func5(int a, float b, int c, int d, int e)
-{
-	return a == 1 && b == 2.0f && c == 3 && d == 4 && e == 5
-		? 0
-		: 1
-		;
-}
-
-typedef struct Struct1
-{
-	int j, k, l;    // Struct1 exceeds 64 bits.
-} Struct1;
-static Struct1 func7(int a, double b, int c, float d)
-{
-	return a == 1 && b == 2.0 && c == 3 && d == 4.0f
-		? (Struct1) { 1, -1, 0 }
-		: (Struct1) { 1, 2, 3 }
-		;
-}
-
-typedef struct Struct2
-{
-	int j, k;    // Struct2 fits in 64 bits, and meets requirements for return by value.
-} Struct2;
-static Struct2 func8(int a, double b, int c, float d)
-{
-	return a == 1 && b == 2.0 && c == 3 && d == 4.0f
-		? (Struct2) { 2, -2 }
-		: (Struct2) { 1, 2 }
-		;
-}
 
 jx_x64gen_context_t* jx_x64gen_createContext(jx_x64_context_t* jitCtx, jx_mir_context_t* mirCtx, jx64GetExternalSymbolAddrCallback externalSymCb, void* userData, jx_allocator_i* allocator)
 {
@@ -429,94 +372,6 @@ bool jx_x64gen_codeGen(jx_x64gen_context_t* ctx)
 			jx64_symbolAddRelocation(jitCtx, ctx->m_GlobalVars[iGV], JX64_RELOC_ADDR64, mirReloc->m_Offset, mirReloc->m_SymbolName);
 		}
 	}
-
-#if 0
-	// DEBUG/TEST
-	{
-		jx_x64gen_setExternalSymbol(jitCtx, "abs", (void*)abs);
-		jx_x64gen_setExternalSymbol(jitCtx, "abort", (void*)abort);
-		jx_x64gen_setExternalSymbol(jitCtx, "acos", (void*)acos);
-		jx_x64gen_setExternalSymbol(jitCtx, "atoi", (void*)atoi);
-
-		jx_x64gen_setExternalSymbol(jitCtx, "calloc", (void*)calloc);
-		jx_x64gen_setExternalSymbol(jitCtx, "ceil", (void*)ceil);
-		jx_x64gen_setExternalSymbol(jitCtx, "cos", (void*)cos);
-		jx_x64gen_setExternalSymbol(jitCtx, "cosf", (void*)cosf);
-
-		jx_x64gen_setExternalSymbol(jitCtx, "fabs", (void*)fabs);
-		jx_x64gen_setExternalSymbol(jitCtx, "fclose", (void*)fclose);
-		jx_x64gen_setExternalSymbol(jitCtx, "fgetc", (void*)fgetc);
-		jx_x64gen_setExternalSymbol(jitCtx, "fgets", (void*)fgets);
-		jx_x64gen_setExternalSymbol(jitCtx, "floor", (void*)floor);
-		jx_x64gen_setExternalSymbol(jitCtx, "fmod", (void*)fmod);
-		jx_x64gen_setExternalSymbol(jitCtx, "fopen", (void*)fopen);
-		jx_x64gen_setExternalSymbol(jitCtx, "fprintf", (void*)fprintf);
-		jx_x64gen_setExternalSymbol(jitCtx, "fread", (void*)fread);
-		jx_x64gen_setExternalSymbol(jitCtx, "free", (void*)free);
-		jx_x64gen_setExternalSymbol(jitCtx, "frexp", (void*)frexp);
-		jx_x64gen_setExternalSymbol(jitCtx, "fseek", (void*)fseek);
-		jx_x64gen_setExternalSymbol(jitCtx, "ftell", (void*)ftell);
-		jx_x64gen_setExternalSymbol(jitCtx, "fwrite", (void*)fwrite);
-
-		jx_x64gen_setExternalSymbol(jitCtx, "func1", (void*)func1);
-		jx_x64gen_setExternalSymbol(jitCtx, "func2", (void*)func2);
-		jx_x64gen_setExternalSymbol(jitCtx, "func3", (void*)func3);
-		jx_x64gen_setExternalSymbol(jitCtx, "func5", (void*)func5);
-		jx_x64gen_setExternalSymbol(jitCtx, "func7", (void*)func7);
-		jx_x64gen_setExternalSymbol(jitCtx, "func8", (void*)func8);
-
-		jx_x64gen_setExternalSymbol(jitCtx, "getc", (void*)getc);
-
-		jx_x64gen_setExternalSymbol(jitCtx, "malloc", (void*)malloc);
-		jx_x64gen_setExternalSymbol(jitCtx, "memcmp", (void*)memcmp);
-		jx_x64gen_setExternalSymbol(jitCtx, "memcpy", (void*)memcpy);
-		jx_x64gen_setExternalSymbol(jitCtx, "memmove", (void*)memmove);
-		jx_x64gen_setExternalSymbol(jitCtx, "memset", (void*)memset);
-
-		jx_x64gen_setExternalSymbol(jitCtx, "pow", (void*)pow);
-		jx_x64gen_setExternalSymbol(jitCtx, "printf", (void*)printf);
-		jx_x64gen_setExternalSymbol(jitCtx, "putchar", (void*)putchar);
-
-		jx_x64gen_setExternalSymbol(jitCtx, "realloc", (void*)realloc);
-		jx_x64gen_setExternalSymbol(jitCtx, "roundf", (void*)roundf);
-
-		jx_x64gen_setExternalSymbol(jitCtx, "sin", (void*)sin);
-		jx_x64gen_setExternalSymbol(jitCtx, "sinf", (void*)sinf);
-		jx_x64gen_setExternalSymbol(jitCtx, "sprintf", (void*)sprintf);
-		jx_x64gen_setExternalSymbol(jitCtx, "sqrt", (void*)sqrt);
-		jx_x64gen_setExternalSymbol(jitCtx, "strcat", (void*)strcat);
-		jx_x64gen_setExternalSymbol(jitCtx, "strchr", (void*)strchr);
-		jx_x64gen_setExternalSymbol(jitCtx, "strcmp", (void*)strcmp);
-		jx_x64gen_setExternalSymbol(jitCtx, "strcpy", (void*)strcpy);
-		jx_x64gen_setExternalSymbol(jitCtx, "strlen", (void*)strlen);
-		jx_x64gen_setExternalSymbol(jitCtx, "strncmp", (void*)strncmp);
-		jx_x64gen_setExternalSymbol(jitCtx, "strncpy", (void*)strncpy);
-		jx_x64gen_setExternalSymbol(jitCtx, "strrchr", (void*)strrchr);
-
-		jx_x64gen_setExternalSymbol(jitCtx, "GetStockObject", (void*)GetStockObject);
-		jx_x64gen_setExternalSymbol(jitCtx, "LoadIconA", (void*)LoadIconA);
-		jx_x64gen_setExternalSymbol(jitCtx, "LoadCursorA", (void*)LoadCursorA);
-		jx_x64gen_setExternalSymbol(jitCtx, "RegisterClassA", (void*)RegisterClassA);
-		jx_x64gen_setExternalSymbol(jitCtx, "CreateWindowExA", (void*)CreateWindowExA);
-		jx_x64gen_setExternalSymbol(jitCtx, "GetMessageA", (void*)GetMessageA);
-		jx_x64gen_setExternalSymbol(jitCtx, "TranslateMessage", (void*)TranslateMessage);
-		jx_x64gen_setExternalSymbol(jitCtx, "DispatchMessageA", (void*)DispatchMessageA);
-		jx_x64gen_setExternalSymbol(jitCtx, "DefWindowProcA", (void*)DefWindowProcA);
-		jx_x64gen_setExternalSymbol(jitCtx, "PostQuitMessage", (void*)PostQuitMessage);
-		jx_x64gen_setExternalSymbol(jitCtx, "DestroyWindow", (void*)DestroyWindow);
-		jx_x64gen_setExternalSymbol(jitCtx, "EndPaint", (void*)EndPaint);
-		jx_x64gen_setExternalSymbol(jitCtx, "DrawTextA", (void*)DrawTextA);
-		jx_x64gen_setExternalSymbol(jitCtx, "SetBkMode", (void*)SetBkMode);
-		jx_x64gen_setExternalSymbol(jitCtx, "SetTextColor", (void*)SetTextColor);
-		jx_x64gen_setExternalSymbol(jitCtx, "GetClientRect", (void*)GetClientRect);
-		jx_x64gen_setExternalSymbol(jitCtx, "BeginPaint", (void*)BeginPaint);
-		jx_x64gen_setExternalSymbol(jitCtx, "SetWindowPos", (void*)SetWindowPos);
-		jx_x64gen_setExternalSymbol(jitCtx, "GetWindowRect", (void*)GetWindowRect);
-		jx_x64gen_setExternalSymbol(jitCtx, "GetClientRect", (void*)GetClientRect);
-		jx_x64gen_setExternalSymbol(jitCtx, "GetDesktopWindow", (void*)GetDesktopWindow);
-		jx_x64gen_setExternalSymbol(jitCtx, "GetParent", (void*)GetParent);
-	}
-#endif
 
 	return jx64_finalize(jitCtx, ctx->m_ExternalSymCallback, ctx->m_ExternalSymCallbackUserData);
 }

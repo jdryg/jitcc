@@ -219,6 +219,7 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 											&& movInstr->m_Operands[0]->m_Kind == JMIR_OPERAND_REGISTER
 											&& jx_mir_regEqual(movInstr->m_Operands[0]->u.m_Reg, cmpInstr->m_Operands[1]->u.m_Reg)
 											&& movInstr->m_Operands[1]->m_Kind == JMIR_OPERAND_CONST
+											&& jx64_immFitsIn32Bits(movInstr->m_Operands[1]->u.m_ConstI64)
 											;
 										if (isMovRegConst) {
 											jx_mir_bbInsertInstrBefore(ctx, bb, cmpInstr, jx_mir_cmp(ctx, cmpInstr->m_Operands[0], movInstr->m_Operands[1]));
@@ -240,10 +241,10 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 									jx_mir_bbInsertInstrBefore(ctx, bb, instr, jx_mir_jcc(ctx, setCC, instr->m_Operands[0]));
 
 									jx_mir_bbRemoveInstr(ctx, bb, testInstr);
-									jx_mir_bbRemoveInstr(ctx, bb, setccInstr);
+//									jx_mir_bbRemoveInstr(ctx, bb, setccInstr);
 									jx_mir_bbRemoveInstr(ctx, bb, instr);
 									jx_mir_instrFree(ctx, testInstr);
-									jx_mir_instrFree(ctx, setccInstr);
+//									jx_mir_instrFree(ctx, setccInstr);
 									jx_mir_instrFree(ctx, instr);
 
 									++numJumpsSimplified;
@@ -263,8 +264,9 @@ static bool jmir_funcPass_simplifyCondJmpRun(jx_mir_function_pass_o* inst, jx_mi
 					if (isCmpWithZero && cmpInstr->m_Prev && cmpInstr->m_Prev->m_OpCode == JMIR_OP_AND) {
 						jx_mir_instruction_t* andInstr = cmpInstr->m_Prev;
 						jx_mir_operand_t* and_op0 = andInstr->m_Operands[0];
+						jx_mir_operand_t* and_op1 = andInstr->m_Operands[1];
 
-						if (and_op0->m_Kind == JMIR_OPERAND_REGISTER && !jx_bitsetIsBitSet(&bb->m_LiveOutSet, jx_mir_funcMapRegToBitsetID(ctx, func, and_op0->u.m_Reg))) {
+						if (and_op0->m_Kind == JMIR_OPERAND_REGISTER && (and_op1->m_Kind == JMIR_OPERAND_CONST || and_op1->m_Kind == JMIR_OPERAND_REGISTER) && !jx_bitsetIsBitSet(&bb->m_LiveOutSet, jx_mir_funcMapRegToBitsetID(ctx, func, and_op0->u.m_Reg))) {
 							andInstr->m_OpCode = JMIR_OP_TEST;
 						}
 
@@ -2290,7 +2292,7 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 						}
 					}
 
-					if (src->m_Kind != JMIR_OPERAND_REGISTER || jx_mir_regIsVirtual(src->u.m_Reg)) {
+					if (jx_mir_regIsVirtual(src->u.m_Reg)) {
 						jmir_instrCombine_setRegDef(pass, dst->u.m_Reg, instr);
 					} else {
 						jmir_instrCombine_removeRegDef(pass, dst->u.m_Reg);
@@ -2350,10 +2352,7 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 
 				jx_mir_operand_t* src = instr->m_Operands[1];
 
-				if (src->m_Kind == JMIR_OPERAND_CONST) {
-					// mov reg, const
-					jmir_instrCombine_setRegDef(pass, dst->u.m_Reg, instr);
-				} else if (src->m_Kind == JMIR_OPERAND_REGISTER) {
+				if (src->m_Kind == JMIR_OPERAND_REGISTER) {
 					// mov reg, reg
 					jx_mir_instruction_t* srcRegDef = jmir_instrCombine_getRegDef(pass, src->u.m_Reg);
 					if (jmir_instrCombine_isMovVRegAny(srcRegDef) && srcRegDef->m_Operands[1]->m_Type == src->m_Type) {
@@ -2816,7 +2815,8 @@ static bool jmir_funcPass_instrCombineRun(jx_mir_function_pass_o* inst, jx_mir_c
 			case JMIR_OP_JMP:
 			case JMIR_OP_CALL:
 			case JMIR_OP_CDQ:
-			case JMIR_OP_CQO: {
+			case JMIR_OP_CQO: 
+			case JMIR_OP_INT3: {
 				// No-ops
 			} break;
 			default: {
@@ -2961,7 +2961,8 @@ static bool jmir_instrCombine_instrMightWriteToMem(jmir_func_pass_instr_combine_
 	case JMIR_OP_PUNPCKHBW:
 	case JMIR_OP_PUNPCKHWD:
 	case JMIR_OP_PUNPCKHDQ:
-	case JMIR_OP_PUNPCKHQDQ: {
+	case JMIR_OP_PUNPCKHQDQ: 
+	case JMIR_OP_INT3: {
 		// Does not write to memory
 	} break;
 	case JMIR_OP_CALL: {
@@ -3127,9 +3128,13 @@ static jx_mir_memory_ref_t jmir_instrCombine_simplifyMemRef(jmir_func_pass_instr
 		} else if (!jx_mir_regIsValid(memRef.m_IndexReg) && jmir_instrCombine_isAddVRegVReg(baseRegDef)) {
 			jx_mir_reg_t regCopy = kMIRRegGPNone;
 			if (!baseRegDef->m_Prev || !jmir_instrCombine_isMovVRegVReg(baseRegDef->m_Prev) || !jx_mir_regEqual(baseRegDef->m_Operands[0]->u.m_Reg, baseRegDef->m_Prev->m_Operands[1]->u.m_Reg)) {
+#if 0
 				jx_mir_operand_t* tmpReg = jx_mir_opVirtualReg(pass->m_Ctx, pass->m_Func, JMIR_TYPE_I64);
 				jx_mir_bbInsertInstrBefore(pass->m_Ctx, bb, baseRegDef, jx_mir_mov(pass->m_Ctx, tmpReg, jx_mir_opRegAlias(pass->m_Ctx, pass->m_Func, JMIR_TYPE_I64, baseRegDef->m_Operands[0]->u.m_Reg)));
 				regCopy = tmpReg->u.m_Reg;
+#else
+				return *originalMemRef;
+#endif
 			} else {
 				regCopy = baseRegDef->m_Prev->m_Operands[0]->u.m_Reg;
 			}
@@ -3360,7 +3365,8 @@ static bool jmir_funcPass_redundantConstEliminationRun(jx_mir_function_pass_o* i
 			case JMIR_OP_COMISS:
 			case JMIR_OP_COMISD:
 			case JMIR_OP_UCOMISS:
-			case JMIR_OP_UCOMISD: {
+			case JMIR_OP_UCOMISD: 
+			case JMIR_OP_INT3: {
 				// Nop; no register is affected
 			} break;
 

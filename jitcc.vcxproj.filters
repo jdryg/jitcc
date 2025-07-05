@@ -55,6 +55,9 @@
     <Filter Include="bin\include\winapi">
       <UniqueIdentifier>{4aedc86e-d35e-49bb-904a-59f86faa6c73}</UniqueIdentifier>
     </Filter>
+    <Filter Include="bin\test\sqlite3">
+      <UniqueIdentifier>{9ae159e1-7fb8-4a1b-9476-5de3e66c6e3d}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\jcc.h">
@@ -216,9 +219,6 @@
     <ClInclude Include="bin\include\winapi\basetsd.h">
       <Filter>bin\include\winapi</Filter>
     </ClInclude>
-    <ClInclude Include="bin\include\excpt.h">
-      <Filter>bin\include</Filter>
-    </ClInclude>
     <ClInclude Include="bin\include\winapi\winbase.h">
       <Filter>bin\include\winapi</Filter>
     </ClInclude>
@@ -239,6 +239,21 @@
     </ClInclude>
     <ClInclude Include="bin\include\winapi\winreg.h">
       <Filter>bin\include\winapi</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\include\time.h">
+      <Filter>bin\include</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\include\malloc.h">
+      <Filter>bin\include</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\include\ctype.h">
+      <Filter>bin\include</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\test\sqlite3\sqlite3.h">
+      <Filter>bin\test\sqlite3</Filter>
+    </ClInclude>
+    <ClInclude Include="bin\test\sqlite3\sqlite3ext.h">
+      <Filter>bin\test\sqlite3</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -1062,6 +1077,36 @@
       <Filter>bin\test</Filter>
     </ClCompile>
     <ClCompile Include="bin\test\extern_global.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\func_cast.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\global_bitfield.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\sqlite3_test.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\sqlite3\shell.c">
+      <Filter>bin\test\sqlite3</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\sqlite3\sqlite3.c">
+      <Filter>bin\test\sqlite3</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\dbgbrk.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\offset_reloc.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\bitfield_cond.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\flex_arr.c">
+      <Filter>bin\test</Filter>
+    </ClCompile>
+    <ClCompile Include="bin\test\swap_pointers.c">
       <Filter>bin\test</Filter>
     </ClCompile>
   </ItemGroup>

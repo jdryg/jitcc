@@ -62,6 +62,7 @@ typedef enum jx_mir_opcode
 	JMIR_OP_POP,
 	JMIR_OP_CDQ,
 	JMIR_OP_CQO,
+	JMIR_OP_INT3,
 
 	JMIR_OP_SETO,
 	JMIR_OP_SETNO,
@@ -608,6 +609,7 @@ jx_mir_instruction_t* jx_mir_push(jx_mir_context_t* ctx, jx_mir_operand_t* op);
 jx_mir_instruction_t* jx_mir_pop(jx_mir_context_t* ctx, jx_mir_operand_t* op);
 jx_mir_instruction_t* jx_mir_cdq(jx_mir_context_t* ctx);
 jx_mir_instruction_t* jx_mir_cqo(jx_mir_context_t* ctx);
+jx_mir_instruction_t* jx_mir_int3(jx_mir_context_t* ctx);
 
 jx_mir_instruction_t* jx_mir_movss(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);
 jx_mir_instruction_t* jx_mir_movsd(jx_mir_context_t* ctx, jx_mir_operand_t* dst, jx_mir_operand_t* src);

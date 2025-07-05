@@ -997,6 +997,7 @@ static jx_ir_constant_t* jir_constFold_fpext(jx_ir_context_t* ctx, jx_ir_constan
 static jx_ir_constant_t* jir_constFold_bitcast(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
 static jx_ir_constant_t* jir_constFold_inttoptr(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
 static jx_ir_constant_t* jir_constFold_ptrtoint(jx_ir_context_t* ctx, jx_ir_constant_t* op, jx_ir_type_t* type);
+static jx_ir_constant_t* jir_constFold_gep(jx_ir_context_t* ctx, jx_ir_instruction_t* gep);
 
 bool jx_ir_funcPassCreate_constantFolding(jx_ir_function_pass_t* pass, jx_allocator_i* allocator)
 {
@@ -1203,7 +1204,9 @@ static bool jir_funcPass_constantFoldingRun(jx_ir_function_pass_o* inst, jx_ir_c
 						resConst = jir_constFold_ptrtoint(ctx, op, jx_ir_instrToValue(instr)->m_Type);
 					}
 				} break;
-				case JIR_OP_GET_ELEMENT_PTR:
+				case JIR_OP_GET_ELEMENT_PTR: {
+					resConst = jir_constFold_gep(ctx, instr);
+				} break;
 				case JIR_OP_PHI:
 				case JIR_OP_CALL:
 				case JIR_OP_RET:
@@ -1800,6 +1803,52 @@ static jx_ir_constant_t* jir_constFold_ptrtoint(jx_ir_context_t* ctx, jx_ir_cons
 	return jx_ir_constGetInteger(ctx, type->m_Kind, (int64_t)op->u.m_Ptr);
 }
 
+static jx_ir_constant_t* jir_constFold_gep(jx_ir_context_t* ctx, jx_ir_instruction_t* gep)
+{
+	jx_ir_constant_t* constPtr = jx_ir_valueToConst(jx_ir_instrGetOperandVal(gep, 0));
+	if (!constPtr) {
+		return NULL;
+	}
+
+	jx_ir_type_t* basePtrType = constPtr->super.super.m_Type;
+
+	int64_t offset = 0;
+
+	const uint32_t numOperands = (uint32_t)jx_array_sizeu(gep->super.m_OperandArr);
+	for (uint32_t iOperand = 1; iOperand < numOperands; ++iOperand) {
+		jx_ir_constant_t* constIndex = jx_ir_valueToConst(jx_ir_instrGetOperandVal(gep, iOperand));
+		if (!constIndex) {
+			return NULL;
+		}
+
+		if (basePtrType->m_Kind == JIR_TYPE_POINTER) {
+			JX_CHECK(iOperand == 1, "Only first index can be on a pointer type.");
+			jx_ir_type_pointer_t* ptrType = jx_ir_typeToPointer(basePtrType);
+			const size_t itemSize = jx_ir_typeGetSize(ptrType->m_BaseType);
+			const int64_t displacement = constIndex->u.m_I64 * (int64_t)itemSize;
+			offset += displacement;
+			basePtrType = ptrType->m_BaseType;
+		} else if (basePtrType->m_Kind == JIR_TYPE_ARRAY) {
+			jx_ir_type_array_t* arrType = jx_ir_typeToArray(basePtrType);
+			const size_t itemSize = jx_ir_typeGetSize(arrType->m_BaseType);
+			const int64_t displacement = constIndex->u.m_I64 * (int64_t)itemSize;
+			offset += displacement;
+			basePtrType = arrType->m_BaseType;
+		} else if (basePtrType->m_Kind == JIR_TYPE_STRUCT) {
+			jx_ir_type_struct_t* structType = jx_ir_typeToStruct(basePtrType);
+			JX_CHECK(constIndex->u.m_I64 < structType->m_NumMembers, "Invalid struct member index!");
+			jx_ir_struct_member_t* member = &structType->m_Members[constIndex->u.m_I64];
+			const uint32_t memberOffset = (uint32_t)jx_ir_typeStructGetMemberOffset(structType, (uint32_t)constIndex->u.m_I64);
+			offset += memberOffset;
+			basePtrType = member->m_Type;
+		} else {
+			JX_CHECK(false, "Unexpected type in GEP index list");
+		}
+	}
+
+	return jx_ir_constPointer(ctx, gep->super.super.m_Type, (void*)offset);
+}
+
 //////////////////////////////////////////////////////////////////////////
 // Peephole optimizations
 //
@@ -2002,7 +2051,7 @@ static bool jir_peephole_setcc(jir_func_pass_peephole_t* pass, jx_ir_instruction
 				}
 			} else 
 #endif
-			if ((instrOp0->m_OpCode == JIR_OP_SEXT || instrOp0->m_OpCode == JIR_OP_ZEXT) && jx_ir_instrGetOperandVal(instrOp0, 0)->m_Type->m_Kind == JIR_TYPE_BOOL && jx_ir_constIsZero(constOp1)) {
+			if (instr->m_OpCode == JIR_OP_SET_NE && (instrOp0->m_OpCode == JIR_OP_SEXT || instrOp0->m_OpCode == JIR_OP_ZEXT) && jx_ir_instrGetOperandVal(instrOp0, 0)->m_Type->m_Kind == JIR_TYPE_BOOL && jx_ir_constIsZero(constOp1)) {
 				// %extVal = zext i32, bool %val
 				// %res = setne bool, i32 %extVal, i32 0
 				//  =>
@@ -3400,44 +3449,65 @@ static bool jir_funcPass_removeRedundantPhisRun(jx_ir_function_pass_o* inst, jx_
 
 	jir_func_pass_remove_redundant_phis_t* pass = (jir_func_pass_remove_redundant_phis_t*)inst;
 
+#if 0
+	{
+		jx_string_buffer_t* sb = jx_strbuf_create(pass->m_Allocator);
+		jx_strbuf_printf(sb, "Pre-redundantPhiElimination\n");
+		jx_ir_funcPrint(ctx, func, sb);
+		jx_strbuf_nullTerminate(sb);
+		JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
+		jx_strbuf_destroy(sb);
+	}
+#endif
+
+	JX_CHECK(jx_ir_funcCheck(ctx, func), "Func is in invalid state!");
+
 	uint32_t numRemovals = 0;
 
-	jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
-	while (bb) {
-		jx_ir_instruction_t* instr = bb->m_InstrListHead;
-		while (instr->m_OpCode == JIR_OP_PHI) {
-			jx_ir_instruction_t* instrNext = instr->m_Next;
+	bool changed = true;
+	while (changed) {
+		changed = false;
 
-			jx_ir_value_t* uniqueVal = NULL;
+		const uint32_t numPrevRemovals = numRemovals;
+		jx_ir_basic_block_t* bb = func->m_BasicBlockListHead;
+		while (bb) {
+			jx_ir_instruction_t* instr = bb->m_InstrListHead;
+			while (instr->m_OpCode == JIR_OP_PHI) {
+				jx_ir_instruction_t* instrNext = instr->m_Next;
 
-			const uint32_t numOperands = (uint32_t)jx_array_sizeu(instr->super.m_OperandArr);
-			JX_CHECK(numOperands == 2 * jx_array_sizeu(instr->m_ParentBB->m_PredArr), "Invalid number of phi operands");
-			for (uint32_t iOperand = 0; iOperand < numOperands; iOperand += 2) {
-				jx_ir_value_t* bbVal = jx_ir_instrGetOperandVal(instr, iOperand + 0);
-				if (bbVal == uniqueVal || bbVal == jx_ir_instrToValue(instr)) {
-					continue;
+				jx_ir_value_t* uniqueVal = NULL;
+
+				const uint32_t numOperands = (uint32_t)jx_array_sizeu(instr->super.m_OperandArr);
+				JX_CHECK(numOperands == 2 * jx_array_sizeu(instr->m_ParentBB->m_PredArr), "Invalid number of phi operands");
+				for (uint32_t iOperand = 0; iOperand < numOperands; iOperand += 2) {
+					jx_ir_value_t* bbVal = jx_ir_instrGetOperandVal(instr, iOperand + 0);
+					if (bbVal == uniqueVal || bbVal == jx_ir_instrToValue(instr)) {
+						continue;
+					}
+
+					if (uniqueVal) {
+						uniqueVal = NULL;
+						break;
+					}
+
+					uniqueVal = bbVal;
 				}
 
 				if (uniqueVal) {
-					uniqueVal = NULL;
-					break;
+					jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), uniqueVal);
+					jx_ir_bbRemoveInstr(ctx, bb, instr);
+					jx_ir_instrFree(ctx, instr);
+
+					++numRemovals;
 				}
 
-				uniqueVal = bbVal;
+				instr = instrNext;
 			}
 
-			if (uniqueVal) {
-				jx_ir_valueReplaceAllUsesWith(ctx, jx_ir_instrToValue(instr), uniqueVal);
-				jx_ir_bbRemoveInstr(ctx, bb, instr);
-				jx_ir_instrFree(ctx, instr);
-
-				++numRemovals;
-			}
-
-			instr = instrNext;
+			bb = bb->m_Next;
 		}
 
-		bb = bb->m_Next;
+		changed = numPrevRemovals != numRemovals;
 	}
 
 	TracyCZoneEnd(tracyCtx);

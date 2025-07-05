@@ -232,7 +232,8 @@
     <ClInclude Include="3rdparty\jlib\include\jlib\sort.h" />
     <ClInclude Include="3rdparty\jlib\include\jlib\string.h" />
     <ClInclude Include="bin\include\assert.h" />
-    <ClInclude Include="bin\include\excpt.h" />
+    <ClInclude Include="bin\include\ctype.h" />
+    <ClInclude Include="bin\include\malloc.h" />
     <ClInclude Include="bin\include\math.h" />
     <ClInclude Include="bin\include\stdarg.h" />
     <ClInclude Include="bin\include\stdbool.h" />
@@ -241,6 +242,7 @@
     <ClInclude Include="bin\include\stdio.h" />
     <ClInclude Include="bin\include\stdlib.h" />
     <ClInclude Include="bin\include\string.h" />
+    <ClInclude Include="bin\include\time.h" />
     <ClInclude Include="bin\include\wchar.h" />
     <ClInclude Include="bin\include\winapi\basetsd.h" />
     <ClInclude Include="bin\include\winapi\guiddef.h" />
@@ -255,6 +257,14 @@
     <ClInclude Include="bin\include\winapi\winuser.h" />
     <ClInclude Include="bin\include\winapi\winver.h" />
     <ClInclude Include="bin\include\_jitcc.h" />
+    <ClInclude Include="bin\test\sqlite3\sqlite3.h">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+    </ClInclude>
+    <ClInclude Include="bin\test\sqlite3\sqlite3ext.h">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+    </ClInclude>
     <ClInclude Include="bin\test\stb\stb_image_write.h" />
     <ClInclude Include="bin\test\stb\stb_sprintf.h" />
     <ClInclude Include="bin\test\stb\stb_truetype.h" />
@@ -300,6 +310,10 @@
     <ClCompile Include="bin\test\bitfields.c">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="bin\test\bitfield_cond.c">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="bin\test\c-testsuite\00001.c">
@@ -1404,14 +1418,26 @@
     </ClCompile>
     <ClCompile Include="bin\test\compute.c">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="bin\test\dbgbrk.c">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="bin\test\extern_global.c">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="bin\test\factorial.c">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="bin\test\flex_arr.c">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="bin\test\floats.c">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
@@ -1432,6 +1458,16 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="bin\test\func_cast.c">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="bin\test\global_bitfield.c">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="bin\test\global_vars.c">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
@@ -1458,6 +1494,10 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="bin\test\offset_reloc.c">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="bin\test\param_passing.c">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
@@ -1477,6 +1517,17 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="bin\test\sqlite3\shell.c">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="bin\test\sqlite3\sqlite3.c">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="bin\test\sqlite3_test.c">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="bin\test\stb_image_write_test.c">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
@@ -1498,6 +1549,10 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="bin\test\swap_pointers.c">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="bin\test\test_arithmetic.c">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
@@ -1510,6 +1565,8 @@
     </ClCompile>
     <ClCompile Include="bin\test\win32_test.c">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release (Tracy)|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="src\jir.c" />
     <ClCompile Include="src\jir_gen.c" />

@@ -19,10 +19,20 @@
 #include <jlib/string.h>
 #include <tracy/tracy/TracyC.h>
 
+typedef struct sym_addr_item_t
+{
+	char* m_Name;
+	void* m_Addr;
+} sym_addr_item_t;
+
 static void runCTestSuiteTests(jx_allocator_i* allocator);
 static void runSingleFileCompile(jx_allocator_i* allocator);
+static void runSQLite3Demo(jx_allocator_i* allocator);
 static void* getExternalSymbolCallback(const char* symName, void* userData);
 static bool redirectSystemLogger(void);
+static bool loadModuleDef(jx_hashmap_t* symMap, jx_file_base_dir baseDir, const char* defFilename, jx_allocator_i* allocator);
+static uint64_t symAddrItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata);
+static int32_t symAddrItemCompare(const void* a, const void* b, void* udata);
 
 int main(int argc, char** argv)
 {
@@ -36,8 +46,10 @@ int main(int argc, char** argv)
 
 #if 0
 	runCTestSuiteTests(allocator);
-#elif 1
+#elif 0
 	runSingleFileCompile(allocator);
+#elif 1
+	runSQLite3Demo(allocator);
 #endif
 
 	allocator_api->destroyAllocator(allocator);
@@ -157,11 +169,19 @@ static void runSingleFileCompile(jx_allocator_i* allocator)
 //	const char* sourceFile = "test/c-testsuite/00049.c";
 //	const char* sourceFile = "test/stb_image_write_test.c";
 //	const char* sourceFile = "test/stb_sprintf_test.c";
-//	const char* sourceFile = "test/stb_truetype_test.c";
+	const char* sourceFile = "test/stb_truetype_test.c";
 //	const char* sourceFile = "test/sieve.c";
 //	const char* sourceFile = "test/compute.c";
-	const char* sourceFile = "test/win32_test.c";
+//	const char* sourceFile = "test/win32_test.c";
 //	const char* sourceFile = "test/extern_global.c";
+//	const char* sourceFile = "test/sqlite3/sqlite3.c";
+//	const char* sourceFile = "test/func_cast.c";
+//	const char* sourceFile = "test/global_bitfield.c";
+//	const char* sourceFile = "test/dbgbrk.c";
+//	const char* sourceFile = "test/offset_reloc.c";
+//	const char* sourceFile = "test/bitfield_cond.c";
+//	const char* sourceFile = "test/flex_arr.c";
+//	const char* sourceFile = "test/swap_pointers.c";
 
 	JX_SYS_LOG_INFO(NULL, "%s\n", sourceFile);
 	TracyCZoneN(frontend, "Frontend", 1);
@@ -251,48 +271,185 @@ end:
 	jx_cc_destroyContext(ctx);
 }
 
+static void runSQLite3Demo(jx_allocator_i* allocator)
+{
+	jx_hashmap_t* externalSymbolMap = jx_hashmapCreate(allocator, sizeof(sym_addr_item_t), 64, 0, 0, symAddrItemHash, symAddrItemCompare, NULL, NULL);
+	loadModuleDef(externalSymbolMap, JX_FILE_BASE_DIR_INSTALL, "lib/ntdll.def", allocator);
+	loadModuleDef(externalSymbolMap, JX_FILE_BASE_DIR_INSTALL, "lib/kernel32.def", allocator);
+	loadModuleDef(externalSymbolMap, JX_FILE_BASE_DIR_INSTALL, "lib/user32.def", allocator);
+	loadModuleDef(externalSymbolMap, JX_FILE_BASE_DIR_INSTALL, "lib/advapi32.def", allocator);
+	loadModuleDef(externalSymbolMap, JX_FILE_BASE_DIR_INSTALL, "lib/gdi32.def", allocator);
+	loadModuleDef(externalSymbolMap, JX_FILE_BASE_DIR_INSTALL, "lib/msvcrt.def", allocator);
+	loadModuleDef(externalSymbolMap, JX_FILE_BASE_DIR_INSTALL, "lib/opengl32.def", allocator);
+	loadModuleDef(externalSymbolMap, JX_FILE_BASE_DIR_INSTALL, "lib/msimg32.def", allocator);
+
+	jx_cc_context_t* ctx = jx_cc_createContext(allocator, logger_api->m_SystemLogger);
+	jx_cc_addIncludePath(ctx, JX_FILE_BASE_DIR_INSTALL, "include");
+	jx_cc_addIncludePath(ctx, JX_FILE_BASE_DIR_INSTALL, "include/winapi");
+
+	TracyCZoneN(frontend, "Frontend", 1);
+	jx_cc_translation_unit_t* sqliteTU = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_INSTALL, "test/sqlite3/sqlite3.c");
+	if (!sqliteTU || sqliteTU->m_NumErrors != 0) {
+		TracyCZoneEnd(frontend);
+		JX_SYS_LOG_INFO(NULL, "Failed to compile \"%s\"\n", "test/sqlite3/sqlite3.c");
+		goto end;
+	}
+	jx_cc_translation_unit_t* testTU = jx_cc_compileFile(ctx, JX_FILE_BASE_DIR_INSTALL, "test/sqlite3_test.c");
+	if (!testTU || testTU->m_NumErrors != 0) {
+		TracyCZoneEnd(frontend);
+		JX_SYS_LOG_INFO(NULL, "Failed to compile \"%s\"\n", "test/sqlite3_test.c");
+		goto end;
+	}
+	TracyCZoneEnd(frontend);
+
+	jx_ir_context_t* irCtx = jx_ir_createContext(allocator);
+	jx_irgen_context_t* genCtx = jx_irgen_createContext(irCtx, allocator);
+
+	TracyCZoneN(irgen, "IR Gen", 1);
+	if (!jx_irgen_moduleGen(genCtx, "test/sqlite3/sqlite3.c", sqliteTU)) {
+		TracyCZoneEnd(irgen);
+		JX_SYS_LOG_ERROR(NULL, "Failed to generate module IR\n");
+	} else {
+		if (!jx_irgen_moduleGen(genCtx, "test/sqlite3_test.c", testTU)) {
+			TracyCZoneEnd(irgen);
+			JX_SYS_LOG_ERROR(NULL, "Failed to generate module IR\n");
+		} else {
+			jx_irgen_destroyContext(genCtx);
+			TracyCZoneEnd(irgen);
+
+#if 0
+			{
+				jx_string_buffer_t* sb = jx_strbuf_create(allocator);
+				jx_ir_print(irCtx, sb);
+				jx_strbuf_nullTerminate(sb);
+				JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
+				jx_strbuf_destroy(sb);
+			}
+#endif
+
+			jx_mir_context_t* mirCtx = jx_mir_createContext(allocator);
+			jx_mirgen_context_t* mirGenCtx = jx_mirgen_createContext(irCtx, mirCtx, allocator);
+
+			TracyCZoneN(mirgen, "MIR Gen", 1);
+			{
+				jx_ir_module_t* irMod = jx_ir_getModule(irCtx, 1);
+				if (irMod) {
+					jx_mirgen_moduleGen(mirGenCtx, irMod);
+				}
+			}
+			{
+				jx_ir_module_t* irMod = jx_ir_getModule(irCtx, 0);
+				if (irMod) {
+					jx_mirgen_moduleGen(mirGenCtx, irMod);
+				}
+			}
+
+			jx_mirgen_destroyContext(mirGenCtx);
+			TracyCZoneEnd(mirgen);
+
+#if 0
+			{
+				jx_string_buffer_t* sb = jx_strbuf_create(allocator);
+				jx_mir_print(mirCtx, sb);
+				jx_strbuf_nullTerminate(sb);
+				JX_SYS_LOG_INFO(NULL, "%s", jx_strbuf_getString(sb, NULL));
+				jx_strbuf_destroy(sb);
+			}
+#endif
+
+			TracyCZoneN(x64gen, "x64 Gen", 1);
+			jx_x64_context_t* jitCtx = jx_x64_createContext(allocator);
+			jx_x64gen_context_t* jitgenCtx = jx_x64gen_createContext(jitCtx, mirCtx, getExternalSymbolCallback, externalSymbolMap, allocator);
+			if (jx_x64gen_codeGen(jitgenCtx)) {
+				TracyCZoneEnd(x64gen);
+				uint32_t bufferSize = 0;
+				const uint8_t* buffer = jx64_getBuffer(jitCtx, &bufferSize);
+
+				jx_os_file_t* binFile = jx_os_fileOpenWrite(JX_FILE_BASE_DIR_USERDATA, "output.bin");
+				jx_os_fileWrite(binFile, buffer, bufferSize);
+				jx_os_fileClose(binFile);
+
+				typedef int32_t(*pfnMain)(void);
+				jx_x64_symbol_t* symMain = jx64_symbolGetByName(jitCtx, "main");
+				if (symMain) {
+					uint32_t mainOffset = jx64_labelGetOffset(jitCtx, symMain->m_Label);
+					JX_SYS_LOG_INFO(NULL, "main offset %u\n", mainOffset);
+					pfnMain mainFunc = (pfnMain)((uint8_t*)buffer + mainOffset);
+					TracyCZoneN(execute, "main()", 1);
+					int32_t ret = mainFunc();
+					TracyCZoneEnd(execute);
+					JX_SYS_LOG_DEBUG(NULL, "main() returned %d\n", ret);
+				} else {
+					JX_SYS_LOG_ERROR(NULL, "main() not found!\n");
+				}
+			} else {
+				JX_SYS_LOG_ERROR(NULL, "Codegen failed. Unresolved external symbol?\n");
+			}
+
+			jx_x64gen_destroyContext(jitgenCtx);
+			jx_x64_destroyContext(jitCtx);
+			jx_mir_destroyContext(mirCtx);
+		}
+	}
+	jx_ir_destroyContext(irCtx);
+
+end:
+	jx_cc_destroyContext(ctx);
+}
+
 #include <stdlib.h> // calloc
 #include <stdio.h>  // printf
 #include <math.h>   // cosf/sinf
 #include <memory.h> // memset/memcpy
 #include <string.h> // strcpy
+#include <time.h>
 #include <Windows.h>
 
 static void* getExternalSymbolCallback(const char* symName, void* userData)
 {
-	if (!jx_strcmp(symName, "abs")) { return (void*)abs; }
+	if (userData) {
+		sym_addr_item_t* item = jx_hashmapGet((jx_hashmap_t*)userData, &(sym_addr_item_t){.m_Name = (char*)symName});
+		if (item) {
+			return item->m_Addr;
+		}
+	}
+
+//	JX_SYS_LOG_DEBUG(NULL, "sym: %s\n", symName);
+	if (!jx_strcmp(symName, "printf")) { return (void*)printf; }
+	if (!jx_strcmp(symName, "fprintf")) { return (void*)fprintf; }
+	if (!jx_strcmp(symName, "fopen")) { return (void*)fopen; }
+	if (!jx_strcmp(symName, "fclose")) { return (void*)fclose; }
+	if (!jx_strcmp(symName, "fwrite")) { return (void*)fwrite; }
+	if (!jx_strcmp(symName, "fread")) { return (void*)fread; }
+	if (!jx_strcmp(symName, "fgetc")) { return (void*)fgetc; }
+	if (!jx_strcmp(symName, "getc")) { return (void*)getc; }
+	if (!jx_strcmp(symName, "fgets")) { return (void*)fgets; }
+	if (!jx_strcmp(symName, "fseek")) { return (void*)fseek; }
+	if (!jx_strcmp(symName, "ftell")) { return (void*)ftell; }
+	if (!jx_strcmp(symName, "putchar")) { return (void*)putchar; }
+	if (!jx_strcmp(symName, "malloc")) { return (void*)malloc; }
+	if (!jx_strcmp(symName, "free")) { return (void*)free; }
+	if (!jx_strcmp(symName, "realloc")) { return (void*)realloc; }
 	if (!jx_strcmp(symName, "abort")) { return (void*)abort; }
+	if (!jx_strcmp(symName, "localtime")) { return (void*)localtime; }
+	if (!jx_strcmp(symName, "frexp")) { return (void*)frexp; }
+	if (!jx_strcmp(symName, "fmod")) { return (void*)fmod; }
 	if (!jx_strcmp(symName, "acos")) { return (void*)acos; }
+	if (!jx_strcmp(symName, "round")) { return (void*)round; }
+
+	if (!jx_strcmp(symName, "abs")) { return (void*)abs; }
 	if (!jx_strcmp(symName, "atoi")) { return (void*)atoi; }
 	if (!jx_strcmp(symName, "calloc")) { return (void*)calloc; }
 	if (!jx_strcmp(symName, "ceil")) { return (void*)ceil; }
 	if (!jx_strcmp(symName, "cos")) { return (void*)cos; }
 	if (!jx_strcmp(symName, "cosf")) { return (void*)cosf; }
 	if (!jx_strcmp(symName, "fabs")) { return (void*)fabs; }
-	if (!jx_strcmp(symName, "fclose")) { return (void*)fclose; }
-	if (!jx_strcmp(symName, "fgetc")) { return (void*)fgetc; }
-	if (!jx_strcmp(symName, "fgets")) { return (void*)fgets; }
 	if (!jx_strcmp(symName, "floor")) { return (void*)floor; }
-	if (!jx_strcmp(symName, "fmod")) { return (void*)fmod; }
-	if (!jx_strcmp(symName, "fopen")) { return (void*)fopen; }
-	if (!jx_strcmp(symName, "fprintf")) { return (void*)fprintf; }
-	if (!jx_strcmp(symName, "fread")) { return (void*)fread; }
-	if (!jx_strcmp(symName, "free")) { return (void*)free; }
-	if (!jx_strcmp(symName, "frexp")) { return (void*)frexp; }
-	if (!jx_strcmp(symName, "fseek")) { return (void*)fseek; }
-	if (!jx_strcmp(symName, "ftell")) { return (void*)ftell; }
-	if (!jx_strcmp(symName, "fwrite")) { return (void*)fwrite; }
-	if (!jx_strcmp(symName, "getc")) { return (void*)getc; }
-	if (!jx_strcmp(symName, "malloc")) { return (void*)malloc; }
 	if (!jx_strcmp(symName, "memcmp")) { return (void*)memcmp; }
 	if (!jx_strcmp(symName, "memcpy")) { return (void*)memcpy; }
 	if (!jx_strcmp(symName, "memmove")) { return (void*)memmove; }
 	if (!jx_strcmp(symName, "memset")) { return (void*)memset; }
 	if (!jx_strcmp(symName, "pow")) { return (void*)pow; }
-	if (!jx_strcmp(symName, "printf")) { return (void*)printf; }
-	if (!jx_strcmp(symName, "putchar")) { return (void*)putchar; }
-	if (!jx_strcmp(symName, "realloc")) { return (void*)realloc; }
-	if (!jx_strcmp(symName, "roundf")) { return (void*)roundf; }
 	if (!jx_strcmp(symName, "sin")) { return (void*)sin; }
 	if (!jx_strcmp(symName, "sinf")) { return (void*)sinf; }
 	if (!jx_strcmp(symName, "sprintf")) { return (void*)sprintf; }
@@ -370,4 +527,87 @@ static bool redirectSystemLogger(void)
 	}
 
 	return true;
+}
+
+static const char* skipWhitespaces(const char* ptr)
+{
+	while (*ptr != '\0' && jx_isspace(*ptr)) {
+		++ptr;
+	}
+	return ptr;
+}
+
+static const char* findNewline(const char* ptr)
+{
+	while (*ptr != '\0' && *ptr != '\r' && *ptr != '\n') {
+		++ptr;
+	}
+	return ptr;
+}
+
+static bool loadModuleDef(jx_hashmap_t* symMap, jx_file_base_dir baseDir, const char* defFilename, jx_allocator_i* allocator)
+{
+	uint64_t bufferSize = 0;
+	char* buffer = (char*)jx_os_fsReadFile(baseDir, defFilename, allocator, true, &bufferSize);
+	if (!buffer) {
+		return false;
+	}
+
+	const char* ptr = buffer;
+	ptr = skipWhitespaces(ptr);
+	if (jx_strncmp(ptr, "LIBRARY ", 8)) {
+		goto err;
+	}
+	ptr = skipWhitespaces(ptr + 8);
+
+	const char* newLine = findNewline(ptr);
+	const uint32_t libNameLen = (uint32_t)(newLine - ptr);
+	char libName[256];
+	jx_memcpy(libName, ptr, libNameLen);
+	libName[libNameLen] = '\0';
+	ptr = skipWhitespaces(newLine);
+
+	jx_os_module_t* lib = jx_os_moduleOpen(JX_FILE_BASE_DIR_ABSOLUTE_PATH, libName);
+	if (!lib) {
+		goto err;
+	}
+
+	if (jx_strncmp(ptr, "EXPORTS", 7)) {
+		goto err;
+	}
+	ptr = skipWhitespaces(ptr + 7);
+
+	while (*ptr != '\0') {
+		const char* newLine = findNewline(ptr);
+		const uint32_t funcNameLen = (uint32_t)(newLine - ptr);
+		char* funcName = jx_strndup(ptr, funcNameLen, allocator);
+		ptr = skipWhitespaces(newLine);
+
+		void* addr = jx_os_moduleGetSymbolAddr(lib, funcName);
+		if (addr) {
+			jx_hashmapSet(symMap, &(sym_addr_item_t){.m_Name = funcName, .m_Addr = addr});
+		} else {
+			JX_FREE(allocator, funcName);
+		}
+	}
+
+	JX_FREE(allocator, buffer);
+	return true;
+
+err:
+	JX_FREE(allocator, buffer);
+	return false;
+}
+
+static uint64_t symAddrItemHash(const void* item, uint64_t seed0, uint64_t seed1, void* udata)
+{
+	const sym_addr_item_t* symItem = (const sym_addr_item_t*)item;
+	return jx_hashFNV1a_cstr(symItem->m_Name, UINT32_MAX, seed0, seed1);
+}
+
+static int32_t symAddrItemCompare(const void* a, const void* b, void* udata)
+{
+	const sym_addr_item_t* symItemA = (const sym_addr_item_t*)a;
+	const sym_addr_item_t* symItemB = (const sym_addr_item_t*)b;
+	return jx_strcmp(symItemA->m_Name, symItemB->m_Name);
 }

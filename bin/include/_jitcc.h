@@ -8,10 +8,10 @@
 #include <stddef.h>
 #include <stdarg.h>
 
-#define __int8 char
-#define __int16 short
-#define __int32 int
-#define __int64 long long
+//#define __int8 char
+//#define __int16 short
+//#define __int32 int
+//#define __int64 long long
 #define _HAVE_INT64
 
 #define __cdecl

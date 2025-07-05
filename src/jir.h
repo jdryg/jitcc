@@ -18,6 +18,7 @@ typedef struct jx_ir_use_t jx_ir_use_t;
 typedef struct jx_ir_value_t jx_ir_value_t;
 typedef struct jx_ir_user_t jx_ir_user_t;
 typedef struct jx_ir_type_t jx_ir_type_t;
+typedef struct jx_ir_global_value_t jx_ir_global_value_t;
 typedef struct jx_ir_global_variable_t jx_ir_global_variable_t;
 typedef struct jx_ir_argument_t jx_ir_argument_t;
 typedef struct jx_ir_function_t jx_ir_function_t;
@@ -277,6 +278,8 @@ typedef struct jx_ir_type_struct_t
 	jx_ir_struct_member_t* m_Members;
 	uint32_t m_NumMembers;
 	uint32_t m_Flags; // JIR_TYPE_STRUCT_FLAGS_xxx
+	uint32_t m_Size;
+	uint32_t m_Alignment;
 } jx_ir_type_struct_t;
 
 typedef struct jx_ir_constant_t
@@ -289,6 +292,11 @@ typedef struct jx_ir_constant_t
 		uint64_t m_U64;
 		double m_F64;
 		uintptr_t m_Ptr;
+		struct
+		{
+			jx_ir_global_value_t* m_GlobalVal;
+			int64_t m_Offset;
+		} m_GlobalVal;
 	} u;
 } jx_ir_constant_t;
 
@@ -386,6 +394,7 @@ jx_ir_module_t* jx_ir_getModule(jx_ir_context_t* ctx, uint32_t id);
 
 jx_ir_module_t* jx_ir_moduleBegin(jx_ir_context_t* ctx, const char* name);
 void jx_ir_moduleEnd(jx_ir_context_t* ctx, jx_ir_module_t* mod);
+const char* jx_ir_moduleGetName(jx_ir_context_t* ctx, jx_ir_module_t* mod);
 jx_ir_global_value_t* jx_ir_moduleDeclareGlobalVal(jx_ir_context_t* ctx, jx_ir_module_t* mod, const char* name, jx_ir_type_t* type, jx_ir_linkage_kind linkage);
 jx_ir_global_value_t* jx_ir_moduleGetGlobalVal(jx_ir_context_t* ctx, jx_ir_module_t* mod, const char* name);
 jx_ir_function_t* jx_ir_moduleGetFunc(jx_ir_context_t* ctx, jx_ir_module_t* mod, const char* name);
@@ -508,7 +517,7 @@ jx_ir_type_t* jx_ir_typeGetFunction(jx_ir_context_t* ctx, jx_ir_type_t* retType,
 jx_ir_type_t* jx_ir_typeGetPointer(jx_ir_context_t* ctx, jx_ir_type_t* baseType);
 jx_ir_type_t* jx_ir_typeGetArray(jx_ir_context_t* ctx, jx_ir_type_t* baseType, uint32_t sz);
 jx_ir_type_t* jx_ir_typeGetStruct(jx_ir_context_t* ctx, uint64_t uniqueID);
-jx_ir_type_struct_t* jx_ir_typeStructBegin(jx_ir_context_t* ctx, uint64_t uniqueID, uint32_t structFlags);
+jx_ir_type_struct_t* jx_ir_typeStructBegin(jx_ir_context_t* ctx, uint64_t uniqueID, uint32_t structFlags, uint32_t sz, uint32_t alignment);
 jx_ir_type_t* jx_ir_typeStructEnd(jx_ir_context_t* ctx, jx_ir_type_struct_t* structType);
 bool jx_ir_typeStructSetMembers(jx_ir_context_t* ctx, jx_ir_type_struct_t* structType, uint32_t numMembers, const jx_ir_struct_member_t* members);
 size_t jx_ir_typeStructGetMemberOffset(jx_ir_type_struct_t* structType, uint32_t memberID);
@@ -552,7 +561,7 @@ jx_ir_constant_t* jx_ir_constArray(jx_ir_context_t* ctx, jx_ir_type_t* type, uin
 jx_ir_constant_t* jx_ir_constStruct(jx_ir_context_t* ctx, jx_ir_type_t* type, uint32_t numMembers, jx_ir_constant_t** memberValues);
 jx_ir_constant_t* jx_ir_constPointer(jx_ir_context_t* ctx, jx_ir_type_t* type, void* ptr);
 jx_ir_constant_t* jx_ir_constPointerNull(jx_ir_context_t* ctx, jx_ir_type_t* type);
-jx_ir_constant_t* jx_ir_constPointerToGlobalVal(jx_ir_context_t* ctx, jx_ir_global_value_t* gv);
+jx_ir_constant_t* jx_ir_constPointerToGlobalVal(jx_ir_context_t* ctx, jx_ir_global_value_t* gv, int64_t offset);
 jx_ir_constant_t* jx_ir_constGetZero(jx_ir_context_t* ctx, jx_ir_type_t* type);
 jx_ir_constant_t* jx_ir_constGetOnes(jx_ir_context_t* ctx, jx_ir_type_t* type);
 void jx_ir_constPrint(jx_ir_context_t* ctx, jx_ir_constant_t* c, jx_string_buffer_t* sb);
