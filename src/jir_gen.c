@@ -6,6 +6,7 @@
 #include <jlib/array.h>
 #include <jlib/dbg.h>
 #include <jlib/hashmap.h>
+#include <jlib/logger.h>
 #include <jlib/math.h>
 #include <jlib/memory.h>
 #include <jlib/string.h>
@@ -405,7 +406,7 @@ static jx_ir_constant_t* jirgenGlobalVarInitializer(jx_irgen_context_t* ctx, jx_
 				return NULL;
 			}
 			
-			c = jx_ir_constPointerToGlobalVal(irctx, gv);
+			c = jx_ir_constPointerToGlobalVal(irctx, gv, (*relocations)->m_Addend);
 
 			*relocations = (*relocations)->m_Next;
 		} else {
@@ -871,7 +872,10 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 				jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, bitcastInstr);
 				rhs = jx_ir_instrToValue(bitcastInstr);
 			} else {
-				JX_NOT_IMPLEMENTED();
+				// Removed. Hopefully this is handled inside genStore().
+				// Otherwise it'll trigger there.
+				// TODO: Handle it here!
+//				JX_NOT_IMPLEMENTED();
 			}
 		}
 
@@ -892,7 +896,7 @@ static jx_ir_value_t* jirgenGenExpression(jx_irgen_context_t* ctx, jx_cc_ast_exp
 				jx_ir_instruction_t* maskCurVal = jx_ir_instrAnd(irctx, curVal, jx_ir_constToValue(jx_ir_constGetInteger(irctx, curVal->m_Type->m_Kind, ~(mask << memberExpr->m_Member->m_BitOffset))));
 				jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, maskCurVal);
 
-				jx_ir_instruction_t* newVal = jx_ir_instrOr(irctx, jx_ir_instrToValue(maskCurVal), jx_ir_instrToValue(shiftRHS));
+				jx_ir_instruction_t* newVal = jx_ir_instrOr(irctx, jx_ir_instrToValue(maskCurVal), jirgenConvertType(ctx, jx_ir_instrToValue(shiftRHS), curVal->m_Type));
 				jx_ir_bbAppendInstr(irctx, ctx->m_BasicBlock, newVal);
 
 				rhs = jx_ir_instrToValue(newVal);
@@ -1913,7 +1917,7 @@ static jx_ir_type_t* jccTypeToIRType(jx_irgen_context_t* ctx, jx_cc_type_t* ccTy
 		ccType = (jx_cc_type_t*)uniqueIDType;
 		irType = jx_ir_typeGetStruct(irctx, structUniqueID);
 		if (!irType) {
-			jx_ir_type_struct_t* structType = jx_ir_typeStructBegin(irctx, structUniqueID, 0);
+			jx_ir_type_struct_t* structType = jx_ir_typeStructBegin(irctx, structUniqueID, 0, ccType->m_Size == -1 ? 0 : ccType->m_Size, ccType->m_Alignment);
 			if (structType) {
 				jx_ir_struct_member_t* members = (jx_ir_struct_member_t*)jx_array_create(ctx->m_Allocator);
 
@@ -1963,7 +1967,7 @@ static jx_ir_type_t* jccTypeToIRType(jx_irgen_context_t* ctx, jx_cc_type_t* ccTy
 			// struct member to the first such union member.
 
 			// Find the member with the largest alignment and the largest size.
-			jx_ir_type_struct_t* structType = jx_ir_typeStructBegin(irctx, structUniqueID, JIR_TYPE_STRUCT_FLAGS_IS_UNION_Msk);
+			jx_ir_type_struct_t* structType = jx_ir_typeStructBegin(irctx, structUniqueID, JIR_TYPE_STRUCT_FLAGS_IS_UNION_Msk, ccType->m_Size, ccType->m_Alignment);
 			if (structType) {
 				uint32_t maxMemberAlignment = 0;
 				uint32_t maxMemberSize = 0;
@@ -1986,6 +1990,8 @@ static jx_ir_type_t* jccTypeToIRType(jx_irgen_context_t* ctx, jx_cc_type_t* ccTy
 					ccMember = ccMember->m_Next;
 				}
 				JX_CHECK(firstMemberType, "Union expected to have at least 1 member.");
+				JX_CHECK(maxMemberSize == ccType->m_Size, "Invalid jx_cc_type_t size?");
+				JX_CHECK(maxMemberAlignment == ccType->m_Alignment, "Invalid jx_cc_type_t alignment?");
 
 				const uint32_t firstMemberSize = (uint32_t)jx_ir_typeGetSize(firstMemberType);
 				JX_CHECK(maxMemberSize >= firstMemberSize, "WTF?");

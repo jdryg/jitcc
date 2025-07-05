@@ -9,6 +9,7 @@
 #include <jlib/memory.h>
 #include <jlib/os.h>
 #include <jlib/string.h>
+#include <tracy/tracy/TracyC.h>
 
 #define JX_IR_CONFIG_PRINT_ABSTRACT_POINTERS 0
 #define JX_IR_CONFIG_FORCE_VALUE_NAMES       1
@@ -366,6 +367,7 @@ void jx_ir_destroyContext(jx_ir_context_t* ctx)
 
 void jx_ir_print(jx_ir_context_t* ctx, jx_string_buffer_t* sb)
 {
+	TracyCZoneN(tracyCtx, "IR: Print", 1);
 	jx_ir_module_t* mod = ctx->m_ModuleListHead;
 	while (mod) {
 		jx_strbuf_printf(sb, "module \"%s\"\n", mod->m_Name);
@@ -374,6 +376,7 @@ void jx_ir_print(jx_ir_context_t* ctx, jx_string_buffer_t* sb)
 
 		mod = mod->m_Next;
 	}
+	TracyCZoneEnd(tracyCtx);
 }
 
 jx_ir_module_t* jx_ir_getModule(jx_ir_context_t* ctx, uint32_t id)
@@ -489,6 +492,7 @@ void jx_ir_moduleEnd(jx_ir_context_t* ctx, jx_ir_module_t* mod)
 				jir_funcPassApply(ctx, ctx->m_FuncPass_constantFolding, func);
 				jir_funcPassApply(ctx, ctx->m_FuncPass_deadCodeElimination, func);
 				jir_funcPassApply(ctx, ctx->m_FuncPass_removeRedundantPhis, func);
+				jir_funcPassApply(ctx, ctx->m_FuncPass_constantFolding, func);
 				jir_funcPassApply(ctx, ctx->m_FuncPass_localValueNumbering, func);
 
 				uint32_t iter = 0;
@@ -566,6 +570,11 @@ void jx_ir_moduleEnd(jx_ir_context_t* ctx, jx_ir_module_t* mod)
 			func = func->m_Next;
 		}
 	}
+}
+
+const char* jx_ir_moduleGetName(jx_ir_context_t* ctx, jx_ir_module_t* mod)
+{
+	return mod->m_Name;
 }
 
 jx_ir_global_value_t* jx_ir_moduleDeclareGlobalVal(jx_ir_context_t* ctx, jx_ir_module_t* mod, const char* name, jx_ir_type_t* type, jx_ir_linkage_kind linkageKind)
@@ -702,6 +711,7 @@ void jx_ir_modulePrint(jx_ir_context_t* ctx, jx_ir_module_t* mod, jx_string_buff
 bool jx_ir_funcBegin(jx_ir_context_t* ctx, jx_ir_function_t* func, uint32_t flags)
 {
 	JX_CHECK(jx_ir_funcGetType(ctx, func), "Expected function type!");
+	JX_CHECK(!func->m_BasicBlockListHead, "Function already has a body");
 	func->m_Flags = flags;
 	return true;
 }
@@ -1236,7 +1246,7 @@ bool jx_ir_globalVarDefine(jx_ir_context_t* ctx, jx_ir_global_variable_t* gv, bo
 	gv->m_IsConstantGlobal = isConst;
 	
 	if (initializer) {
-		JX_CHECK(jx_ir_typeToPointer(jx_ir_globalVarToValue(gv)->m_Type)->m_BaseType == jx_ir_constToValue(initializer)->m_Type, "Invalid initializer?");
+//		JX_CHECK(jx_ir_typeToPointer(jx_ir_globalVarToValue(gv)->m_Type)->m_BaseType == jx_ir_constToValue(initializer)->m_Type, "Invalid initializer?");
 		jir_userAddOperand(ctx, jx_ir_globalVarToUser(gv), jx_ir_constToValue(initializer));
 	}
 
@@ -3117,7 +3127,7 @@ jx_ir_type_t* jx_ir_typeGetStruct(jx_ir_context_t* ctx, uint64_t uniqueID)
 		;
 }
 
-jx_ir_type_struct_t* jx_ir_typeStructBegin(jx_ir_context_t* ctx, uint64_t uniqueID, uint32_t flags)
+jx_ir_type_struct_t* jx_ir_typeStructBegin(jx_ir_context_t* ctx, uint64_t uniqueID, uint32_t flags, uint32_t sz, uint32_t alignment)
 {
 	jx_ir_type_struct_t* type = (jx_ir_type_struct_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_ir_type_struct_t));
 	if (!type) {
@@ -3128,6 +3138,8 @@ jx_ir_type_struct_t* jx_ir_typeStructBegin(jx_ir_context_t* ctx, uint64_t unique
 	jir_typeCtor(ctx, &type->super, NULL, JIR_TYPE_STRUCT, 0);
 	type->m_UniqueID = uniqueID;
 	type->m_Flags = flags;
+	type->m_Size = sz;
+	type->m_Alignment = alignment;
 
 	jx_hashmapSet(ctx->m_TypeMap, &type);
 
@@ -3347,8 +3359,9 @@ size_t jx_ir_typeGetAlignment(jx_ir_type_t* type)
 		align = sizeof(double);
 	} break;
 	case JIR_TYPE_STRUCT: {
-		size_t largestMemberAlignment = 1;
 		jx_ir_type_struct_t* structType = jx_ir_typeToStruct(type);
+#if 0
+		size_t largestMemberAlignment = 1;
 		const uint32_t numMembers = structType->m_NumMembers;
 		for (uint32_t iMember = 0; iMember < numMembers; ++iMember) {
 			jx_ir_struct_member_t* member = &structType->m_Members[iMember];
@@ -3358,6 +3371,9 @@ size_t jx_ir_typeGetAlignment(jx_ir_type_t* type)
 			}
 		}
 		align = largestMemberAlignment;
+#else
+		align = structType->m_Alignment;
+#endif
 	} break;
 	case JIR_TYPE_ARRAY: {
 		jx_ir_type_array_t* arrType = jx_ir_typeToArray(type);
@@ -3413,6 +3429,7 @@ size_t jx_ir_typeGetSize(jx_ir_type_t* type)
 	} break;
 	case JIR_TYPE_STRUCT: {
 		jx_ir_type_struct_t* structType = jx_ir_typeToStruct(type);
+#if 0
 		const uint32_t numMembers = structType->m_NumMembers;
 		for (uint32_t iMember = 0; iMember < numMembers; ++iMember) {
 			jx_ir_struct_member_t* member = &structType->m_Members[iMember];
@@ -3425,6 +3442,14 @@ size_t jx_ir_typeGetSize(jx_ir_type_t* type)
 			}
 			sz += memberSize;
 		}
+
+		const uint32_t structAlignment = structType->m_Alignment;
+		if ((sz & (structAlignment - 1)) != 0) {
+			sz = (sz & ~(structAlignment - 1)) + structAlignment;
+		}
+#else
+		sz = structType->m_Size;
+#endif
 	} break;
 	case JIR_TYPE_ARRAY: {
 		jx_ir_type_array_t* arrType = jx_ir_typeToArray(type);
@@ -3786,16 +3811,52 @@ jx_ir_constant_t* jx_ir_constPointerNull(jx_ir_context_t* ctx, jx_ir_type_t* typ
 	return jir_constGetPointer(ctx, type, 0);
 }
 
-jx_ir_constant_t* jx_ir_constPointerToGlobalVal(jx_ir_context_t* ctx, jx_ir_global_value_t* gv)
+jx_ir_constant_t* jx_ir_constPointerToGlobalVal(jx_ir_context_t* ctx, jx_ir_global_value_t* gv, int64_t offset)
 {
+#if 1
+	jx_ir_type_t* type = jx_ir_globalValToValue(gv)->m_Type;
+	jx_ir_constant_t* key = &(jx_ir_constant_t){
+		.super = {
+			.super = {
+				.m_Kind = JIR_VALUE_CONSTANT,
+				.m_Type = type,
+				.m_Flags = JIR_VALUE_FLAGS_CONST_GLOBAL_VAL_PTR_Msk
+			}
+		},
+		.u.m_GlobalVal.m_GlobalVal = gv,
+		.u.m_GlobalVal.m_Offset = offset
+	};
+
+	jx_ir_constant_t** cachedTypePtr = (jx_ir_constant_t**)jx_hashmapGet(ctx->m_ConstMap, &key);
+	if (cachedTypePtr) {
+		return *cachedTypePtr;
+	}
+
+	jx_ir_constant_t* ci = (jx_ir_constant_t*)JX_ALLOC(ctx->m_LinearAllocator, sizeof(jx_ir_constant_t));
+	if (!ci) {
+		return NULL;
+	}
+
+	jx_memset(ci, 0, sizeof(jx_ir_constant_t));
+	jir_constCtor(ctx, ci, type);
+	ci->u.m_GlobalVal.m_GlobalVal = gv;
+	ci->u.m_GlobalVal.m_Offset = offset;
+	ci->super.super.m_Flags |= JIR_VALUE_FLAGS_CONST_GLOBAL_VAL_PTR_Msk;
+
+	jx_hashmapSet(ctx->m_ConstMap, &ci);
+
+	return ci;
+#else
 	jx_ir_constant_t* c = jir_constGetPointer(ctx, jx_ir_globalValToValue(gv)->m_Type, (uintptr_t)gv);
 	if (!c) {
 		return NULL;
 	}
 
+	c->u.m_GlobalVal.m_Offset = offset;
 	c->super.super.m_Flags |= JIR_VALUE_FLAGS_CONST_GLOBAL_VAL_PTR_Msk;
 	
 	return c;
+#endif
 }
 
 jx_ir_constant_t* jx_ir_constGetZero(jx_ir_context_t* ctx, jx_ir_type_t* type)
@@ -4493,7 +4554,12 @@ static uint64_t jir_constHashCallback(const void* item, uint64_t seed0, uint64_t
 	case JIR_TYPE_POINTER: {
 		jx_ir_type_pointer_t* ptrType = jx_ir_typeToPointer(type);
 		jir_typeHashCallback(&ptrType->m_BaseType, hash, seed1, udata);
-		hash = jx_hashFNV1a(&c->u.m_Ptr, sizeof(uintptr_t), hash, seed1);
+		if ((c->super.super.m_Flags & JIR_VALUE_FLAGS_CONST_GLOBAL_VAL_PTR_Msk) != 0) {
+			hash = jx_hashFNV1a(&c->u.m_GlobalVal.m_GlobalVal, sizeof(jx_ir_global_value_t*), hash, seed1);
+			hash = jx_hashFNV1a(&c->u.m_GlobalVal.m_Offset, sizeof(int64_t), hash, seed1);
+		} else {
+			hash = jx_hashFNV1a(&c->u.m_Ptr, sizeof(uintptr_t), hash, seed1);
+		}
 	} break;
 	case JIR_TYPE_FUNCTION:
 	case JIR_TYPE_VOID:
@@ -4565,10 +4631,31 @@ static int32_t jir_constCompareCallback(const void* a, const void* b, void* udat
 		}
 	} break;
 	case JIR_TYPE_POINTER: {
-		res = cA->u.m_Ptr < cB->u.m_Ptr
+		const bool ptrToGlobalA = (cA->super.super.m_Flags & JIR_VALUE_FLAGS_CONST_GLOBAL_VAL_PTR_Msk) != 0;
+		const bool ptrToGlobalB = (cB->super.super.m_Flags & JIR_VALUE_FLAGS_CONST_GLOBAL_VAL_PTR_Msk) != 0;
+		res = ptrToGlobalA < ptrToGlobalB
 			? -1
-			: (cA->u.m_Ptr > cB->u.m_Ptr ? 1 : 0)
+			: (ptrToGlobalA > ptrToGlobalB ? 1 : 0)
 			;
+		if (!res) {
+			if (ptrToGlobalA) {
+				res = (uintptr_t)cA->u.m_GlobalVal.m_GlobalVal < (uintptr_t)cB->u.m_GlobalVal.m_GlobalVal
+					? -1
+					: ((uintptr_t)cA->u.m_GlobalVal.m_GlobalVal > (uintptr_t)cB->u.m_GlobalVal.m_GlobalVal ? 1 : 0)
+					;
+				if (!res) {
+					res = cA->u.m_GlobalVal.m_Offset < cB->u.m_GlobalVal.m_Offset
+						? -1
+						: (cA->u.m_GlobalVal.m_Offset > cB->u.m_GlobalVal.m_Offset ? 1 : 0)
+						;
+				}
+			} else {
+				res = cA->u.m_Ptr < cB->u.m_Ptr
+					? -1
+					: (cA->u.m_Ptr > cB->u.m_Ptr ? 1 : 0)
+					;
+			}
+		}
 	} break;
 	case JIR_TYPE_VOID:
 	case JIR_TYPE_FUNCTION:
