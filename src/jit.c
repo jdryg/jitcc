@@ -5,6 +5,7 @@
 #include <jlib/allocator.h>
 #include <jlib/array.h>
 #include <jlib/dbg.h>
+#include <jlib/logger.h>
 #include <jlib/math.h>
 #include <jlib/memory.h>
 #include <jlib/os.h>
@@ -311,7 +312,7 @@ bool jx64_finalize(jx_x64_context_t* ctx, jx64GetExternalSymbolAddrCallback exte
 				JX_NOT_IMPLEMENTED();
 			} break;
 			case JX64_RELOC_ADDR64: {
-				*(uintptr_t*)patchAddr = (uintptr_t)&cb->m_Buffer[refSymOffset];
+				*(uintptr_t*)patchAddr += (uintptr_t)&cb->m_Buffer[refSymOffset];
 			} break;
 			case JX64_RELOC_REL32: {
 				*(int32_t*)patchAddr += (int32_t)refSymOffset - (int32_t)(patchOffset + 4);
@@ -337,6 +338,15 @@ bool jx64_finalize(jx_x64_context_t* ctx, jx64GetExternalSymbolAddrCallback exte
 			}
 		}
 	}
+
+#if 0
+	{
+		for (uint32_t iSym = 0; iSym < numSymbols; ++iSym) {
+			jx_x64_symbol_t* sym = ctx->m_SymbolArr[iSym];
+			JX_SYS_LOG_INFO(NULL, "0x%016llX: %s\n", sym->m_Label->m_Offset, sym->m_Name);
+		}
+	}
+#endif
 
 	// TODO: Mark .text section as execute/read and data sections as read/write or read-only once I add a .rodata section
 	if (!jx_os_vmemProtect(cb->m_Buffer, cb->m_Size, JX_VMEM_PROTECT_EXEC_Msk | JX_VMEM_PROTECT_READ_Msk | JX_VMEM_PROTECT_WRITE_Msk)) {
@@ -1069,7 +1079,7 @@ bool jx64_imul3(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t sr
 			jx64_instrEnc_rex(enc, needsREX, reg_sz == JX64_SIZE_64, JX64_REG_HI(dst_r), 0, JX64_REG_HI(src_r));
 			jx64_instrEnc_opcode1(enc, 0x69);
 			jx64_instrEnc_modrm(enc, 0b11, JX64_REG_LO(dst_r), JX64_REG_LO(src_r));
-			jx64_instrEnc_imm(enc, true, reg_sz, src_imm);
+			jx64_instrEnc_imm(enc, true, reg_sz == JX64_SIZE_64 ? JX64_SIZE_32 : reg_sz, src_imm);
 		}
 	} else {
 		JX_CHECK(false, "Invalid operands.");
@@ -1460,6 +1470,12 @@ bool jx64_cwde(jx_x64_context_t* ctx)
 bool jx64_cdqe(jx_x64_context_t* ctx)
 {
 	const uint8_t instr[] = { JX64_REX(1, 0, 0, 0), 0x98 };
+	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr, JX_COUNTOF(instr));
+}
+
+bool jx64_int3(jx_x64_context_t* ctx)
+{
+	const uint8_t instr[] = { 0xCC };
 	return jx64_emitBytes(ctx, JX64_SECTION_TEXT, instr, JX_COUNTOF(instr));
 }
 

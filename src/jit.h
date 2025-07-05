@@ -372,6 +372,7 @@ bool jx64_cqo(jx_x64_context_t* ctx);
 bool jx64_cbw(jx_x64_context_t* ctx);  // AX := sign-extend of AL
 bool jx64_cwde(jx_x64_context_t* ctx); // EAX := sign-extend of AX
 bool jx64_cdqe(jx_x64_context_t* ctx); // RAX := sign-extend of EAX
+bool jx64_int3(jx_x64_context_t* ctx);
 
 bool jx64_movss(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
 bool jx64_movsd(jx_x64_context_t* ctx, jx_x64_operand_t dst, jx_x64_operand_t src);
