@@ -240,25 +240,25 @@ typedef DWORDLONG *PDWORDLONG;
 #define Int64ShraMod32(a,b) ((LONGLONG)(a) >> (b))
 #define Int64ShllMod32(a,b) ((ULONGLONG)(a) << (b))
 
-#define RotateLeft8 _rotl8
-#define RotateLeft16 _rotl16
-#define RotateRight8 _rotr8
-#define RotateRight16 _rotr16
-
-unsigned char __cdecl _rotl8(unsigned char Value,unsigned char Shift);
-unsigned short __cdecl _rotl16(unsigned short Value,unsigned char Shift);
-unsigned char __cdecl _rotr8(unsigned char Value,unsigned char Shift);
-unsigned short __cdecl _rotr16(unsigned short Value,unsigned char Shift);
-
-#define RotateLeft32 _rotl
-#define RotateLeft64 _rotl64
-#define RotateRight32 _rotr
-#define RotateRight64 _rotr64
-
-unsigned int __cdecl _rotl(unsigned int Value,int Shift);
-unsigned __int64 __cdecl _rotl64(unsigned __int64 Value,int Shift);
-unsigned int __cdecl _rotr(unsigned int Value,int Shift);
-unsigned __int64 __cdecl _rotr64(unsigned __int64 Value,int Shift);
+//#define RotateLeft8 _rotl8
+//#define RotateLeft16 _rotl16
+//#define RotateRight8 _rotr8
+//#define RotateRight16 _rotr16
+//
+//unsigned char __cdecl _rotl8(unsigned char Value,unsigned char Shift);
+//unsigned short __cdecl _rotl16(unsigned short Value,unsigned char Shift);
+//unsigned char __cdecl _rotr8(unsigned char Value,unsigned char Shift);
+//unsigned short __cdecl _rotr16(unsigned short Value,unsigned char Shift);
+//
+//#define RotateLeft32 _rotl
+//#define RotateLeft64 _rotl64
+//#define RotateRight32 _rotr
+//#define RotateRight64 _rotr64
+//
+//unsigned int __cdecl _rotl(unsigned int Value,int Shift);
+//unsigned __int64 __cdecl _rotl64(unsigned __int64 Value,int Shift);
+//unsigned int __cdecl _rotr(unsigned int Value,int Shift);
+//unsigned __int64 __cdecl _rotr64(unsigned __int64 Value,int Shift);
 
 #define ANSI_NULL ((CHAR)0)
 #define UNICODE_NULL ((WCHAR)0)
@@ -723,18 +723,18 @@ typedef struct _OBJECTID {
   typedef ULONG_PTR KSPIN_LOCK;
   typedef KSPIN_LOCK *PKSPIN_LOCK;
 
-#define BitTest _bittest
-#define BitTestAndComplement _bittestandcomplement
-#define BitTestAndSet _bittestandset
-#define BitTestAndReset _bittestandreset
-#define InterlockedBitTestAndSet _interlockedbittestandset
-#define InterlockedBitTestAndReset _interlockedbittestandreset
-#define BitTest64 _bittest64
-#define BitTestAndComplement64 _bittestandcomplement64
-#define BitTestAndSet64 _bittestandset64
-#define BitTestAndReset64 _bittestandreset64
-#define InterlockedBitTestAndSet64 _interlockedbittestandset64
-#define InterlockedBitTestAndReset64 _interlockedbittestandreset64
+//#define BitTest _bittest
+//#define BitTestAndComplement _bittestandcomplement
+//#define BitTestAndSet _bittestandset
+//#define BitTestAndReset _bittestandreset
+//#define InterlockedBitTestAndSet _interlockedbittestandset
+//#define InterlockedBitTestAndReset _interlockedbittestandreset
+//#define BitTest64 _bittest64
+//#define BitTestAndComplement64 _bittestandcomplement64
+//#define BitTestAndSet64 _bittestandset64
+//#define BitTestAndReset64 _bittestandreset64
+//#define InterlockedBitTestAndSet64 _interlockedbittestandset64
+//#define InterlockedBitTestAndReset64 _interlockedbittestandreset64
 
 #if 0
     __CRT_INLINE BOOLEAN _bittest(LONG const *Base,LONG Offset) {
@@ -830,10 +830,10 @@ typedef struct _OBJECTID {
     }
 #endif // 0
 
-#define BitScanForward _BitScanForward
-#define BitScanReverse _BitScanReverse
-#define BitScanForward64 _BitScanForward64
-#define BitScanReverse64 _BitScanReverse64
+//#define BitScanForward _BitScanForward
+//#define BitScanReverse _BitScanReverse
+//#define BitScanForward64 _BitScanForward64
+//#define BitScanReverse64 _BitScanReverse64
 
 #if 0
 __CRT_INLINE BOOLEAN _BitScanForward(DWORD *Index,DWORD Mask) {
@@ -854,45 +854,45 @@ __CRT_INLINE BOOLEAN _BitScanReverse64(DWORD *Index,DWORD64 Mask) {
 }
 #endif // 0
 
-#define InterlockedIncrement16                   _InterlockedIncrement16
-#define InterlockedDecrement16                   _InterlockedDecrement16
-#define InterlockedCompareExchange16             _InterlockedCompareExchange16
-#define InterlockedAnd                           _InterlockedAnd
-#define InterlockedOr                            _InterlockedOr
-#define InterlockedXor                           _InterlockedXor
-#define InterlockedIncrement                     _InterlockedIncrement
-#define InterlockedIncrementAcquire              InterlockedIncrement
-#define InterlockedIncrementRelease              InterlockedIncrement
-#define InterlockedDecrement                     _InterlockedDecrement
-#define InterlockedDecrementAcquire              InterlockedDecrement
-#define InterlockedDecrementRelease              InterlockedDecrement
-#define InterlockedAdd                           _InterlockedAdd
-#define InterlockedExchange                      _InterlockedExchange
-#define InterlockedExchangeAdd                   _InterlockedExchangeAdd
-#define InterlockedCompareExchange               _InterlockedCompareExchange
-#define InterlockedCompareExchangeAcquire        InterlockedCompareExchange
-#define InterlockedCompareExchangeRelease        InterlockedCompareExchange
-#define InterlockedAnd64                         _InterlockedAnd64
-#define InterlockedAndAffinity                   InterlockedAnd64
-#define InterlockedOr64                          _InterlockedOr64
-#define InterlockedOrAffinity                    InterlockedOr64
-#define InterlockedXor64                         _InterlockedXor64
-#define InterlockedIncrement64                   _InterlockedIncrement64
-#define InterlockedDecrement64                   _InterlockedDecrement64
-#define InterlockedAdd64                         _InterlockedAdd64
-#define InterlockedExchange64                    _InterlockedExchange64
-#define InterlockedExchangeAcquire64             InterlockedExchange64
-#define InterlockedExchangeAdd64                 _InterlockedExchangeAdd64
-#define InterlockedCompareExchange64             _InterlockedCompareExchange64
-#define InterlockedCompareExchangeAcquire64      InterlockedCompareExchange64
-#define InterlockedCompareExchangeRelease64      InterlockedCompareExchange64
-#define InterlockedExchangePointer               _InterlockedExchangePointer
-#define InterlockedCompareExchangePointer        _InterlockedCompareExchangePointer
-#define InterlockedCompareExchangePointerAcquire _InterlockedCompareExchangePointer
-#define InterlockedCompareExchangePointerRelease _InterlockedCompareExchangePointer
-#define InterlockedExchangeAddSizeT(a,b)         InterlockedExchangeAdd64((LONG64 *)a,b)
-#define InterlockedIncrementSizeT(a)             InterlockedIncrement64((LONG64 *)a)
-#define InterlockedDecrementSizeT(a)             InterlockedDecrement64((LONG64 *)a)
+//#define InterlockedIncrement16                   _InterlockedIncrement16
+//#define InterlockedDecrement16                   _InterlockedDecrement16
+//#define InterlockedCompareExchange16             _InterlockedCompareExchange16
+//#define InterlockedAnd                           _InterlockedAnd
+//#define InterlockedOr                            _InterlockedOr
+//#define InterlockedXor                           _InterlockedXor
+//#define InterlockedIncrement                     _InterlockedIncrement
+//#define InterlockedIncrementAcquire              InterlockedIncrement
+//#define InterlockedIncrementRelease              InterlockedIncrement
+//#define InterlockedDecrement                     _InterlockedDecrement
+//#define InterlockedDecrementAcquire              InterlockedDecrement
+//#define InterlockedDecrementRelease              InterlockedDecrement
+//#define InterlockedAdd                           _InterlockedAdd
+//#define InterlockedExchange                      _InterlockedExchange
+//#define InterlockedExchangeAdd                   _InterlockedExchangeAdd
+//#define InterlockedCompareExchange               _InterlockedCompareExchange
+//#define InterlockedCompareExchangeAcquire        InterlockedCompareExchange
+//#define InterlockedCompareExchangeRelease        InterlockedCompareExchange
+//#define InterlockedAnd64                         _InterlockedAnd64
+//#define InterlockedAndAffinity                   InterlockedAnd64
+//#define InterlockedOr64                          _InterlockedOr64
+//#define InterlockedOrAffinity                    InterlockedOr64
+//#define InterlockedXor64                         _InterlockedXor64
+//#define InterlockedIncrement64                   _InterlockedIncrement64
+//#define InterlockedDecrement64                   _InterlockedDecrement64
+//#define InterlockedAdd64                         _InterlockedAdd64
+//#define InterlockedExchange64                    _InterlockedExchange64
+//#define InterlockedExchangeAcquire64             InterlockedExchange64
+//#define InterlockedExchangeAdd64                 _InterlockedExchangeAdd64
+//#define InterlockedCompareExchange64             _InterlockedCompareExchange64
+//#define InterlockedCompareExchangeAcquire64      InterlockedCompareExchange64
+//#define InterlockedCompareExchangeRelease64      InterlockedCompareExchange64
+//#define InterlockedExchangePointer               _InterlockedExchangePointer
+//#define InterlockedCompareExchangePointer        _InterlockedCompareExchangePointer
+//#define InterlockedCompareExchangePointerAcquire _InterlockedCompareExchangePointer
+//#define InterlockedCompareExchangePointerRelease _InterlockedCompareExchangePointer
+//#define InterlockedExchangeAddSizeT(a,b)         InterlockedExchangeAdd64((LONG64 *)a,b)
+//#define InterlockedIncrementSizeT(a)             InterlockedIncrement64((LONG64 *)a)
+//#define InterlockedDecrementSizeT(a)             InterlockedDecrement64((LONG64 *)a)
 
 #if 0
 __CRT_INLINE SHORT InterlockedIncrement16(SHORT volatile *Addend) {
@@ -979,11 +979,20 @@ __CRT_INLINE LONG InterlockedExchange(LONG volatile *Target,LONG Value) {
 }
 #endif // 0
 
-LONG InterlockedExchangeAdd(LONG volatile *Addend,LONG Value);
+//LONG InterlockedExchangeAdd(LONG volatile *Addend,LONG Value);
+//
+//__CRT_INLINE LONG InterlockedAdd(LONG volatile *Addend,LONG Value) { return InterlockedExchangeAdd(Addend,Value) + Value; }
 
-__CRT_INLINE LONG InterlockedAdd(LONG volatile *Addend,LONG Value) { return InterlockedExchangeAdd(Addend,Value) + Value; }
-
-#if 0
+#if 1
+__CRT_INLINE LONG InterlockedCompareExchange(LONG volatile* Destination, LONG ExChange, LONG Comperand)
+{
+	if (*Destination == Comperand) {
+		*Destination = ExChange;
+		return Comperand;
+	}
+	return *Destination;
+}
+#else
 __CRT_INLINE LONG InterlockedCompareExchange(LONG volatile *Destination,LONG ExChange,LONG Comperand) {
   LONG prev;
   __asm__ __volatile__("lock ; cmpxchgl %1,%2" : "=a" (prev) : "q" (ExChange),"m" (*Destination), "0" (Comperand) : "memory");
@@ -1016,9 +1025,9 @@ __CRT_INLINE LONG64 InterlockedExchange64(LONG64 volatile *Target,LONG64 Value) 
 }
 #endif // 0
 
-LONG64 InterlockedExchangeAdd64(LONG64 volatile *Addend,LONG64 Value);
-
-__CRT_INLINE LONG64 InterlockedAdd64(LONG64 volatile *Addend,LONG64 Value) { return InterlockedExchangeAdd64(Addend,Value) + Value; }
+//LONG64 InterlockedExchangeAdd64(LONG64 volatile *Addend,LONG64 Value);
+//
+//__CRT_INLINE LONG64 InterlockedAdd64(LONG64 volatile *Addend,LONG64 Value) { return InterlockedExchangeAdd64(Addend,Value) + Value; }
 
 #if 0
 __CRT_INLINE LONG64 InterlockedCompareExchange64(LONG64 volatile *Destination,LONG64 ExChange,LONG64 Comperand) {
@@ -1040,104 +1049,104 @@ __CRT_INLINE PVOID InterlockedExchangePointer(PVOID volatile *Target,PVOID Value
 }
 #endif // 0
 
-#define CacheLineFlush(Address) _mm_clflush(Address)
+//#define CacheLineFlush(Address) _mm_clflush(Address)
 
-VOID _ReadWriteBarrier(VOID);
+//VOID _ReadWriteBarrier(VOID);
 
-#define FastFence __faststorefence
-#define LoadFence _mm_lfence
-#define MemoryFence _mm_mfence
-#define StoreFence _mm_sfence
+//#define FastFence __faststorefence
+//#define LoadFence _mm_lfence
+//#define MemoryFence _mm_mfence
+//#define StoreFence _mm_sfence
 
-VOID __faststorefence(VOID);
-VOID _m_prefetchw(volatile CONST VOID *Source);
+//VOID __faststorefence(VOID);
+//VOID _m_prefetchw(volatile CONST VOID *Source);
 
 //!__TINYC__: #include <intrin.h>
 
-#define YieldProcessor _mm_pause
-#define MemoryBarrier __faststorefence
-#define PreFetchCacheLine(l,a) _mm_prefetch((CHAR CONST *) a,l)
-#define PrefetchForWrite(p) _m_prefetchw(p)
-#define ReadForWriteAccess(p) (_m_prefetchw(p),*(p))
+//#define YieldProcessor _mm_pause
+//#define MemoryBarrier __faststorefence
+//#define PreFetchCacheLine(l,a) _mm_prefetch((CHAR CONST *) a,l)
+//#define PrefetchForWrite(p) _m_prefetchw(p)
+//#define ReadForWriteAccess(p) (_m_prefetchw(p),*(p))
 
 #define PF_TEMPORAL_LEVEL_1 _MM_HINT_T0
 #define PF_TEMPORAL_LEVEL_2 _MM_HINT_T1
 #define PF_TEMPORAL_LEVEL_3 _MM_HINT_T2
 #define PF_NON_TEMPORAL_LEVEL_ALL _MM_HINT_NTA
 
-#define ReadMxCsr _mm_getcsr
-#define WriteMxCsr _mm_setcsr
+//#define ReadMxCsr _mm_getcsr
+//#define WriteMxCsr _mm_setcsr
 
-VOID __int2c(VOID);
+//VOID __int2c(VOID);
 
-#define DbgRaiseAssertionFailure() __int2c()
-#define GetCallersEflags() __getcallerseflags()
+//#define DbgRaiseAssertionFailure() __int2c()
+//#define GetCallersEflags() __getcallerseflags()
 
-unsigned __int32 __getcallerseflags(VOID);
+//unsigned __int32 __getcallerseflags(VOID);
 
-#define GetSegmentLimit __segmentlimit
+//#define GetSegmentLimit __segmentlimit
 
-DWORD __segmentlimit(DWORD Selector);
+//DWORD __segmentlimit(DWORD Selector);
 
-#define ReadTimeStampCounter() __rdtsc()
+//#define ReadTimeStampCounter() __rdtsc()
 
-DWORD64 __rdtsc(VOID);
-VOID __movsb(PBYTE Destination,BYTE const *Source,SIZE_T Count);
-VOID __movsw(PWORD Destination,WORD const *Source,SIZE_T Count);
-VOID __movsd(PDWORD Destination,DWORD const *Source,SIZE_T Count);
-VOID __movsq(PDWORD64 Destination,DWORD64 const *Source,SIZE_T Count);
-VOID __stosb(PBYTE Destination,BYTE Value,SIZE_T Count);
-VOID __stosw(PWORD Destination,WORD Value,SIZE_T Count);
-VOID __stosd(PDWORD Destination,DWORD Value,SIZE_T Count);
-VOID __stosq(PDWORD64 Destination,DWORD64 Value,SIZE_T Count);
+//DWORD64 __rdtsc(VOID);
+//VOID __movsb(PBYTE Destination,BYTE const *Source,SIZE_T Count);
+//VOID __movsw(PWORD Destination,WORD const *Source,SIZE_T Count);
+//VOID __movsd(PDWORD Destination,DWORD const *Source,SIZE_T Count);
+//VOID __movsq(PDWORD64 Destination,DWORD64 const *Source,SIZE_T Count);
+//VOID __stosb(PBYTE Destination,BYTE Value,SIZE_T Count);
+//VOID __stosw(PWORD Destination,WORD Value,SIZE_T Count);
+//VOID __stosd(PDWORD Destination,DWORD Value,SIZE_T Count);
+//VOID __stosq(PDWORD64 Destination,DWORD64 Value,SIZE_T Count);
 
-#define MultiplyHigh __mulh
-#define UnsignedMultiplyHigh __umulh
+//#define MultiplyHigh __mulh
+//#define UnsignedMultiplyHigh __umulh
+//
+//LONGLONG MultiplyHigh(LONGLONG Multiplier,LONGLONG Multiplicand);
+//ULONGLONG UnsignedMultiplyHigh(ULONGLONG Multiplier,ULONGLONG Multiplicand);
+//
+//#define ShiftLeft128 __shiftleft128
+//#define ShiftRight128 __shiftright128
+//
+//DWORD64 ShiftLeft128(DWORD64 LowPart,DWORD64 HighPart,BYTE Shift);
+//DWORD64 ShiftRight128(DWORD64 LowPart,DWORD64 HighPart,BYTE Shift);
+//
+//#define Multiply128 _mul128
+//
+//LONG64 Multiply128(LONG64 Multiplier,LONG64 Multiplicand,LONG64 *HighProduct);
+//
+//#define UnsignedMultiply128 _umul128
+//
+//DWORD64 UnsignedMultiply128(DWORD64 Multiplier,DWORD64 Multiplicand,DWORD64 *HighProduct);
 
-LONGLONG MultiplyHigh(LONGLONG Multiplier,LONGLONG Multiplicand);
-ULONGLONG UnsignedMultiplyHigh(ULONGLONG Multiplier,ULONGLONG Multiplicand);
-
-#define ShiftLeft128 __shiftleft128
-#define ShiftRight128 __shiftright128
-
-DWORD64 ShiftLeft128(DWORD64 LowPart,DWORD64 HighPart,BYTE Shift);
-DWORD64 ShiftRight128(DWORD64 LowPart,DWORD64 HighPart,BYTE Shift);
-
-#define Multiply128 _mul128
-
-LONG64 Multiply128(LONG64 Multiplier,LONG64 Multiplicand,LONG64 *HighProduct);
-
-#define UnsignedMultiply128 _umul128
-
-DWORD64 UnsignedMultiply128(DWORD64 Multiplier,DWORD64 Multiplicand,DWORD64 *HighProduct);
-
-__CRT_INLINE LONG64 MultiplyExtract128(LONG64 Multiplier,LONG64 Multiplicand,BYTE Shift) {
-  LONG64 extractedProduct;
-  LONG64 highProduct;
-  LONG64 lowProduct;
-  lowProduct = Multiply128(Multiplier,Multiplicand,&highProduct);
-  extractedProduct = (LONG64)ShiftRight128((LONG64)lowProduct,(LONG64)highProduct,Shift);
-  return extractedProduct;
-}
-
-__CRT_INLINE DWORD64 UnsignedMultiplyExtract128(DWORD64 Multiplier,DWORD64 Multiplicand,BYTE Shift) {
-  DWORD64 extractedProduct;
-  DWORD64 highProduct;
-  DWORD64 lowProduct;
-  lowProduct = UnsignedMultiply128(Multiplier,Multiplicand,&highProduct);
-  extractedProduct = ShiftRight128(lowProduct,highProduct,Shift);
-  return extractedProduct;
-}
+//__CRT_INLINE LONG64 MultiplyExtract128(LONG64 Multiplier,LONG64 Multiplicand,BYTE Shift) {
+//  LONG64 extractedProduct;
+//  LONG64 highProduct;
+//  LONG64 lowProduct;
+//  lowProduct = Multiply128(Multiplier,Multiplicand,&highProduct);
+//  extractedProduct = (LONG64)ShiftRight128((LONG64)lowProduct,(LONG64)highProduct,Shift);
+//  return extractedProduct;
+//}
+//
+//__CRT_INLINE DWORD64 UnsignedMultiplyExtract128(DWORD64 Multiplier,DWORD64 Multiplicand,BYTE Shift) {
+//  DWORD64 extractedProduct;
+//  DWORD64 highProduct;
+//  DWORD64 lowProduct;
+//  lowProduct = UnsignedMultiply128(Multiplier,Multiplicand,&highProduct);
+//  extractedProduct = ShiftRight128(lowProduct,highProduct,Shift);
+//  return extractedProduct;
+//}
 
 #if 1
-BYTE __readgsbyte(DWORD Offset);
-WORD __readgsword(DWORD Offset);
-DWORD __readgsdword(DWORD Offset);
-DWORD64 __readgsqword(DWORD Offset);
-VOID __writegsbyte(DWORD Offset, BYTE Data);
-VOID __writegsword(DWORD Offset, WORD Data);
-VOID __writegsdword(DWORD Offset, DWORD Data);
-VOID __writegsqword(DWORD Offset, DWORD64 Data);
+//BYTE __readgsbyte(DWORD Offset);
+//WORD __readgsword(DWORD Offset);
+//DWORD __readgsdword(DWORD Offset);
+//DWORD64 __readgsqword(DWORD Offset);
+//VOID __writegsbyte(DWORD Offset, BYTE Data);
+//VOID __writegsword(DWORD Offset, WORD Data);
+//VOID __writegsdword(DWORD Offset, DWORD Data);
+//VOID __writegsqword(DWORD Offset, DWORD64 Data);
 #else
 __CRT_INLINE BYTE __readgsbyte(DWORD Offset) {
   BYTE ret;
@@ -4511,11 +4520,11 @@ NTSYSAPI SIZE_T NTAPI RtlCompareMemory(const VOID *Source1,const VOID *Source2,S
 #define RtlFillMemory(Destination,Length,Fill) memset((Destination),(Fill),(Length))
 #define RtlZeroMemory(Destination,Length) memset((Destination),0,(Length))
 
-__CRT_INLINE PVOID RtlSecureZeroMemory(PVOID ptr,SIZE_T cnt) {
-  volatile char *vptr =(volatile char *)ptr;
-  __stosb((PBYTE)((DWORD64)vptr),0,cnt);
-  return ptr;
-}
+//__CRT_INLINE PVOID RtlSecureZeroMemory(PVOID ptr,SIZE_T cnt) {
+//  volatile char *vptr =(volatile char *)ptr;
+//  __stosb((PBYTE)((DWORD64)vptr),0,cnt);
+//  return ptr;
+//}
 
 typedef struct _MESSAGE_RESOURCE_ENTRY {
   WORD Length;
@@ -5276,11 +5285,11 @@ typedef enum _TAPE_DRIVE_PROBLEM_TYPE {
   TapeDriveSnappedTape
 } TAPE_DRIVE_PROBLEM_TYPE;
 
-__CRT_INLINE struct _TEB *NtCurrentTeb(VOID) { return (struct _TEB *)__readgsqword(FIELD_OFFSET(NT_TIB,Self)); }
-__CRT_INLINE PVOID GetCurrentFiber(VOID) { return(PVOID)__readgsqword(FIELD_OFFSET(NT_TIB,FiberData)); }
-__CRT_INLINE PVOID GetFiberData(VOID) {
-  return *(PVOID *)GetCurrentFiber();
-}
+//__CRT_INLINE struct _TEB *NtCurrentTeb(VOID) { return (struct _TEB *)__readgsqword(FIELD_OFFSET(NT_TIB,Self)); }
+//__CRT_INLINE PVOID GetCurrentFiber(VOID) { return(PVOID)__readgsqword(FIELD_OFFSET(NT_TIB,FiberData)); }
+//__CRT_INLINE PVOID GetFiberData(VOID) {
+//  return *(PVOID *)GetCurrentFiber();
+//}
 
 #define ACTIVATION_CONTEXT_SECTION_ASSEMBLY_INFORMATION (1)
 #define ACTIVATION_CONTEXT_SECTION_DLL_REDIRECTION (2)
